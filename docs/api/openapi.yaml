@@ -1,0 +1,1090 @@
+openapi: 3.1.0
+info:
+  title: 77Photo API
+  version: 1.0.0
+  description: |
+    V1 REST API for the filesystem-first 77Photo family photo service.
+    All application endpoints use JSON unless stated otherwise. Timestamps are
+    RFC 3339 UTC strings. The API never accepts a server filesystem path from a
+    client; resources are addressed by opaque IDs.
+servers:
+  - url: /
+    description: Same-origin deployment
+tags:
+  - name: health
+  - name: setup
+  - name: auth
+  - name: users
+  - name: folders
+  - name: photos
+  - name: shares
+  - name: admin
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Check service, database and storage availability
+      operationId: health
+      security: []
+      responses:
+        '200':
+          description: All critical dependencies are available
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+        '503':
+          description: One or more critical dependencies are unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/setup/admin:
+    post:
+      tags: [setup]
+      summary: Create the first administrator
+      description: |
+        The only unauthenticated write endpoint. It is available exactly once,
+        while the database contains no users, and is intended to be called from
+        a local trusted network during first startup. It returns 409 after the
+        first user has been created.
+      operationId: initializeAdmin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetupAdminRequest' }
+      responses:
+        '201':
+          description: Administrator created and a session established
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SessionCookie'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '409':
+          description: Initialization has already completed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: Username or password does not satisfy policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Start a session
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SessionCookie'
+            X-CSRF-Token:
+              $ref: '#/components/headers/CSRFToken'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '401':
+          description: Invalid credentials (same response for unknown or disabled users)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: username or password is incorrect
+                  request_id: req_01JABC
+        '429':
+          description: Login rate limit exceeded
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Revoke the current session
+      operationId: logout
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      responses:
+        '204': { description: Session revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CSRFForbidden' }
+
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      summary: Return the current account
+      operationId: me
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/users:
+    get:
+      tags: [users]
+      summary: List users
+      operationId: listUsers
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Users without password hashes or session secrets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminRequired' }
+    post:
+      tags: [users]
+      summary: Create a user
+      operationId: createUser
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateUserRequest' }
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
+        '409':
+          description: Username already exists
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UserID'
+    patch:
+      tags: [users]
+      summary: Update username, role, password or active state
+      operationId: updateUser
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateUserRequest' }
+      responses:
+        '200':
+          description: Updated user
+          content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Operation would remove the last active administrator
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    delete:
+      tags: [users]
+      summary: Delete a user while retaining or transferring their photos
+      operationId: deleteUser
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeleteUserRequest' }
+      responses:
+        '204': { description: User deleted; photos are retained or transferred according to photo_action }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Last active administrator cannot be deleted
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '422':
+          description: A transfer target is required or invalid
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/folders:
+    get:
+      tags: [folders]
+      summary: List folders visible to the current user
+      operationId: listFolders
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ParentFolderID'
+      responses:
+        '200':
+          description: Direct children of the selected root
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Folder' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [folders]
+      summary: Create a folder
+      operationId: createFolder
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateFolderRequest' }
+      responses:
+        '201':
+          description: Folder created
+          content: { application/json: { schema: { $ref: '#/components/schemas/Folder' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '409':
+          description: A sibling folder has the same name
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/folders/{id}:
+    parameters:
+      - $ref: '#/components/parameters/FolderID'
+    get:
+      tags: [folders]
+      summary: Get folder details
+      operationId: getFolder
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Folder details and visible child counts
+          content: { application/json: { schema: { $ref: '#/components/schemas/Folder' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [folders]
+      summary: Rename a folder
+      operationId: renameFolder
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RenameRequest' } } }
+      responses:
+        '200':
+          description: Renamed folder
+          content: { application/json: { schema: { $ref: '#/components/schemas/Folder' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '409':
+          description: Sibling name conflict
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    delete:
+      tags: [folders]
+      summary: Permanently delete an empty folder
+      operationId: deleteFolder
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      responses:
+        '204': { description: Empty folder deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '409':
+          description: Folder is not empty
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example:
+                error:
+                  code: FOLDER_NOT_EMPTY
+                  message: folder must be empty before deletion
+                  request_id: req_01JABC
+
+  /api/v1/folders/{id}/move:
+    post:
+      tags: [folders]
+      summary: Move a folder within an authorized tree
+      operationId: moveFolder
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/FolderID'
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/MoveRequest' } } }
+      responses:
+        '200':
+          description: Moved folder
+          content: { application/json: { schema: { $ref: '#/components/schemas/Folder' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '409':
+          description: Target conflict or target is a descendant of the source
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/photos:
+    get:
+      tags: [photos]
+      summary: List photos with stable cursor pagination
+      operationId: listPhotos
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/FolderFilter'
+        - $ref: '#/components/parameters/FromFilter'
+        - $ref: '#/components/parameters/ToFilter'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Photos sorted by captured_at DESC then id DESC
+          content: { application/json: { schema: { $ref: '#/components/schemas/PhotoPage' } } }
+        '400':
+          description: Invalid timestamp, cursor, or incompatible filters
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadForbidden' }
+        '410':
+          description: Cursor has expired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example:
+                error:
+                  code: CURSOR_EXPIRED
+                  message: cursor expired; restart pagination without cursor
+                  request_id: req_01JABC
+
+  /api/v1/photos/shared/{folderId}/:
+    get:
+      tags: [photos]
+      summary: List photos in a shared folder subtree
+      operationId: listSharedPhotos
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SharedFolderID'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Shared photos visible to the caller
+          content: { application/json: { schema: { $ref: '#/components/schemas/PhotoPage' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/photos/upload:
+    post:
+      tags: [photos]
+      summary: Upload one photo or video
+      description: |
+        Each request contains exactly one file. Clients performing batch upload
+        send independent requests and may limit concurrency. The server streams
+        the body to a temporary file, validates content, fsyncs and atomically
+        renames it before creating the index row.
+      operationId: uploadPhoto
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, folder_id]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                folder_id:
+                  $ref: '#/components/schemas/ID'
+                conflict:
+                  type: string
+                  enum: [reject, rename]
+                  default: reject
+      responses:
+        '201':
+          description: File stored and indexed
+          content: { application/json: { schema: { $ref: '#/components/schemas/Photo' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '409':
+          description: Duplicate content or name conflict
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '413':
+          description: File exceeds PHOTO_MAX_UPLOAD_SIZE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example:
+                error:
+                  code: UPLOAD_TOO_LARGE
+                  message: upload exceeds the configured maximum size
+                  request_id: req_01JABC
+        '415':
+          description: Unsupported or content-type-mismatched media
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '422':
+          description: Invalid or unsafe media (including excessive pixel count)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/photos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PhotoID'
+    get:
+      tags: [photos]
+      summary: Get photo metadata
+      operationId: getPhoto
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Photo metadata; no media bytes are included
+          content: { application/json: { schema: { $ref: '#/components/schemas/Photo' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [photos]
+      summary: Rename a photo
+      operationId: renamePhoto
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RenameRequest' } } }
+      responses:
+        '200':
+          description: Renamed photo metadata
+          content: { application/json: { schema: { $ref: '#/components/schemas/Photo' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '409': { $ref: '#/components/responses/NameConflict' }
+    delete:
+      tags: [photos]
+      summary: Permanently delete a photo after explicit confirmation
+      operationId: deletePhoto
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+        - name: confirm
+          in: query
+          required: true
+          schema: { type: boolean, const: true }
+          description: Must be exactly true; clients must show a second confirmation step.
+      responses:
+        '204': { description: 'Original, index row and derived cache entries deleted' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Explicit confirmation missing
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/photos/{id}/move:
+    post:
+      tags: [photos]
+      summary: Move a photo to another authorized folder
+      operationId: movePhoto
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/MoveRequest' } } }
+      responses:
+        '200':
+          description: Moved photo metadata
+          content: { application/json: { schema: { $ref: '#/components/schemas/Photo' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '409': { $ref: '#/components/responses/NameConflict' }
+
+  /api/v1/photos/{id}/thumbnail:
+    get:
+      tags: [photos]
+      summary: Read or queue a WebP thumbnail
+      operationId: getThumbnail
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+        - name: size
+          in: query
+          required: true
+          schema: { type: integer, enum: [256, 512, 1280] }
+      responses:
+        '200':
+          description: Cached WebP thumbnail
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private cache keyed to the session and source revision. }
+            ETag: { schema: { type: string } }
+          content: { image/webp: { schema: { type: string, format: binary } } }
+        '202':
+          description: Thumbnail queued; caller should use placeholder and retry
+          content: { application/json: { schema: { $ref: '#/components/schemas/ThumbnailPending' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/photos/{id}/preview:
+    get:
+      tags: [photos]
+      summary: Read the 1280px preview or an original video stream
+      operationId: getPreview
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+      responses:
+        '200':
+          description: Preview bytes with a private cache policy
+          headers:
+            Cache-Control: { schema: { type: string } }
+            ETag: { schema: { type: string } }
+          content:
+            image/webp: { schema: { type: string, format: binary } }
+            video/mp4: { schema: { type: string, format: binary } }
+            video/webm: { schema: { type: string, format: binary } }
+        '206':
+          description: Partial video response for browser Range playback
+          headers:
+            Content-Range: { schema: { type: string } }
+            Accept-Ranges: { schema: { type: string, enum: [bytes] } }
+          content: { application/octet-stream: { schema: { type: string, format: binary } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '416':
+          description: Invalid byte range
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/photos/{id}/original:
+    get:
+      tags: [photos]
+      summary: Download the original file
+      operationId: getOriginal
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+        - name: Range
+          in: header
+          required: false
+          schema: { type: string, pattern: '^bytes=\\d*-\\d*$' }
+          description: Byte range used for browser video playback.
+      responses:
+        '200':
+          description: Complete original bytes
+          headers:
+            Content-Disposition: { schema: { type: string } }
+            Cache-Control: { schema: { type: string, enum: [private, 'no-store'] } }
+          content: { application/octet-stream: { schema: { type: string, format: binary } } }
+        '206':
+          description: Partial original video bytes
+          headers:
+            Content-Range: { schema: { type: string } }
+            Accept-Ranges: { schema: { type: string, enum: [bytes] } }
+          content: { application/octet-stream: { schema: { type: string, format: binary } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '416':
+          description: Invalid byte range
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/shares:
+    get:
+      tags: [shares]
+      summary: List shares managed by or visible to the current user
+      operationId: listShares
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Share records without secrets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Share' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [shares]
+      summary: Share a folder with an existing family member
+      operationId: createShare
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateShareRequest' } } }
+      responses:
+        '201':
+          description: Share created
+          content: { application/json: { schema: { $ref: '#/components/schemas/Share' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ShareManageForbidden' }
+        '409':
+          description: Same folder is already shared with the user
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/shares/{id}:
+    delete:
+      tags: [shares]
+      summary: Revoke a folder share
+      operationId: revokeShare
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/ID' }
+        - $ref: '#/components/parameters/CSRFHeader'
+      responses:
+        '204': { description: Share revoked; inherited access ends immediately }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ShareManageForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/admin/rescan:
+    post:
+      tags: [admin]
+      summary: Start a filesystem rescan
+      operationId: startRescan
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      responses:
+        '202':
+          description: Scan queued
+          content: { application/json: { schema: { $ref: '#/components/schemas/RescanJob' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
+        '409':
+          description: Another scan is queued or running
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/admin/rescan/{jobId}:
+    get:
+      tags: [admin]
+      summary: Get rescan progress and result
+      operationId: getRescan
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/ID' }
+      responses:
+        '200':
+          description: Current or completed scan status
+          content: { application/json: { schema: { $ref: '#/components/schemas/RescanJob' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: 77photo_session
+      description: HttpOnly server-side session cookie; never store in localStorage.
+  headers:
+    SessionCookie:
+      schema: { type: string }
+      description: HttpOnly session cookie. Secure is set in production.
+    CSRFToken:
+      schema: { type: string }
+      description: Opaque token returned to the client and required on cookie-authenticated writes.
+    RetryAfter:
+      schema: { type: integer, minimum: 1 }
+      description: Seconds until another login attempt may be made.
+  parameters:
+    CSRFHeader:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema: { type: string, minLength: 16 }
+    UserID:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ID' }
+    FolderID:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ID' }
+    SharedFolderID:
+      name: folderId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ID' }
+    PhotoID:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ID' }
+    ParentFolderID:
+      name: parent_id
+      in: query
+      required: false
+      schema: { $ref: '#/components/schemas/ID' }
+      description: Omit for the caller's private root; use a folder ID for direct children.
+    FolderFilter:
+      name: folder_id
+      in: query
+      required: false
+      schema: { $ref: '#/components/schemas/ID' }
+      description: Includes the selected folder subtree. Omit to list all visible photos.
+    FromFilter:
+      name: from
+      in: query
+      required: false
+      schema: { type: string, format: date-time }
+      description: Inclusive captured_at lower bound; timestamp must include a timezone.
+    ToFilter:
+      name: to
+      in: query
+      required: false
+      schema: { type: string, format: date-time }
+      description: Exclusive captured_at upper bound; timestamp must include a timezone.
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string, minLength: 16 }
+      description: Opaque signed cursor valid for 15 minutes and bound to filters and user.
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+  responses:
+    Unauthorized:
+      description: Missing, expired, revoked or disabled session
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    AdminRequired:
+      description: Current user is not an administrator
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    WriteForbidden:
+      description: Caller has no write permission for this resource
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            error:
+              code: WRITE_FORBIDDEN
+              message: read-only members cannot modify shared resources
+              request_id: req_01JABC
+    ReadForbidden:
+      description: Caller has no read permission for this resource
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    CSRFForbidden:
+      description: Missing or invalid CSRF token
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    AdminOrCSRFForbidden:
+      description: Caller is not an administrator or CSRF token is invalid
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    ShareManageForbidden:
+      description: Caller does not own the folder and is not an administrator
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    NotFound:
+      description: Resource does not exist or is not visible to the caller
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    NameConflict:
+      description: Destination already contains a different item with this name
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+  schemas:
+    ID:
+      type: string
+      pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
+      description: Opaque server-generated identifier.
+    Role:
+      type: string
+      enum: [admin, user]
+    Permission:
+      type: string
+      enum: [read, write]
+    User:
+      type: object
+      required: [id, username, role, is_active, created_at, updated_at]
+      properties:
+        id: { $ref: '#/components/schemas/ID' }
+        username: { type: string, minLength: 1, maxLength: 64 }
+        role: { $ref: '#/components/schemas/Role' }
+        is_active: { type: boolean }
+        deleted_at:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SetupAdminRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 12, maxLength: 256, format: password }
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 1, maxLength: 256, format: password }
+    AuthResponse:
+      type: object
+      required: [user, csrf_token]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        csrf_token: { type: string }
+    CreateUserRequest:
+      type: object
+      required: [username, password, role]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 12, maxLength: 256, format: password }
+        role: { $ref: '#/components/schemas/Role' }
+    UpdateUserRequest:
+      type: object
+      minProperties: 1
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 12, maxLength: 256, format: password }
+        role: { $ref: '#/components/schemas/Role' }
+        is_active: { type: boolean }
+    DeleteUserRequest:
+      type: object
+      properties:
+        photo_action:
+          type: string
+          enum: [retain, transfer]
+          default: retain
+          description: Retain leaves a deleted-user tombstone and its photos intact; transfer moves ownership first.
+        transfer_to_user_id:
+          anyOf:
+            - $ref: '#/components/schemas/ID'
+            - type: 'null'
+          description: Required when photo_action is transfer; must identify another active user.
+    Folder:
+      type: object
+      required: [id, owner_id, name, is_shared, created_at, updated_at]
+      properties:
+        id: { $ref: '#/components/schemas/ID' }
+        owner_id: { $ref: '#/components/schemas/ID' }
+        parent_id:
+          anyOf:
+            - $ref: '#/components/schemas/ID'
+            - type: 'null'
+        name: { type: string, minLength: 1, maxLength: 255 }
+        is_shared: { type: boolean }
+        inherited_permission:
+          anyOf:
+            - $ref: '#/components/schemas/Permission'
+            - type: 'null'
+        photo_count: { type: integer, minimum: 0 }
+        child_folder_count: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateFolderRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        parent_id:
+          anyOf:
+            - $ref: '#/components/schemas/ID'
+            - type: 'null'
+    RenameRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        conflict: { type: string, enum: [reject, rename], default: reject }
+    MoveRequest:
+      type: object
+      required: [target_folder_id]
+      properties:
+        target_folder_id: { $ref: '#/components/schemas/ID' }
+        conflict: { type: string, enum: [reject, rename], default: reject }
+    Photo:
+      type: object
+      required: [id, owner_id, folder_id, filename, mime_type, size, checksum, captured_at, captured_at_source, indexed_at, created_at, updated_at]
+      properties:
+        id: { $ref: '#/components/schemas/ID' }
+        owner_id: { $ref: '#/components/schemas/ID' }
+        folder_id: { $ref: '#/components/schemas/ID' }
+        filename: { type: string, minLength: 1, maxLength: 255 }
+        mime_type: { type: string, enum: [image/jpeg, image/png, video/mp4, video/webm] }
+        size: { type: integer, format: int64, minimum: 1 }
+        width: { type: integer, minimum: 1 }
+        height: { type: integer, minimum: 1 }
+        checksum: { type: string, pattern: '^[a-f0-9]{64}$' }
+        captured_at: { type: string, format: date-time }
+        captured_at_source: { type: string, enum: [exif, file_mtime] }
+        file_created_at: { type: string, format: date-time }
+        indexed_at: { type: string, format: date-time }
+        camera_make: { type: [string, 'null'] }
+        camera_model: { type: [string, 'null'] }
+        orientation: { type: [integer, 'null'], minimum: 1, maximum: 8 }
+        focal_length: { type: [number, 'null'], minimum: 0 }
+        aperture: { type: [number, 'null'], minimum: 0 }
+        iso: { type: [integer, 'null'], minimum: 0 }
+        gps_latitude: { type: [number, 'null'], minimum: -90, maximum: 90 }
+        gps_longitude: { type: [number, 'null'], minimum: -180, maximum: 180 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    PhotoPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Photo' }
+        next_cursor:
+          anyOf:
+            - type: string
+            - type: 'null'
+    ThumbnailPending:
+      type: object
+      required: [status, retry_after_ms]
+      properties:
+        status: { type: string, const: pending }
+        retry_after_ms: { type: integer, minimum: 50 }
+    Share:
+      type: object
+      required: [id, resource_type, resource_id, user_id, permission, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/ID' }
+        resource_type: { type: string, const: folder }
+        resource_id: { $ref: '#/components/schemas/ID' }
+        user_id: { $ref: '#/components/schemas/ID' }
+        permission: { $ref: '#/components/schemas/Permission' }
+        created_at: { type: string, format: date-time }
+    CreateShareRequest:
+      type: object
+      required: [folder_id, user_id, permission]
+      properties:
+        folder_id: { $ref: '#/components/schemas/ID' }
+        user_id: { $ref: '#/components/schemas/ID' }
+        permission: { $ref: '#/components/schemas/Permission' }
+    RescanJob:
+      type: object
+      required: [id, status, started_at, counts]
+      properties:
+        id: { $ref: '#/components/schemas/ID' }
+        status: { type: string, enum: [queued, running, completed, failed] }
+        started_at:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        finished_at:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        counts:
+          type: object
+          required: [scanned, added, updated, missing, failed]
+          properties:
+            scanned: { type: integer, minimum: 0 }
+            added: { type: integer, minimum: 0 }
+            updated: { type: integer, minimum: 0 }
+            missing: { type: integer, minimum: 0 }
+            failed: { type: integer, minimum: 0 }
+        error: { type: [string, 'null'] }
+    HealthResponse:
+      type: object
+      required: [status, database, storage, request_id]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        database: { type: string, enum: [ok, unavailable] }
+        storage: { type: string, enum: [ok, unavailable] }
+        request_id: { type: string }
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string }
+            request_id: { type: string }
+            details: { type: object, additionalProperties: true }
+    ErrorCode:
+      type: string
+      description: Stable machine-readable error code; clients should branch on this value, not message text.
+      enum:
+        - INVALID_CREDENTIALS
+        - LOGIN_RATE_LIMITED
+        - AUTH_REQUIRED
+        - CSRF_INVALID
+        - ADMIN_REQUIRED
+        - READ_FORBIDDEN
+        - WRITE_FORBIDDEN
+        - SHARE_MANAGE_FORBIDDEN
+        - NOT_FOUND
+        - INVALID_REQUEST
+        - INVALID_TIMESTAMP
+        - INVALID_CURSOR
+        - CURSOR_MISMATCH
+        - CURSOR_EXPIRED
+        - NAME_CONFLICT
+        - DUPLICATE_PHOTO
+        - FOLDER_NOT_EMPTY
+        - FOLDER_DESCENDANT
+        - RESCAN_ALREADY_RUNNING
+        - UPLOAD_TOO_LARGE
+        - UNSUPPORTED_MEDIA_TYPE
+        - INVALID_MEDIA
+        - PIXEL_LIMIT_EXCEEDED
+        - USERNAME_TAKEN
+        - LAST_ADMIN
+        - USER_TRANSFER_REQUIRED
+        - USER_TRANSFER_INVALID
+        - CONFIRMATION_REQUIRED
+        - RANGE_NOT_SATISFIABLE
+        - STORAGE_UNAVAILABLE
+        - DATABASE_UNAVAILABLE
+        - SETUP_COMPLETE
+        - INTERNAL_ERROR
