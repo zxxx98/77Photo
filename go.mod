@@ -1,10 +1,12 @@
 module github.com/zxxx98/77Photo
 
-go 1.22
+go 1.22.2
 
 require (
+	github.com/HugoSmits86/nativewebp v1.3.0
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 	golang.org/x/crypto v0.27.0
+	golang.org/x/image v0.24.0
 	modernc.org/sqlite v1.34.5
 )
 

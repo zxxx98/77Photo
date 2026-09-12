@@ -1,16 +1,21 @@
 package photos
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
 	"github.com/zxxx98/77Photo/internal/storage"
+	"github.com/zxxx98/77Photo/internal/thumbnails"
 )
 
 const uploadPath = "/api/v1/photos/upload"
@@ -18,11 +23,18 @@ const uploadPath = "/api/v1/photos/upload"
 type HTTPHandler struct {
 	service     *Service
 	authService *auth.Service
+	thumbnails  ThumbnailService
 }
 
-func NewHTTPHandler(service *Service, authService *auth.Service) http.Handler {
+type ThumbnailService interface {
+	Ensure(context.Context, string, int) (thumbnails.State, string, error)
+}
+
+func NewHTTPHandler(service *Service, authService *auth.Service) *HTTPHandler {
 	return &HTTPHandler{service: service, authService: authService}
 }
+
+func (h *HTTPHandler) SetThumbnailService(service ThumbnailService) { h.thumbnails = service }
 
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == uploadPath {
@@ -51,6 +63,16 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.move(w, r, sourceID)
+		return
+	}
+	if strings.HasSuffix(id, "/thumbnail") {
+		sourceID := strings.TrimSuffix(id, "/thumbnail")
+		if sourceID == "" || strings.Contains(sourceID, "/") || r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
+			return
+		}
+		h.thumbnail(w, r, sourceID)
 		return
 	}
 	if strings.Contains(id, "/") {
@@ -146,6 +168,54 @@ func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, photo)
+}
+
+func (h *HTTPHandler) thumbnail(w http.ResponseWriter, r *http.Request, id string) {
+	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	if h.thumbnails == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "THUMBNAIL_UNAVAILABLE", "thumbnail service is unavailable", nil)
+		return
+	}
+	if _, err := h.service.Get(r.Context(), principal(account), id); err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	size, err := strconv.Atoi(r.URL.Query().Get("size"))
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "thumbnail size is invalid", nil)
+		return
+	}
+	state, path, err := h.thumbnails.Ensure(r.Context(), id, size)
+	if err != nil {
+		switch {
+		case errors.Is(err, thumbnails.ErrQueueFull):
+			writeJSON(w, http.StatusAccepted, map[string]any{"status": string(thumbnails.Pending), "photo_id": id})
+		case errors.Is(err, thumbnails.ErrInvalidSize):
+			writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "thumbnail size is invalid", nil)
+		case errors.Is(err, thumbnails.ErrUnsupported):
+			writeError(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "thumbnail is not available for this media", nil)
+		default:
+			writeError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "thumbnail could not be prepared", nil)
+		}
+		return
+	}
+	if state != thumbnails.Ready {
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": string(state), "photo_id": id})
+		return
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		writeError(w, r, http.StatusAccepted, "THUMBNAIL_PENDING", "thumbnail is still being generated", nil)
+		return
+	}
+	defer file.Close()
+	w.Header().Set("Content-Type", "image/webp")
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	http.ServeContent(w, r, filepath.Base(path), time.Time{}, file)
 }
 
 func (h *HTTPHandler) rename(w http.ResponseWriter, r *http.Request, id string) {

@@ -19,6 +19,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/httpapi"
 	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/storage"
+	"github.com/zxxx98/77Photo/internal/thumbnails"
 	"github.com/zxxx98/77Photo/internal/users"
 	"github.com/zxxx98/77Photo/internal/webassets"
 )
@@ -52,9 +53,17 @@ func run(parent context.Context, logger *slog.Logger) error {
 	}
 	folderService := folders.NewService(db, photoStore)
 	photoService := photos.NewService(db, photoStore, cfg.MaxUploadSize)
+	thumbnailService, err := thumbnails.NewService(photoService, photoStore, cfg.CacheDir, cfg.ThumbnailWorkers, thumbnails.DefaultQueueCapacity)
+	if err != nil {
+		return fmt.Errorf("initialize thumbnail service: %w", err)
+	}
+	photoService.SetCacheInvalidator(thumbnailService)
+	photoService.SetThumbnailEnqueuer(thumbnailService)
+	thumbnailService.Start(parent)
+	defer thumbnailService.Close()
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, SecureCookies: secureCookies, Static: webassets.Handler()})
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, SecureCookies: secureCookies, Static: webassets.Handler()})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,

@@ -41,6 +41,7 @@ type Services struct {
 	Users         *users.Service
 	Folders       *folders.Service
 	Photos        *photos.Service
+	Thumbnails    photos.ThumbnailService
 	SecureCookies bool
 	Static        http.Handler
 }
@@ -77,6 +78,7 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 	}
 	if services.Auth != nil && services.Photos != nil {
 		photoHandler := photos.NewHTTPHandler(services.Photos, services.Auth)
+		photoHandler.SetThumbnailService(services.Thumbnails)
 		mux.Handle("/api/v1/photos/upload", photoHandler)
 		mux.Handle("/api/v1/photos/", photoHandler)
 	}

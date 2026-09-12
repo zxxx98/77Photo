@@ -24,6 +24,7 @@ import (
 	"github.com/rwcarlsen/goexif/exif"
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/storage"
+	"github.com/zxxx98/77Photo/internal/thumbnails"
 )
 
 var (
@@ -62,6 +63,10 @@ type RenameInput struct {
 
 type CacheInvalidator interface {
 	Invalidate(context.Context, string) error
+}
+
+type ThumbnailEnqueuer interface {
+	Enqueue(string) bool
 }
 
 type DuplicateError struct{ ExistingPhotoID string }
@@ -105,6 +110,7 @@ type Service struct {
 	storage storage.Store
 	maxSize int64
 	cache   CacheInvalidator
+	queue   ThumbnailEnqueuer
 }
 
 func NewService(db *sql.DB, store storage.Store, maxUploadSize int64) *Service {
@@ -112,6 +118,8 @@ func NewService(db *sql.DB, store storage.Store, maxUploadSize int64) *Service {
 }
 
 func (s *Service) SetCacheInvalidator(invalidator CacheInvalidator) { s.cache = invalidator }
+
+func (s *Service) SetThumbnailEnqueuer(enqueuer ThumbnailEnqueuer) { s.queue = enqueuer }
 
 func (s *Service) Upload(ctx context.Context, principal acl.Principal, input UploadInput) (Photo, error) {
 	if input.Body == nil || s.maxSize < 1 {
@@ -244,6 +252,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 		return Photo{}, fmt.Errorf("index uploaded photo: %w", err)
 	}
 	keepFile = true
+	if s.queue != nil {
+		_ = s.queue.Enqueue(photo.ID)
+	}
 	return photo, nil
 }
 
@@ -259,6 +270,16 @@ func (s *Service) Get(ctx context.Context, principal acl.Principal, id string) (
 		return Photo{}, ErrForbidden
 	}
 	return photo, nil
+}
+
+// LoadPhoto exposes only the source metadata needed by the thumbnail worker;
+// callers serving user requests must continue to use Get for ACL checks.
+func (s *Service) LoadPhoto(ctx context.Context, id string) (thumbnails.Photo, error) {
+	photo, err := s.getRaw(ctx, id)
+	if err != nil {
+		return thumbnails.Photo{}, err
+	}
+	return thumbnails.Photo{ID: photo.ID, StoragePath: photo.StoragePath, SourceRevision: photo.SourceRevision, MIMEType: photo.MIMEType, Orientation: photo.Orientation}, nil
 }
 
 func (s *Service) Rename(ctx context.Context, principal acl.Principal, id string, input RenameInput) (Photo, error) {
