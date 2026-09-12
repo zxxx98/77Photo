@@ -47,8 +47,8 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 1 {
-		t.Fatalf("schema migration count = %d, want 1", migrationCount)
+	if migrationCount != 2 {
+		t.Fatalf("schema migration count = %d, want 2", migrationCount)
 	}
 }
 
@@ -83,8 +83,8 @@ VALUES ('u-restart', 'restart', 'hash', 'user', '2026-01-01T00:00:00Z', '2026-01
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 1 {
-		t.Fatalf("schema migration count = %d, want 1", migrationCount)
+	if migrationCount != 2 {
+		t.Fatalf("schema migration count = %d, want 2", migrationCount)
 	}
 }
 
@@ -132,6 +132,13 @@ func TestPhotoSchemaContainsMetadataAndScanFields(t *testing.T) {
 		if !found {
 			t.Errorf("photos column %q missing", name)
 		}
+	}
+	var csrfColumns int
+	if err := db.QueryRow("SELECT count(*) FROM pragma_table_info('sessions') WHERE name='csrf_token_hash'").Scan(&csrfColumns); err != nil {
+		t.Fatal(err)
+	}
+	if csrfColumns != 1 {
+		t.Fatal("sessions csrf_token_hash column missing")
 	}
 }
 

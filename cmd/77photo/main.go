@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,8 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zxxx98/77Photo/internal/auth"
 	"github.com/zxxx98/77Photo/internal/config"
+	"github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/httpapi"
+	"github.com/zxxx98/77Photo/internal/users"
 )
 
 func main() {
@@ -31,11 +35,15 @@ func run(parent context.Context, logger *slog.Logger) error {
 	if err := cfg.ValidateFilesystem(); err != nil {
 		return fmt.Errorf("validate filesystem: %w", err)
 	}
-	if err := ensureDatabaseFile(cfg.DBPath); err != nil {
-		return fmt.Errorf("initialize database path: %w", err)
+	db, err := database.Open(parent, cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
 	}
+	defer db.Close()
+	authService := auth.NewService(db, cfg.SessionTTL, os.Getenv("PHOTO_COOKIE_SECURE") != "false")
+	userService := users.NewService(db, authService)
 
-	handler := httpapi.NewHandler(configuredHealthChecks(cfg), logger)
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, SecureCookies: os.Getenv("PHOTO_COOKIE_SECURE") != "false"})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
@@ -70,16 +78,11 @@ func run(parent context.Context, logger *slog.Logger) error {
 	}
 }
 
-func configuredHealthChecks(cfg config.Config) httpapi.HealthChecks {
+func configuredHealthChecks(cfg config.Config, db *sql.DB) httpapi.HealthChecks {
 	return httpapi.HealthChecks{
-		// T03 replaces this file-existence probe with a SQLite PingContext.
-		Database: func(context.Context) error {
-			info, err := os.Stat(cfg.DBPath)
-			if err != nil {
+		Database: func(ctx context.Context) error {
+			if err := db.PingContext(ctx); err != nil {
 				return fmt.Errorf("database unavailable: %w", err)
-			}
-			if info.IsDir() {
-				return fmt.Errorf("database unavailable: path is a directory")
 			}
 			return nil
 		},
@@ -94,12 +97,4 @@ func configuredHealthChecks(cfg config.Config) httpapi.HealthChecks {
 			return nil
 		},
 	}
-}
-
-func ensureDatabaseFile(path string) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o640)
-	if err != nil {
-		return err
-	}
-	return file.Close()
 }

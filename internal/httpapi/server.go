@@ -10,6 +10,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/zxxx98/77Photo/internal/auth"
+	"github.com/zxxx98/77Photo/internal/users"
 )
 
 type contextKey string
@@ -28,6 +31,16 @@ type HealthChecks struct {
 // handlers are registered. Feature packages can be mounted under the same
 // middleware in later tasks.
 func NewHandler(checks HealthChecks, logger *slog.Logger) http.Handler {
+	return NewHandlerWithServices(checks, logger, Services{})
+}
+
+type Services struct {
+	Auth          *auth.Service
+	Users         *users.Service
+	SecureCookies bool
+}
+
+func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services Services) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -38,6 +51,16 @@ func NewHandler(checks HealthChecks, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", "route not found", RequestID(r.Context()), nil)
 	})
+	if services.Auth != nil {
+		authHandler := auth.NewHTTPHandler(services.Auth, services.SecureCookies)
+		mux.Handle("/api/v1/setup/admin", authHandler)
+		mux.Handle("/api/v1/auth/", authHandler)
+	}
+	if services.Auth != nil && services.Users != nil {
+		userHandler := users.NewHTTPHandler(services.Users, services.Auth)
+		mux.Handle("/api/v1/users", userHandler)
+		mux.Handle("/api/v1/users/", userHandler)
+	}
 	return requestIDMiddleware(loggingMiddleware(mux, logger))
 }
 

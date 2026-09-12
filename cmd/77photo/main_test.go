@@ -21,14 +21,14 @@ func TestRunStopsGracefullyWhenContextIsCanceled(t *testing.T) {
 	go func() { done <- run(ctx, logger) }()
 
 	// Let ListenAndServe enter its serving state before asking it to stop.
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	cancel()
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatalf("run() error = %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("run() did not stop after context cancellation")
 	}
 }
