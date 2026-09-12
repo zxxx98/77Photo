@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zxxx98/77Photo/internal/auth"
+	"github.com/zxxx98/77Photo/internal/folders"
 	"github.com/zxxx98/77Photo/internal/users"
 )
 
@@ -37,6 +38,7 @@ func NewHandler(checks HealthChecks, logger *slog.Logger) http.Handler {
 type Services struct {
 	Auth          *auth.Service
 	Users         *users.Service
+	Folders       *folders.Service
 	SecureCookies bool
 	Static        http.Handler
 }
@@ -65,6 +67,11 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 		userHandler := users.NewHTTPHandler(services.Users, services.Auth)
 		mux.Handle("/api/v1/users", userHandler)
 		mux.Handle("/api/v1/users/", userHandler)
+	}
+	if services.Auth != nil && services.Folders != nil {
+		folderHandler := folders.NewHTTPHandler(services.Folders, services.Auth)
+		mux.Handle("/api/v1/folders", folderHandler)
+		mux.Handle("/api/v1/folders/", folderHandler)
 	}
 	return requestIDMiddleware(loggingMiddleware(mux, logger))
 }

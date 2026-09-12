@@ -15,7 +15,9 @@ import (
 	"github.com/zxxx98/77Photo/internal/auth"
 	"github.com/zxxx98/77Photo/internal/config"
 	"github.com/zxxx98/77Photo/internal/database"
+	"github.com/zxxx98/77Photo/internal/folders"
 	"github.com/zxxx98/77Photo/internal/httpapi"
+	"github.com/zxxx98/77Photo/internal/storage"
 	"github.com/zxxx98/77Photo/internal/users"
 	"github.com/zxxx98/77Photo/internal/webassets"
 )
@@ -43,9 +45,14 @@ func run(parent context.Context, logger *slog.Logger) error {
 	defer db.Close()
 	authService := auth.NewService(db, cfg.SessionTTL, os.Getenv("PHOTO_COOKIE_SECURE") != "false")
 	userService := users.NewService(db, authService)
+	photoStore, err := storage.New(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("initialize photo storage: %w", err)
+	}
+	folderService := folders.NewService(db, photoStore)
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, SecureCookies: secureCookies, Static: webassets.Handler()})
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, SecureCookies: secureCookies, Static: webassets.Handler()})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,

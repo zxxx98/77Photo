@@ -1,0 +1,239 @@
+package folders
+
+import (
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/zxxx98/77Photo/internal/acl"
+	"github.com/zxxx98/77Photo/internal/storage"
+)
+
+var (
+	ErrForbidden    = errors.New("folder access forbidden")
+	ErrNotFound     = errors.New("folder not found")
+	ErrInvalidName  = storage.ErrInvalidName
+	ErrNameConflict = errors.New("folder name conflict")
+)
+
+type Service struct {
+	db      *sql.DB
+	storage storage.Store
+}
+
+type CreateInput struct {
+	Name     string
+	ParentID *string
+}
+
+type Folder struct {
+	ID                  string          `json:"id"`
+	OwnerID             string          `json:"owner_id"`
+	ParentID            *string         `json:"parent_id"`
+	Name                string          `json:"name"`
+	StoragePath         string          `json:"-"`
+	IsShared            bool            `json:"is_shared"`
+	InheritedPermission *acl.Permission `json:"inherited_permission,omitempty"`
+	PhotoCount          int             `json:"photo_count"`
+	ChildFolderCount    int             `json:"child_folder_count"`
+	CreatedAt           time.Time       `json:"created_at"`
+	UpdatedAt           time.Time       `json:"updated_at"`
+}
+
+func NewService(db *sql.DB, store storage.Store) *Service { return &Service{db: db, storage: store} }
+
+func (s *Service) List(ctx context.Context, principal acl.Principal, parentID *string) ([]Folder, error) {
+	if parentID != nil {
+		parent, err := s.getRaw(ctx, *parentID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		if err != nil {
+			return nil, fmt.Errorf("load parent folder: %w", err)
+		}
+		if !acl.CanRead(principal, parent.OwnerID, "") {
+			return nil, ErrForbidden
+		}
+	}
+	var rows *sql.Rows
+	var err error
+	if parentID == nil {
+		if principal.Role == acl.RoleAdmin {
+			rows, err = s.db.QueryContext(ctx, `SELECT id, owner_id, parent_id, storage_path, name, is_shared, created_at, updated_at
+FROM folders WHERE parent_id IS NULL ORDER BY name COLLATE NOCASE, id`)
+		} else {
+			rows, err = s.db.QueryContext(ctx, `SELECT id, owner_id, parent_id, storage_path, name, is_shared, created_at, updated_at
+FROM folders WHERE owner_id=? AND parent_id IS NULL ORDER BY name COLLATE NOCASE, id`, principal.UserID)
+		}
+	} else {
+		rows, err = s.db.QueryContext(ctx, `SELECT id, owner_id, parent_id, storage_path, name, is_shared, created_at, updated_at
+FROM folders WHERE parent_id=? ORDER BY name COLLATE NOCASE, id`, *parentID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list folders: %w", err)
+	}
+	defer rows.Close()
+	items := make([]Folder, 0)
+	for rows.Next() {
+		folder, err := scanFolder(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan folder: %w", err)
+		}
+		if !acl.CanRead(principal, folder.OwnerID, "") {
+			continue
+		}
+		items = append(items, folder)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list folder rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close folder rows: %w", err)
+	}
+	for i := range items {
+		if err := s.addCounts(ctx, &items[i]); err != nil {
+			return nil, err
+		}
+	}
+	if parentID == nil && principal.Role != acl.RoleAdmin {
+		if err := s.storage.EnsureUserRoot(principal.UserID); err != nil {
+			return nil, fmt.Errorf("ensure private root: %w", err)
+		}
+	}
+	return items, nil
+}
+
+func (s *Service) Get(ctx context.Context, principal acl.Principal, id string) (Folder, error) {
+	folder, err := s.getRaw(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Folder{}, ErrNotFound
+	}
+	if err != nil {
+		return Folder{}, fmt.Errorf("get folder: %w", err)
+	}
+	if !acl.CanRead(principal, folder.OwnerID, "") {
+		return Folder{}, ErrForbidden
+	}
+	if err := s.addCounts(ctx, &folder); err != nil {
+		return Folder{}, err
+	}
+	return folder, nil
+}
+
+func (s *Service) Create(ctx context.Context, principal acl.Principal, input CreateInput) (Folder, error) {
+	if !acl.CanWrite(principal, principal.UserID, "") {
+		return Folder{}, ErrForbidden
+	}
+	if err := storage.ValidateName(input.Name); err != nil {
+		return Folder{}, ErrInvalidName
+	}
+	name := strings.TrimSpace(input.Name)
+	ownerID := principal.UserID
+	storagePath := filepath.Join("users", ownerID, name)
+	if input.ParentID != nil {
+		parent, err := s.getRaw(ctx, *input.ParentID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return Folder{}, ErrNotFound
+		}
+		if err != nil {
+			return Folder{}, fmt.Errorf("load parent folder: %w", err)
+		}
+		if !acl.CanWrite(principal, parent.OwnerID, "") {
+			return Folder{}, ErrForbidden
+		}
+		ownerID = parent.OwnerID
+		storagePath = filepath.Join(parent.StoragePath, name)
+	}
+	if err := s.storage.EnsureUserRoot(ownerID); err != nil {
+		return Folder{}, fmt.Errorf("ensure folder owner root: %w", err)
+	}
+	relativeToUserRoot := strings.TrimPrefix(filepath.ToSlash(storagePath), "users/"+ownerID+"/")
+	existing, err := s.storage.ResolveUserPath(ownerID, relativeToUserRoot)
+	if err != nil {
+		return Folder{}, fmt.Errorf("inspect folder path: %w", err)
+	}
+	if info, statErr := os.Stat(existing); statErr == nil {
+		_ = info
+		return Folder{}, ErrNameConflict
+	} else if !os.IsNotExist(statErr) {
+		return Folder{}, fmt.Errorf("inspect folder path: %w", statErr)
+	}
+	if err := s.storage.MakeUserDir(ownerID, relativeToUserRoot); err != nil {
+		return Folder{}, fmt.Errorf("create folder on disk: %w", err)
+	}
+	now := time.Now().UTC()
+	id := newFolderID()
+	_, err = s.db.ExecContext(ctx, `INSERT INTO folders (id, owner_id, parent_id, storage_path, name, is_shared, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 0, ?, ?)`, id, ownerID, input.ParentID, filepath.ToSlash(storagePath), name, formatTime(now), formatTime(now))
+	if err != nil {
+		_ = removeEmptyDir(s.storage, ownerID, relativeToUserRoot)
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: folders") {
+			return Folder{}, ErrNameConflict
+		}
+		return Folder{}, fmt.Errorf("create folder index: %w", err)
+	}
+	return s.Get(ctx, principal, id)
+}
+
+func (s *Service) getRaw(ctx context.Context, id string) (Folder, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, owner_id, parent_id, storage_path, name, is_shared, created_at, updated_at FROM folders WHERE id=?`, id)
+	return scanFolder(row)
+}
+
+func (s *Service) addCounts(ctx context.Context, folder *Folder) error {
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM photos WHERE folder_id=? AND deleted_at IS NULL", folder.ID).Scan(&folder.PhotoCount); err != nil {
+		return fmt.Errorf("count folder photos: %w", err)
+	}
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM folders WHERE parent_id=?", folder.ID).Scan(&folder.ChildFolderCount); err != nil {
+		return fmt.Errorf("count child folders: %w", err)
+	}
+	return nil
+}
+
+type rowScanner interface{ Scan(...any) error }
+
+func scanFolder(row rowScanner) (Folder, error) {
+	var folder Folder
+	var parentID sql.NullString
+	var shared int
+	var created, updated string
+	if err := row.Scan(&folder.ID, &folder.OwnerID, &parentID, &folder.StoragePath, &folder.Name, &shared, &created, &updated); err != nil {
+		return Folder{}, err
+	}
+	if parentID.Valid {
+		folder.ParentID = &parentID.String
+	}
+	folder.IsShared = shared == 1
+	var err error
+	folder.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+	if err != nil {
+		return Folder{}, err
+	}
+	folder.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated)
+	return folder, err
+}
+
+func removeEmptyDir(store storage.Store, ownerID, relative string) error {
+	path, err := store.ResolveUserPath(ownerID, relative)
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
+func formatTime(value time.Time) string { return value.UTC().Format(time.RFC3339Nano) }
+
+func newFolderID() string {
+	raw := make([]byte, 12)
+	if _, err := rand.Read(raw); err != nil {
+		panic("crypto/rand unavailable")
+	}
+	return "f_" + hex.EncodeToString(raw)
+}
