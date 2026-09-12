@@ -14,6 +14,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/auth"
 	dbstore "github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/users"
+	"github.com/zxxx98/77Photo/internal/webassets"
 )
 
 func TestNewHandlerWithServicesMountsAuthAndUserRoutes(t *testing.T) {
@@ -24,7 +25,7 @@ func TestNewHandlerWithServicesMountsAuthAndUserRoutes(t *testing.T) {
 	defer db.Close()
 	authService := auth.NewService(db, time.Hour, false)
 	userService := users.NewService(db, authService)
-	handler := NewHandlerWithServices(HealthChecks{Database: func(context.Context) error { return nil }, Storage: func(context.Context) error { return nil }}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), Services{Auth: authService, Users: userService})
+	handler := NewHandlerWithServices(HealthChecks{Database: func(context.Context) error { return nil }, Storage: func(context.Context) error { return nil }}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), Services{Auth: authService, Users: userService, Static: webassets.Handler()})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/admin", strings.NewReader(`{"username":"admin","password":"correct horse battery staple"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -35,5 +36,10 @@ func TestNewHandlerWithServicesMountsAuthAndUserRoutes(t *testing.T) {
 	}
 	if res.Header().Get("X-Request-ID") == "" || res.Header().Get("Set-Cookie") == "" {
 		t.Fatalf("middleware headers missing: %v", res.Header())
+	}
+	spa := httptest.NewRecorder()
+	handler.ServeHTTP(spa, httptest.NewRequest(http.MethodGet, "/gallery", nil))
+	if spa.Code != http.StatusOK || !strings.Contains(spa.Body.String(), "77Photo") {
+		t.Fatalf("SPA route status/body = %d/%q", spa.Code, spa.Body.String())
 	}
 }

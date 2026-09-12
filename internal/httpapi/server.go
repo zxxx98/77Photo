@@ -38,6 +38,7 @@ type Services struct {
 	Auth          *auth.Service
 	Users         *users.Service
 	SecureCookies bool
+	Static        http.Handler
 }
 
 func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services Services) http.Handler {
@@ -49,6 +50,10 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 		healthz(w, r, checks)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if services.Static != nil && !strings.HasPrefix(r.URL.Path, "/api/") {
+			services.Static.ServeHTTP(w, r)
+			return
+		}
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", "route not found", RequestID(r.Context()), nil)
 	})
 	if services.Auth != nil {

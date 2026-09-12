@@ -105,5 +105,5 @@ func TestDeleteRetainsPhotosOwnerAsTombstoneAndRevokesSessions(t *testing.T) {
 	}
 }
 
-func boolPtr(value bool) *bool { return &value }
+func boolPtr(value bool) *bool       { return &value }
 func stringPtr(value string) *string { return &value }

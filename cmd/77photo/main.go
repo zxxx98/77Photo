@@ -17,6 +17,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/httpapi"
 	"github.com/zxxx98/77Photo/internal/users"
+	"github.com/zxxx98/77Photo/internal/webassets"
 )
 
 func main() {
@@ -43,7 +44,8 @@ func run(parent context.Context, logger *slog.Logger) error {
 	authService := auth.NewService(db, cfg.SessionTTL, os.Getenv("PHOTO_COOKIE_SECURE") != "false")
 	userService := users.NewService(db, authService)
 
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, SecureCookies: os.Getenv("PHOTO_COOKIE_SECURE") != "false"})
+	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, SecureCookies: secureCookies, Static: webassets.Handler()})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
