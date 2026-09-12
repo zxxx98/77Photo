@@ -1,0 +1,465 @@
+package photos
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/rwcarlsen/goexif/exif"
+	"github.com/zxxx98/77Photo/internal/acl"
+	"github.com/zxxx98/77Photo/internal/storage"
+)
+
+var (
+	ErrForbidden        = errors.New("photo access forbidden")
+	ErrNotFound         = errors.New("photo not found")
+	ErrUploadTooLarge   = errors.New("upload exceeds configured maximum size")
+	ErrUnsupportedMedia = errors.New("unsupported media type")
+	ErrInvalidMedia     = errors.New("invalid media")
+	ErrUploadFailed     = errors.New("upload failed")
+	ErrNameConflict     = errors.New("photo name conflict")
+	ErrDuplicatePhoto   = errors.New("duplicate photo")
+	ErrPixelLimit       = errors.New("image pixel limit exceeded")
+)
+
+const maxDecodedPixels int64 = 100_000_000
+
+type ConflictStrategy string
+
+const (
+	ConflictReject ConflictStrategy = "reject"
+	ConflictRename ConflictStrategy = "rename"
+)
+
+type UploadInput struct {
+	FolderID     string
+	Filename     string
+	DeclaredMIME string
+	Conflict     ConflictStrategy
+	Body         io.Reader
+}
+
+type DuplicateError struct{ ExistingPhotoID string }
+
+func (e *DuplicateError) Error() string {
+	return fmt.Sprintf("duplicate photo already exists as %s", e.ExistingPhotoID)
+}
+func (e *DuplicateError) Unwrap() error { return ErrDuplicatePhoto }
+
+type Photo struct {
+	ID               string     `json:"id"`
+	OwnerID          string     `json:"owner_id"`
+	FolderID         string     `json:"folder_id"`
+	StoragePath      string     `json:"-"`
+	Filename         string     `json:"filename"`
+	MIMEType         string     `json:"mime_type"`
+	Size             int64      `json:"size"`
+	Width            int        `json:"width,omitempty"`
+	Height           int        `json:"height,omitempty"`
+	Checksum         string     `json:"checksum"`
+	CapturedAt       time.Time  `json:"captured_at"`
+	CapturedAtSource string     `json:"captured_at_source"`
+	FileCreatedAt    *time.Time `json:"file_created_at,omitempty"`
+	IndexedAt        time.Time  `json:"indexed_at"`
+	SourceRevision   string     `json:"source_revision"`
+	ScanStatus       string     `json:"scan_status"`
+	CameraMake       *string    `json:"camera_make,omitempty"`
+	CameraModel      *string    `json:"camera_model,omitempty"`
+	Orientation      *int       `json:"orientation,omitempty"`
+	FocalLength      *float64   `json:"focal_length,omitempty"`
+	Aperture         *float64   `json:"aperture,omitempty"`
+	ISO              *int       `json:"iso,omitempty"`
+	GPSLatitude      *float64   `json:"gps_latitude,omitempty"`
+	GPSLongitude     *float64   `json:"gps_longitude,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+type Service struct {
+	db      *sql.DB
+	storage storage.Store
+	maxSize int64
+}
+
+func NewService(db *sql.DB, store storage.Store, maxUploadSize int64) *Service {
+	return &Service{db: db, storage: store, maxSize: maxUploadSize}
+}
+
+func (s *Service) Upload(ctx context.Context, principal acl.Principal, input UploadInput) (Photo, error) {
+	if input.Body == nil || s.maxSize < 1 {
+		return Photo{}, ErrUploadFailed
+	}
+	if err := storage.ValidateName(input.Filename); err != nil {
+		return Photo{}, storage.ErrInvalidName
+	}
+	filename := strings.TrimSpace(input.Filename)
+	ownerID, folderStoragePath, err := s.authorizedFolder(ctx, principal, input.FolderID)
+	if err != nil {
+		return Photo{}, err
+	}
+	folderPath, err := s.storage.ResolvePath(folderStoragePath)
+	if err != nil {
+		return Photo{}, fmt.Errorf("resolve folder storage: %w", err)
+	}
+	info, err := os.Stat(folderPath)
+	if err != nil || !info.IsDir() {
+		return Photo{}, fmt.Errorf("folder storage unavailable: %w", err)
+	}
+	temporary, err := os.CreateTemp(folderPath, ".77photo-upload-*.tmp")
+	if err != nil {
+		return Photo{}, fmt.Errorf("create upload temporary file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	cleanup := func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
+	}
+	hash, head, size, err := streamToFile(temporary, input.Body, s.maxSize)
+	if err != nil {
+		cleanup()
+		if errors.Is(err, ErrUploadTooLarge) {
+			return Photo{}, err
+		}
+		return Photo{}, fmt.Errorf("%w: %v", ErrUploadFailed, err)
+	}
+	if err := temporary.Sync(); err != nil {
+		cleanup()
+		return Photo{}, fmt.Errorf("%w: sync temporary file: %v", ErrUploadFailed, err)
+	}
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return Photo{}, fmt.Errorf("%w: close temporary file: %v", ErrUploadFailed, err)
+	}
+	temporary = nil
+	checksum := hex.EncodeToString(hash[:])
+	mimeType := detectAndValidateMIME(input.DeclaredMIME, filename, head)
+	if mimeType == "" {
+		_ = os.Remove(temporaryPath)
+		return Photo{}, ErrUnsupportedMedia
+	}
+	metadata, err := extractMetadata(temporaryPath, mimeType, size)
+	if err != nil {
+		_ = os.Remove(temporaryPath)
+		return Photo{}, err
+	}
+	if existingID, err := s.findDuplicate(ctx, input.FolderID, checksum); err != nil {
+		_ = os.Remove(temporaryPath)
+		return Photo{}, err
+	} else if existingID != "" {
+		_ = os.Remove(temporaryPath)
+		return Photo{}, &DuplicateError{ExistingPhotoID: existingID}
+	}
+	requestedFilename := filename
+	var storagePath, finalPath string
+	filenameResolved := false
+	for suffix := 0; suffix < 10000; suffix++ {
+		candidate := requestedFilename
+		if suffix > 0 {
+			ext := filepath.Ext(requestedFilename)
+			base := strings.TrimSuffix(requestedFilename, ext)
+			candidate = base + " (" + strconv.Itoa(suffix) + ")" + ext
+		}
+		nameTaken, err := s.filenameTaken(ctx, input.FolderID, candidate)
+		if err != nil {
+			_ = os.Remove(temporaryPath)
+			return Photo{}, err
+		}
+		if nameTaken {
+			if input.Conflict != ConflictRename {
+				_ = os.Remove(temporaryPath)
+				return Photo{}, ErrNameConflict
+			}
+			continue
+		}
+		candidateStoragePath := filepath.ToSlash(filepath.Join(folderStoragePath, candidate))
+		candidateFinalPath, err := s.storage.ResolvePath(candidateStoragePath)
+		if err != nil {
+			_ = os.Remove(temporaryPath)
+			return Photo{}, fmt.Errorf("resolve photo storage: %w", err)
+		}
+		if _, err := os.Lstat(candidateFinalPath); err == nil {
+			if input.Conflict != ConflictRename {
+				_ = os.Remove(temporaryPath)
+				return Photo{}, ErrNameConflict
+			}
+			continue
+		} else if !os.IsNotExist(err) {
+			_ = os.Remove(temporaryPath)
+			return Photo{}, fmt.Errorf("inspect photo storage: %w", err)
+		}
+		filename, storagePath, finalPath = candidate, candidateStoragePath, candidateFinalPath
+		filenameResolved = true
+		break
+	}
+	if !filenameResolved {
+		_ = os.Remove(temporaryPath)
+		return Photo{}, ErrNameConflict
+	}
+	if err := os.Rename(temporaryPath, finalPath); err != nil {
+		_ = os.Remove(temporaryPath)
+		return Photo{}, fmt.Errorf("%w: atomic rename: %v", ErrUploadFailed, err)
+	}
+	keepFile := false
+	defer func() {
+		if !keepFile {
+			_ = os.Remove(finalPath)
+		}
+	}()
+	stat, err := os.Stat(finalPath)
+	if err != nil {
+		return Photo{}, fmt.Errorf("stat uploaded file: %w", err)
+	}
+	now := time.Now().UTC()
+	photo := Photo{ID: newPhotoID(), OwnerID: ownerID, FolderID: input.FolderID, StoragePath: storagePath, Filename: filename, MIMEType: mimeType, Size: size, Width: metadata.width, Height: metadata.height, Checksum: checksum, CapturedAt: metadata.capturedAt, CapturedAtSource: metadata.capturedAtSource, FileCreatedAt: timePtr(stat.ModTime().UTC()), IndexedAt: now, SourceRevision: checksum, ScanStatus: "indexed", CameraMake: metadata.cameraMake, CameraModel: metadata.cameraModel, Orientation: metadata.orientation, FocalLength: metadata.focalLength, Aperture: metadata.aperture, ISO: metadata.iso, GPSLatitude: metadata.gpsLatitude, GPSLongitude: metadata.gpsLongitude, CreatedAt: now, UpdatedAt: now}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO photos (id, owner_id, folder_id, storage_path, filename, mime_type, size, width, height, checksum, captured_at, captured_at_source, file_created_at, indexed_at, source_revision, scan_status, camera_make, camera_model, orientation, focal_length, aperture, iso, gps_latitude, gps_longitude, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, photo.ID, photo.OwnerID, photo.FolderID, photo.StoragePath, photo.Filename, photo.MIMEType, photo.Size, nullableInt(photo.Width), nullableInt(photo.Height), photo.Checksum, formatTime(photo.CapturedAt), photo.CapturedAtSource, formatOptionalTime(photo.FileCreatedAt), formatTime(photo.IndexedAt), photo.SourceRevision, photo.ScanStatus, nullableString(photo.CameraMake), nullableString(photo.CameraModel), nullableIntPtr(photo.Orientation), nullableFloat(photo.FocalLength), nullableFloat(photo.Aperture), nullableIntPtr(photo.ISO), nullableFloat(photo.GPSLatitude), nullableFloat(photo.GPSLongitude), formatTime(photo.CreatedAt), formatTime(photo.UpdatedAt)); err != nil {
+		return Photo{}, fmt.Errorf("index uploaded photo: %w", err)
+	}
+	keepFile = true
+	return photo, nil
+}
+
+func streamToFile(destination *os.File, source io.Reader, maxSize int64) ([32]byte, []byte, int64, error) {
+	var digest [32]byte
+	hasher := sha256.New()
+	firstBytes := make([]byte, 0, 512)
+	buffer := make([]byte, 32*1024)
+	var total int64
+	for {
+		read, readErr := source.Read(buffer)
+		if read > 0 {
+			total += int64(read)
+			if total > maxSize {
+				return digest, firstBytes, total, ErrUploadTooLarge
+			}
+			if len(firstBytes) < 512 {
+				firstBytes = append(firstBytes, buffer[:min(read, 512-len(firstBytes))]...)
+			}
+			if _, err := destination.Write(buffer[:read]); err != nil {
+				return digest, firstBytes, total, err
+			}
+			_, _ = hasher.Write(buffer[:read])
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				copy(digest[:], hasher.Sum(nil))
+				return digest, firstBytes, total, nil
+			}
+			return digest, firstBytes, total, readErr
+		}
+	}
+}
+
+func detectAndValidateMIME(declared, filename string, head []byte) string {
+	actual := http.DetectContentType(head)
+	extension := strings.ToLower(filepath.Ext(filename))
+	allowed := map[string]struct{ ext string }{
+		"image/jpeg": {ext: ".jpg"}, "image/png": {ext: ".png"}, "video/mp4": {ext: ".mp4"}, "video/webm": {ext: ".webm"},
+	}
+	if strings.EqualFold(declared, "image/jpg") {
+		declared = "image/jpeg"
+	}
+	entry, ok := allowed[declared]
+	if !ok || extension != entry.ext && !(declared == "image/jpeg" && extension == ".jpeg") {
+		return ""
+	}
+	if actual != declared {
+		return ""
+	}
+	return declared
+}
+
+type imageMetadata struct {
+	width, height             int
+	capturedAt                time.Time
+	capturedAtSource          string
+	cameraMake, cameraModel   *string
+	orientation               *int
+	focalLength, aperture     *float64
+	iso                       *int
+	gpsLatitude, gpsLongitude *float64
+}
+
+func extractMetadata(path, mimeType string, size int64) (imageMetadata, error) {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return imageMetadata{}, fmt.Errorf("stat media: %w", err)
+	}
+	metadata := imageMetadata{capturedAt: stat.ModTime().UTC(), capturedAtSource: "file_mtime"}
+	if mimeType == "video/mp4" || mimeType == "video/webm" {
+		return metadata, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return imageMetadata{}, fmt.Errorf("open image: %w", err)
+	}
+	config, _, err := image.DecodeConfig(io.LimitReader(file, size+1))
+	_ = file.Close()
+	if err != nil {
+		return imageMetadata{}, fmt.Errorf("%w: decode image: %v", ErrInvalidMedia, err)
+	}
+	if int64(config.Width)*int64(config.Height) > maxDecodedPixels {
+		return imageMetadata{}, ErrPixelLimit
+	}
+	metadata.width, metadata.height = config.Width, config.Height
+	file, err = os.Open(path)
+	if err == nil {
+		if parsed, exifErr := exif.Decode(file); exifErr == nil {
+			applyEXIF(&metadata, parsed)
+		}
+		_ = file.Close()
+	}
+	return metadata, nil
+}
+
+func applyEXIF(metadata *imageMetadata, parsed *exif.Exif) {
+	if field, err := parsed.Get(exif.DateTimeOriginal); err == nil {
+		if value, err := field.StringVal(); err == nil {
+			if captured, err := time.ParseInLocation("2006:01:02 15:04:05", value, time.UTC); err == nil {
+				metadata.capturedAt, metadata.capturedAtSource = captured, "exif"
+			}
+		}
+	}
+	if field, err := parsed.Get(exif.Make); err == nil {
+		if value, err := field.StringVal(); err == nil && utf8.ValidString(value) {
+			value = strings.TrimSpace(value)
+			metadata.cameraMake = &value
+		}
+	}
+	if field, err := parsed.Get(exif.Model); err == nil {
+		if value, err := field.StringVal(); err == nil && utf8.ValidString(value) {
+			value = strings.TrimSpace(value)
+			metadata.cameraModel = &value
+		}
+	}
+	if field, err := parsed.Get(exif.Orientation); err == nil {
+		if value, err := field.Int(0); err == nil {
+			metadata.orientation = &value
+		}
+	}
+}
+
+func (s *Service) authorizedFolder(ctx context.Context, principal acl.Principal, folderID string) (string, string, error) {
+	var ownerID, storagePath string
+	if err := s.db.QueryRowContext(ctx, "SELECT owner_id, storage_path FROM folders WHERE id=?", folderID).Scan(&ownerID, &storagePath); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", ErrNotFound
+		}
+		return "", "", fmt.Errorf("load photo folder: %w", err)
+	}
+	if !acl.CanWrite(principal, ownerID, "") {
+		return "", "", ErrForbidden
+	}
+	return ownerID, storagePath, nil
+}
+
+func (s *Service) findDuplicate(ctx context.Context, folderID, checksum string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, "SELECT id FROM photos WHERE folder_id=? AND checksum=? AND deleted_at IS NULL LIMIT 1", folderID, checksum).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+func (s *Service) resolveFilename(ctx context.Context, folderID, filename string, conflict ConflictStrategy) (string, error) {
+	var existing string
+	err := s.db.QueryRowContext(ctx, "SELECT filename FROM photos WHERE folder_id=? AND filename=? AND deleted_at IS NULL LIMIT 1", folderID, filename).Scan(&existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		return filename, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("check filename: %w", err)
+	}
+	if conflict != ConflictRename {
+		return "", ErrNameConflict
+	}
+	ext := filepath.Ext(filename)
+	base := strings.TrimSuffix(filename, ext)
+	for suffix := 1; suffix < 10000; suffix++ {
+		candidate := base + " (" + strconv.Itoa(suffix) + ")" + ext
+		err := s.db.QueryRowContext(ctx, "SELECT filename FROM photos WHERE folder_id=? AND filename=? AND deleted_at IS NULL LIMIT 1", folderID, candidate).Scan(&existing)
+		if errors.Is(err, sql.ErrNoRows) {
+			return candidate, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("check renamed filename: %w", err)
+		}
+	}
+	return "", ErrNameConflict
+}
+
+func (s *Service) filenameTaken(ctx context.Context, folderID, filename string) (bool, error) {
+	var existing string
+	err := s.db.QueryRowContext(ctx, "SELECT filename FROM photos WHERE folder_id=? AND filename=? AND deleted_at IS NULL LIMIT 1", folderID, filename).Scan(&existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check filename: %w", err)
+	}
+	return true, nil
+}
+
+func newPhotoID() string {
+	raw := make([]byte, 12)
+	if _, err := rand.Read(raw); err != nil {
+		return "p_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	return "p_" + hex.EncodeToString(raw)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+func timePtr(v time.Time) *time.Time { return &v }
+func formatTime(v time.Time) string  { return v.UTC().Format(time.RFC3339Nano) }
+func formatOptionalTime(v *time.Time) any {
+	if v == nil {
+		return nil
+	}
+	return formatTime(*v)
+}
+func nullableString(v *string) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+func nullableInt(v int) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+func nullableIntPtr(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+func nullableFloat(v *float64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}

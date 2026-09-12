@@ -3,6 +3,7 @@ module github.com/zxxx98/77Photo
 go 1.22
 
 require (
+	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 	golang.org/x/crypto v0.27.0
 	modernc.org/sqlite v1.34.5
 )

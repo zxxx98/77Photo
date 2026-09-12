@@ -43,6 +43,13 @@ func New(root string) (Store, error) {
 
 func (s Store) Root() string { return s.root }
 
+// ResolvePath resolves a server-generated path relative to the configured
+// storage root. It is intended for paths read from the database, never for
+// client-supplied values.
+func (s Store) ResolvePath(relative string) (string, error) {
+	return s.resolveWithin(s.root, filepath.FromSlash(relative))
+}
+
 func (s Store) UserRoot(userID string) (string, error) {
 	if err := validateComponent(userID); err != nil {
 		return "", err

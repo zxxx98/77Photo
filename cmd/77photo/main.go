@@ -17,6 +17,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/folders"
 	"github.com/zxxx98/77Photo/internal/httpapi"
+	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/storage"
 	"github.com/zxxx98/77Photo/internal/users"
 	"github.com/zxxx98/77Photo/internal/webassets"
@@ -50,9 +51,10 @@ func run(parent context.Context, logger *slog.Logger) error {
 		return fmt.Errorf("initialize photo storage: %w", err)
 	}
 	folderService := folders.NewService(db, photoStore)
+	photoService := photos.NewService(db, photoStore, cfg.MaxUploadSize)
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, SecureCookies: secureCookies, Static: webassets.Handler()})
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, SecureCookies: secureCookies, Static: webassets.Handler()})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
