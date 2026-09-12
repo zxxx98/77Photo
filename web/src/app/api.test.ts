@@ -38,4 +38,40 @@ describe('API client', () => {
     const logoutInit = fetcher.mock.calls[0][1] as RequestInit;
     expect(new Headers(logoutInit.headers).get('X-CSRF-Token')).toBe('csrf-value');
   });
+
+  it('serializes gallery filters and folder pagination', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    const client = createApiClient(fetcher as typeof fetch);
+
+    await client.listPhotos({ folderId: 'f_1', cursor: 'cursor-value', limit: 25 });
+
+    expect(fetcher).toHaveBeenCalledWith('/api/v1/photos?folder_id=f_1&cursor=cursor-value&limit=25', expect.objectContaining({ credentials: 'include' }));
+  });
+
+  it('uses XMLHttpRequest for upload progress and preserves FormData content type', async () => {
+    const open = vi.fn();
+    const send = vi.fn(function (this: { status: number; responseText: string; onload?: (event: ProgressEvent) => void }) {
+      this.status = 201;
+      this.responseText = JSON.stringify({ id: 'p_1', filename: 'photo.jpg' });
+      this.onload?.(undefined as unknown as ProgressEvent);
+    });
+    class FakeXHR {
+      status = 0;
+      responseText = '';
+      upload = { onprogress: (_event: ProgressEvent) => undefined };
+      onload?: (event: ProgressEvent) => void;
+      onerror?: (event: ProgressEvent) => void;
+      onabort?: (event: ProgressEvent) => void;
+      open = open;
+      setRequestHeader = vi.fn();
+      send = send;
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXHR);
+    const client = createApiClient();
+    const file = new File(['data'], 'photo.jpg', { type: 'image/jpeg' });
+
+    await expect(client.uploadPhoto(file, 'f_1')).resolves.toMatchObject({ id: 'p_1' });
+    expect(open).toHaveBeenCalledWith('POST', '/api/v1/photos/upload');
+    expect(send).toHaveBeenCalledWith(expect.any(FormData));
+  });
 });

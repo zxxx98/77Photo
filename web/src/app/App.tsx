@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { Folder, Grid2X2, Image, LogOut, Menu, Search, Settings, Share2, Upload, X } from 'lucide-react';
+import { Folder, Image, LogOut, Menu, Search, Settings, Share2, Upload, X } from 'lucide-react';
 import { createApiClient } from './api';
 import { SessionStore } from './auth';
 import LoginPage from '../features/auth/LoginPage';
+import GalleryWorkspace from '../features/gallery/GalleryWorkspace';
+import FoldersWorkspace from '../features/folders/FoldersWorkspace';
+import UploadWorkspace from '../features/upload/UploadWorkspace';
 
 type View = 'gallery' | 'folders' | 'sharing' | 'settings' | 'upload';
 
@@ -28,10 +31,10 @@ export default function App() {
 
   if (snapshot.status === 'loading') return <LoadingScreen />;
   if (snapshot.status === 'unauthenticated') return <LoginPage store={store} />;
-  return <AppShell store={store} view={view} onViewChange={(nextView) => { writeView(nextView); setView(nextView); }} />;
+  return <AppShell api={api} store={store} view={view} onViewChange={(nextView) => { writeView(nextView); setView(nextView); }} />;
 }
 
-function AppShell({ store, view, onViewChange }: { store: SessionStore; view: View; onViewChange: (view: View) => void }) {
+function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof createApiClient>; store: SessionStore; view: View; onViewChange: (view: View) => void }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const user = store.snapshot.user;
   return (
@@ -71,7 +74,7 @@ function AppShell({ store, view, onViewChange }: { store: SessionStore; view: Vi
           </label>
           <button className="button button-primary upload-button" onClick={() => onViewChange('upload')}><Upload size={17} /> <span>Upload</span></button>
         </header>
-        <div className="content-scroll"><Workspace view={view} /></div>
+        <div className="content-scroll"><Workspace api={api} view={view} /></div>
       </main>
       <nav className="mobile-nav" aria-label="Mobile navigation">
         {navItems.slice(0, 3).map(({ id, label, icon: Icon }) => (
@@ -83,8 +86,10 @@ function AppShell({ store, view, onViewChange }: { store: SessionStore; view: Vi
   );
 }
 
-function Workspace({ view }: { view: View }) {
-  if (view === 'gallery') return <GalleryWorkspace />;
+function Workspace({ api, view }: { api: ReturnType<typeof createApiClient>; view: View }) {
+  if (view === 'gallery') return <GalleryWorkspace api={api} />;
+  if (view === 'folders') return <FoldersWorkspace api={api} />;
+  if (view === 'upload') return <UploadWorkspace api={api} />;
   const labels: Record<Exclude<View, 'gallery'>, { title: string; detail: string }> = {
     folders: { title: 'Folders', detail: 'Your folders will appear here as you add memories.' },
     sharing: { title: 'Sharing', detail: 'Shared family folders stay visible only to invited members.' },
@@ -93,16 +98,6 @@ function Workspace({ view }: { view: View }) {
   };
   const copy = labels[view];
   return <section className="empty-workspace" aria-labelledby="workspace-title"><span className="eyebrow">77Photo</span><h1 id="workspace-title">{copy.title}</h1><p>{copy.detail}</p><button className="button button-secondary" onClick={() => window.history.back()}>Back to gallery</button></section>;
-}
-
-function GalleryWorkspace() {
-  return (
-    <section className="gallery-workspace" aria-labelledby="gallery-title">
-      <div className="workspace-heading"><div><span className="eyebrow">Your library</span><h1 id="gallery-title">A quiet place for today</h1></div><button className="view-toggle" aria-label="Grid view selected"><Grid2X2 size={18} /></button></div>
-      <div className="filter-row" aria-label="Gallery filters"><button className="filter-chip is-active">All photos</button><button className="filter-chip">Recently added</button><span className="filter-hint">Timeline &amp; folders share this view</span></div>
-      <div className="timeline-group"><div className="date-heading"><h2>Start with your first memory</h2><span>Private by default</span></div><div className="photo-grid" aria-label="Photo timeline empty state"><div className="photo-placeholder tone-blush" /><div className="photo-placeholder tone-sage" /><div className="photo-placeholder tone-sand" /></div><p className="empty-hint">Upload a photo to see it here. Original files stay on your server.</p></div>
-    </section>
-  );
 }
 
 function LoadingScreen() { return <main className="loading-screen" aria-busy="true"><span className="brand-mark" aria-hidden="true">77</span><p>Opening your library…</p></main>; }
