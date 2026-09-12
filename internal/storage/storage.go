@@ -3,9 +3,11 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 )
@@ -48,6 +50,104 @@ func (s Store) Root() string { return s.root }
 // client-supplied values.
 func (s Store) ResolvePath(relative string) (string, error) {
 	return s.resolveWithin(s.root, filepath.FromSlash(relative))
+}
+
+func (s Store) Rename(oldRelative, newRelative string) error {
+	oldPath, err := s.ResolvePath(oldRelative)
+	if err != nil {
+		return err
+	}
+	newPath, err := s.ResolvePath(newRelative)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(newPath); err == nil {
+		return os.ErrExist
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(oldPath, newPath); err == nil {
+		return nil
+	} else if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	return copyAndRemove(oldPath, newPath)
+}
+
+func (s Store) RemoveFile(relative string) error {
+	path, err := s.ResolvePath(relative)
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
+func (s Store) RemoveEmptyDir(relative string) error {
+	path, err := s.ResolvePath(relative)
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
+// MakeDir recreates a managed directory after a filesystem operation needs
+// to be compensated. The path is still resolved through the storage boundary.
+func (s Store) MakeDir(relative string) error {
+	path, err := s.ResolvePath(relative)
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(path, 0o750)
+}
+
+func copyAndRemove(source, destination string) error {
+	info, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		if err := os.Mkdir(destination, info.Mode().Perm()); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(source)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if err := copyAndRemove(filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name())); err != nil {
+				return err
+			}
+		}
+		return os.Remove(source)
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	output, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	if err != nil {
+		_ = input.Close()
+		return err
+	}
+	_, copyErr := io.Copy(output, input)
+	if copyErr == nil {
+		copyErr = output.Sync()
+	}
+	closeOutErr := output.Close()
+	closeInErr := input.Close()
+	if copyErr != nil {
+		_ = os.Remove(destination)
+		return copyErr
+	}
+	if closeOutErr != nil {
+		_ = os.Remove(destination)
+		return closeOutErr
+	}
+	if closeInErr != nil {
+		_ = os.Remove(destination)
+		return closeInErr
+	}
+	return os.Remove(source)
 }
 
 func (s Store) UserRoot(userID string) (string, error) {

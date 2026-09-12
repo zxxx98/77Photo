@@ -38,15 +38,34 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.Trim(strings.TrimPrefix(r.URL.Path, foldersPath+"/"), "/")
-	if id == "" || strings.Contains(id, "/") {
+	if id == "" {
 		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "route not found", nil)
 		return
 	}
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w, r, http.MethodGet)
+	if strings.HasSuffix(id, "/move") {
+		sourceID := strings.TrimSuffix(id, "/move")
+		if sourceID == "" || strings.Contains(sourceID, "/") || r.Method != http.MethodPost {
+			methodNotAllowed(w, r, http.MethodPost)
+			return
+		}
+		h.move(w, r, sourceID)
 		return
 	}
-	h.get(w, r, id)
+	if strings.Contains(id, "/") {
+		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "route not found", nil)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		h.get(w, r, id)
+	case http.MethodPatch:
+		h.rename(w, r, id)
+	case http.MethodDelete:
+		h.delete(w, r, id)
+	default:
+		methodNotAllowed(w, r, "GET, PATCH, DELETE")
+	}
+	return
 }
 
 func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -103,16 +122,91 @@ func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request, id string) {
 	writeJSON(w, http.StatusOK, folder)
 }
 
+func (h *HTTPHandler) rename(w http.ResponseWriter, r *http.Request, id string) {
+	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
+		return
+	}
+	var input RenameInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	folder, err := h.service.Rename(r.Context(), principal(account), id, input)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, folder)
+}
+
+func (h *HTTPHandler) move(w http.ResponseWriter, r *http.Request, id string) {
+	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
+		return
+	}
+	var input struct {
+		TargetFolderID string `json:"target_folder_id"`
+		Conflict       string `json:"conflict"`
+	}
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	if input.Conflict == "" {
+		input.Conflict = "reject"
+	}
+	folder, err := h.service.MoveWithConflict(r.Context(), principal(account), id, input.TargetFolderID, input.Conflict)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, folder)
+}
+
+func (h *HTTPHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
+	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
+		return
+	}
+	if err := h.service.Delete(r.Context(), principal(account), id); err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):
-		writeError(w, r, http.StatusForbidden, "READ_FORBIDDEN", "folder is not accessible", nil)
+		code, message := "WRITE_FORBIDDEN", "folder is not writable"
+		if r.Method == http.MethodGet {
+			code, message = "READ_FORBIDDEN", "folder is not accessible"
+		}
+		writeError(w, r, http.StatusForbidden, code, message, nil)
 	case errors.Is(err, ErrNotFound):
 		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "folder not found", nil)
 	case errors.Is(err, ErrInvalidName):
 		writeError(w, r, http.StatusUnprocessableEntity, "INVALID_REQUEST", "folder name is invalid", nil)
 	case errors.Is(err, ErrNameConflict):
 		writeError(w, r, http.StatusConflict, "NAME_CONFLICT", "a folder with this name already exists", nil)
+	case errors.Is(err, ErrNotEmpty):
+		writeError(w, r, http.StatusConflict, "FOLDER_NOT_EMPTY", "folder must be empty before deletion", nil)
+	case errors.Is(err, ErrDescendant):
+		writeError(w, r, http.StatusConflict, "FOLDER_DESCENDANT", "folder cannot move into its own descendant", nil)
 	default:
 		writeError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "request could not be completed", nil)
 	}

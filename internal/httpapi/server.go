@@ -78,6 +78,7 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 	if services.Auth != nil && services.Photos != nil {
 		photoHandler := photos.NewHTTPHandler(services.Photos, services.Auth)
 		mux.Handle("/api/v1/photos/upload", photoHandler)
+		mux.Handle("/api/v1/photos/", photoHandler)
 	}
 	return requestIDMiddleware(loggingMiddleware(mux, logger))
 }

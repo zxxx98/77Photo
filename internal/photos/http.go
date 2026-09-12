@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/zxxx98/77Photo/internal/acl"
@@ -24,16 +25,49 @@ func NewHTTPHandler(service *Service, authService *auth.Service) http.Handler {
 }
 
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != uploadPath {
+	if r.URL.Path == uploadPath {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
+			return
+		}
+		h.upload(w, r)
+		return
+	}
+	if !strings.HasPrefix(r.URL.Path, "/api/v1/photos/") {
 		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "route not found", nil)
 		return
 	}
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/photos/"), "/")
+	if id == "" {
+		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "route not found", nil)
 		return
 	}
-	h.upload(w, r)
+	if strings.HasSuffix(id, "/move") {
+		sourceID := strings.TrimSuffix(id, "/move")
+		if sourceID == "" || strings.Contains(sourceID, "/") || r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
+			return
+		}
+		h.move(w, r, sourceID)
+		return
+	}
+	if strings.Contains(id, "/") {
+		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "route not found", nil)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		h.get(w, r, id)
+	case http.MethodPatch:
+		h.rename(w, r, id)
+	case http.MethodDelete:
+		h.delete(w, r, id)
+	default:
+		w.Header().Set("Allow", "GET, PATCH, DELETE")
+		writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
+	}
 }
 
 func (h *HTTPHandler) upload(w http.ResponseWriter, r *http.Request) {
@@ -100,12 +134,108 @@ func (h *HTTPHandler) upload(w http.ResponseWriter, r *http.Request) {
 	writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "exactly one file part is required", nil)
 }
 
+func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request, id string) {
+	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	photo, err := h.service.Get(r.Context(), principal(account), id)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, photo)
+}
+
+func (h *HTTPHandler) rename(w http.ResponseWriter, r *http.Request, id string) {
+	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
+		return
+	}
+	var input RenameInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	photo, err := h.service.Rename(r.Context(), principal(account), id, input)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, photo)
+}
+
+func (h *HTTPHandler) move(w http.ResponseWriter, r *http.Request, id string) {
+	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
+		return
+	}
+	var input struct {
+		TargetFolderID string           `json:"target_folder_id"`
+		Conflict       ConflictStrategy `json:"conflict"`
+	}
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	if input.Conflict == "" {
+		input.Conflict = ConflictReject
+	}
+	photo, err := h.service.MoveWithConflict(r.Context(), principal(account), id, input.TargetFolderID, input.Conflict)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, photo)
+}
+
+func (h *HTTPHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
+	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
+		return
+	}
+	confirmed, err := strconv.ParseBool(r.URL.Query().Get("confirm"))
+	if err != nil {
+		confirmed = false
+	}
+	if err := h.service.Delete(r.Context(), principal(account), id, confirmed); err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "request body is invalid", nil)
+		return false
+	}
+	return true
+}
+
 func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):
 		writeError(w, r, http.StatusForbidden, "WRITE_FORBIDDEN", "photo folder is not writable", nil)
 	case errors.Is(err, ErrNotFound):
-		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "folder not found", nil)
+		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "photo not found", nil)
 	case errors.Is(err, storage.ErrInvalidName):
 		writeError(w, r, http.StatusUnprocessableEntity, "INVALID_REQUEST", "filename is invalid", nil)
 	case errors.Is(err, ErrUploadTooLarge):
@@ -125,8 +255,10 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 			details["existing_photo_id"] = duplicate.ExistingPhotoID
 		}
 		writeError(w, r, http.StatusConflict, "DUPLICATE_PHOTO", "the same file already exists in this folder", details)
+	case errors.Is(err, ErrConfirmationRequired):
+		writeError(w, r, http.StatusUnprocessableEntity, "CONFIRMATION_REQUIRED", "explicit confirmation is required before permanent deletion", nil)
 	default:
-		writeError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "upload could not be completed", nil)
+		writeError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "photo operation could not be completed", nil)
 	}
 }
 

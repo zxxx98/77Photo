@@ -21,6 +21,8 @@ var (
 	ErrNotFound     = errors.New("folder not found")
 	ErrInvalidName  = storage.ErrInvalidName
 	ErrNameConflict = errors.New("folder name conflict")
+	ErrNotEmpty     = errors.New("folder is not empty")
+	ErrDescendant   = errors.New("folder cannot move into its descendant")
 )
 
 type Service struct {
@@ -31,6 +33,11 @@ type Service struct {
 type CreateInput struct {
 	Name     string
 	ParentID *string
+}
+
+type RenameInput struct {
+	Name     string
+	Conflict string
 }
 
 type Folder struct {
@@ -180,6 +187,200 @@ VALUES (?, ?, ?, ?, ?, 0, ?, ?)`, id, ownerID, input.ParentID, filepath.ToSlash(
 		return Folder{}, fmt.Errorf("create folder index: %w", err)
 	}
 	return s.Get(ctx, principal, id)
+}
+
+func (s *Service) Rename(ctx context.Context, principal acl.Principal, id string, input RenameInput) (Folder, error) {
+	folder, err := s.getRaw(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Folder{}, ErrNotFound
+	}
+	if err != nil {
+		return Folder{}, err
+	}
+	if !acl.CanWrite(principal, folder.OwnerID, "") {
+		return Folder{}, ErrForbidden
+	}
+	if err := storage.ValidateName(input.Name); err != nil {
+		return Folder{}, ErrInvalidName
+	}
+	name := strings.TrimSpace(input.Name)
+	if strings.EqualFold(name, folder.Name) {
+		return s.Get(ctx, principal, id)
+	}
+	name, err = s.resolveFolderName(ctx, folder.ParentID, name, input.Conflict)
+	if err != nil {
+		return Folder{}, err
+	}
+	newStoragePath := filepath.ToSlash(filepath.Join(filepath.Dir(folder.StoragePath), name))
+	if err := s.storage.Rename(folder.StoragePath, newStoragePath); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return Folder{}, ErrNameConflict
+		}
+		return Folder{}, fmt.Errorf("rename folder on disk: %w", err)
+	}
+	if err := s.updateStoragePrefix(ctx, folder.StoragePath, newStoragePath, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "UPDATE folders SET name=?, updated_at=? WHERE id=?", name, formatTime(time.Now().UTC()), id)
+		return err
+	}); err != nil {
+		_ = s.storage.Rename(newStoragePath, folder.StoragePath)
+		return Folder{}, err
+	}
+	return s.Get(ctx, principal, id)
+}
+
+func (s *Service) Move(ctx context.Context, principal acl.Principal, id, targetID string) (Folder, error) {
+	return s.MoveWithConflict(ctx, principal, id, targetID, "reject")
+}
+
+func (s *Service) MoveWithConflict(ctx context.Context, principal acl.Principal, id, targetID, conflict string) (Folder, error) {
+	folder, err := s.getRaw(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Folder{}, ErrNotFound
+	}
+	if err != nil {
+		return Folder{}, err
+	}
+	target, err := s.getRaw(ctx, targetID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Folder{}, ErrNotFound
+	}
+	if err != nil {
+		return Folder{}, err
+	}
+	if !acl.CanWrite(principal, folder.OwnerID, "") || !acl.CanWrite(principal, target.OwnerID, "") || folder.OwnerID != target.OwnerID {
+		return Folder{}, ErrForbidden
+	}
+	if id == targetID || s.isDescendant(ctx, id, targetID) {
+		return Folder{}, ErrDescendant
+	}
+	if folder.ParentID != nil && *folder.ParentID == target.ID {
+		return folder, nil
+	}
+	name, err := s.resolveFolderName(ctx, &target.ID, folder.Name, conflict)
+	if err != nil {
+		return Folder{}, err
+	}
+	newStoragePath := filepath.ToSlash(filepath.Join(target.StoragePath, name))
+	if err := s.storage.Rename(folder.StoragePath, newStoragePath); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return Folder{}, ErrNameConflict
+		}
+		return Folder{}, fmt.Errorf("move folder on disk: %w", err)
+	}
+	if err := s.updateStoragePrefix(ctx, folder.StoragePath, newStoragePath, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "UPDATE folders SET parent_id=?, name=?, updated_at=? WHERE id=?", target.ID, name, formatTime(time.Now().UTC()), id)
+		return err
+	}); err != nil {
+		_ = s.storage.Rename(newStoragePath, folder.StoragePath)
+		return Folder{}, err
+	}
+	return s.Get(ctx, principal, id)
+}
+
+func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string) error {
+	folder, err := s.getRaw(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !acl.CanWrite(principal, folder.OwnerID, "") {
+		return ErrForbidden
+	}
+	var children, photos int
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM folders WHERE parent_id=?", id).Scan(&children); err != nil {
+		return fmt.Errorf("count folder children: %w", err)
+	}
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM photos WHERE folder_id=? AND deleted_at IS NULL", id).Scan(&photos); err != nil {
+		return fmt.Errorf("count folder photos: %w", err)
+	}
+	if children > 0 || photos > 0 {
+		return ErrNotEmpty
+	}
+	if err := s.storage.RemoveEmptyDir(folder.StoragePath); err != nil {
+		return fmt.Errorf("remove folder on disk: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM folders WHERE id=?", id); err != nil {
+		_ = s.storage.MakeDir(folder.StoragePath)
+		return fmt.Errorf("remove folder index: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) resolveFolderName(ctx context.Context, parentID *string, name, conflict string) (string, error) {
+	var existing string
+	var err error
+	if parentID == nil {
+		err = s.db.QueryRowContext(ctx, "SELECT name FROM folders WHERE parent_id IS NULL AND name=? COLLATE NOCASE LIMIT 1", name).Scan(&existing)
+	} else {
+		err = s.db.QueryRowContext(ctx, "SELECT name FROM folders WHERE parent_id=? AND name=? COLLATE NOCASE LIMIT 1", *parentID, name).Scan(&existing)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return name, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("check folder name: %w", err)
+	}
+	if conflict != "rename" {
+		return "", ErrNameConflict
+	}
+	for suffix := 1; suffix < 10000; suffix++ {
+		candidate := fmt.Sprintf("%s (%d)", name, suffix)
+		var candidateExisting string
+		if parentID == nil {
+			err = s.db.QueryRowContext(ctx, "SELECT name FROM folders WHERE parent_id IS NULL AND name=? COLLATE NOCASE LIMIT 1", candidate).Scan(&candidateExisting)
+		} else {
+			err = s.db.QueryRowContext(ctx, "SELECT name FROM folders WHERE parent_id=? AND name=? COLLATE NOCASE LIMIT 1", *parentID, candidate).Scan(&candidateExisting)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return candidate, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("check renamed folder: %w", err)
+		}
+	}
+	return "", ErrNameConflict
+}
+
+func (s *Service) isDescendant(ctx context.Context, sourceID, targetID string) bool {
+	current := targetID
+	for current != "" {
+		if current == sourceID {
+			return true
+		}
+		var parent sql.NullString
+		if err := s.db.QueryRowContext(ctx, "SELECT parent_id FROM folders WHERE id=?", current).Scan(&parent); err != nil || !parent.Valid {
+			return false
+		}
+		current = parent.String
+	}
+	return false
+}
+
+func (s *Service) updateStoragePrefix(ctx context.Context, oldPrefix, newPrefix string, update func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin folder filesystem transaction: %w", err)
+	}
+	defer tx.Rollback()
+	oldPrefix = filepath.ToSlash(oldPrefix)
+	newPrefix = filepath.ToSlash(newPrefix)
+	if _, err := tx.ExecContext(ctx, `UPDATE folders SET storage_path=? || substr(storage_path, length(?) + 1), updated_at=?
+WHERE storage_path=? OR storage_path LIKE ? || '/%'`, newPrefix, oldPrefix, formatTime(time.Now().UTC()), oldPrefix, oldPrefix); err != nil {
+		return fmt.Errorf("update descendant folder paths: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE photos SET storage_path=? || substr(storage_path, length(?) + 1), updated_at=?
+WHERE storage_path=? OR storage_path LIKE ? || '/%'`, newPrefix, oldPrefix, formatTime(time.Now().UTC()), oldPrefix, oldPrefix); err != nil {
+		return fmt.Errorf("update descendant photo paths: %w", err)
+	}
+	if err := update(tx); err != nil {
+		return fmt.Errorf("update folder index: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit folder operation: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) getRaw(ctx context.Context, id string) (Folder, error) {

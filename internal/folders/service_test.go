@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -89,5 +90,81 @@ func TestUnsafeFolderNameIsRejected(t *testing.T) {
 	service, admin, _ := newFolderService(t)
 	if _, err := service.Create(context.Background(), admin, CreateInput{Name: "../escape", ParentID: nil}); !errors.Is(err, ErrInvalidName) {
 		t.Fatalf("Create(unsafe) error = %v, want ErrInvalidName", err)
+	}
+}
+
+func TestRenameAndMoveFolderKeepIndexAndDiskInSync(t *testing.T) {
+	service, admin, _ := newFolderService(t)
+	ctx := context.Background()
+	first, err := service.Create(ctx, admin, CreateInput{Name: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := service.Create(ctx, admin, CreateInput{Name: "target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := service.Rename(ctx, admin, first.ID, RenameInput{Name: "renamed"})
+	if err != nil {
+		t.Fatalf("Rename() error = %v", err)
+	}
+	if renamed.Name != "renamed" {
+		t.Fatalf("renamed = %+v", renamed)
+	}
+	if _, err := service.storage.ResolvePath(renamed.StoragePath); err != nil {
+		t.Fatalf("renamed storage path invalid: %v", err)
+	}
+	moved, err := service.Move(ctx, admin, first.ID, target.ID)
+	if err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+	if moved.ParentID == nil || *moved.ParentID != target.ID {
+		t.Fatalf("moved parent = %+v", moved.ParentID)
+	}
+	if _, err := service.storage.ResolvePath(moved.StoragePath); err != nil {
+		t.Fatalf("moved storage path invalid: %v", err)
+	}
+}
+
+func TestFolderDeleteRejectsNonEmptyAndSelfDescendantMove(t *testing.T) {
+	service, admin, _ := newFolderService(t)
+	ctx := context.Background()
+	parent, err := service.Create(ctx, admin, CreateInput{Name: "parent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentID := parent.ID
+	child, err := service.Create(ctx, admin, CreateInput{Name: "child", ParentID: &parentID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Delete(ctx, admin, parent.ID); !errors.Is(err, ErrNotEmpty) {
+		t.Fatalf("Delete(non-empty) error = %v, want ErrNotEmpty", err)
+	}
+	if _, err := service.Move(ctx, admin, parent.ID, child.ID); !errors.Is(err, ErrDescendant) {
+		t.Fatalf("Move(descendant) error = %v, want ErrDescendant", err)
+	}
+}
+
+func TestFolderDeleteIndexFailureRecreatesDirectory(t *testing.T) {
+	service, admin, _ := newFolderService(t)
+	ctx := context.Background()
+	folder, err := service.Create(ctx, admin, CreateInput{Name: "temporary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.db.Exec(`CREATE TRIGGER reject_folder_delete BEFORE DELETE ON folders BEGIN SELECT RAISE(ABORT, 'forced index failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	defer service.db.Exec(`DROP TRIGGER reject_folder_delete`)
+	if err := service.Delete(ctx, admin, folder.ID); err == nil {
+		t.Fatal("Delete() error = nil, want index failure")
+	}
+	path, err := service.storage.ResolvePath(folder.StoragePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, statErr := os.Stat(path); statErr != nil || !info.IsDir() {
+		t.Fatalf("compensated directory stat = (%v, %v), want directory", info, statErr)
 	}
 }

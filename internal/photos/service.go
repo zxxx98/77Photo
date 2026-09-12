@@ -55,6 +55,15 @@ type UploadInput struct {
 	Body         io.Reader
 }
 
+type RenameInput struct {
+	Name     string
+	Conflict ConflictStrategy
+}
+
+type CacheInvalidator interface {
+	Invalidate(context.Context, string) error
+}
+
 type DuplicateError struct{ ExistingPhotoID string }
 
 func (e *DuplicateError) Error() string {
@@ -95,11 +104,14 @@ type Service struct {
 	db      *sql.DB
 	storage storage.Store
 	maxSize int64
+	cache   CacheInvalidator
 }
 
 func NewService(db *sql.DB, store storage.Store, maxUploadSize int64) *Service {
 	return &Service{db: db, storage: store, maxSize: maxUploadSize}
 }
+
+func (s *Service) SetCacheInvalidator(invalidator CacheInvalidator) { s.cache = invalidator }
 
 func (s *Service) Upload(ctx context.Context, principal acl.Principal, input UploadInput) (Photo, error) {
 	if input.Body == nil || s.maxSize < 1 {
@@ -232,6 +244,237 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 		return Photo{}, fmt.Errorf("index uploaded photo: %w", err)
 	}
 	keepFile = true
+	return photo, nil
+}
+
+func (s *Service) Get(ctx context.Context, principal acl.Principal, id string) (Photo, error) {
+	photo, err := s.getRaw(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Photo{}, ErrNotFound
+	}
+	if err != nil {
+		return Photo{}, err
+	}
+	if !acl.CanRead(principal, photo.OwnerID, "") {
+		return Photo{}, ErrForbidden
+	}
+	return photo, nil
+}
+
+func (s *Service) Rename(ctx context.Context, principal acl.Principal, id string, input RenameInput) (Photo, error) {
+	photo, err := s.getRaw(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Photo{}, ErrNotFound
+	}
+	if err != nil {
+		return Photo{}, err
+	}
+	if !acl.CanWrite(principal, photo.OwnerID, "") {
+		return Photo{}, ErrForbidden
+	}
+	if err := storage.ValidateName(input.Name); err != nil {
+		return Photo{}, storage.ErrInvalidName
+	}
+	name := strings.TrimSpace(input.Name)
+	if strings.EqualFold(name, photo.Filename) {
+		return photo, nil
+	}
+	name, err = s.resolvePhotoName(ctx, photo.FolderID, name, input.Conflict)
+	if err != nil {
+		return Photo{}, err
+	}
+	newStoragePath := filepath.ToSlash(filepath.Join(filepath.Dir(photo.StoragePath), name))
+	if err := s.storage.Rename(photo.StoragePath, newStoragePath); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return Photo{}, ErrNameConflict
+		}
+		return Photo{}, fmt.Errorf("rename photo on disk: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "UPDATE photos SET filename=?, storage_path=?, source_revision=?, updated_at=? WHERE id=?", name, newStoragePath, newStorageRevision(photo.SourceRevision), formatTime(time.Now().UTC()), id); err != nil {
+		_ = s.storage.Rename(newStoragePath, photo.StoragePath)
+		return Photo{}, fmt.Errorf("update photo index: %w", err)
+	}
+	if s.cache != nil {
+		_ = s.cache.Invalidate(ctx, id)
+	}
+	return s.Get(ctx, principal, id)
+}
+
+func (s *Service) Move(ctx context.Context, principal acl.Principal, id, targetFolderID string) (Photo, error) {
+	return s.MoveWithConflict(ctx, principal, id, targetFolderID, ConflictReject)
+}
+
+func (s *Service) MoveWithConflict(ctx context.Context, principal acl.Principal, id, targetFolderID string, conflict ConflictStrategy) (Photo, error) {
+	photo, err := s.getRaw(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Photo{}, ErrNotFound
+	}
+	if err != nil {
+		return Photo{}, err
+	}
+	if !acl.CanWrite(principal, photo.OwnerID, "") {
+		return Photo{}, ErrForbidden
+	}
+	var targetOwner, targetStorage string
+	if err := s.db.QueryRowContext(ctx, "SELECT owner_id, storage_path FROM folders WHERE id=?", targetFolderID).Scan(&targetOwner, &targetStorage); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Photo{}, ErrNotFound
+		}
+		return Photo{}, fmt.Errorf("load target folder: %w", err)
+	}
+	if targetOwner != photo.OwnerID || !acl.CanWrite(principal, targetOwner, "") {
+		return Photo{}, ErrForbidden
+	}
+	if targetFolderID == photo.FolderID {
+		return photo, nil
+	}
+	filename, err := s.resolvePhotoName(ctx, targetFolderID, photo.Filename, conflict)
+	if err != nil {
+		return Photo{}, err
+	}
+	newStoragePath := filepath.ToSlash(filepath.Join(targetStorage, filename))
+	if err := s.storage.Rename(photo.StoragePath, newStoragePath); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return Photo{}, ErrNameConflict
+		}
+		return Photo{}, fmt.Errorf("move photo on disk: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "UPDATE photos SET folder_id=?, storage_path=?, filename=?, source_revision=?, updated_at=? WHERE id=?", targetFolderID, newStoragePath, filename, newStorageRevision(photo.SourceRevision), formatTime(time.Now().UTC()), id); err != nil {
+		_ = s.storage.Rename(newStoragePath, photo.StoragePath)
+		return Photo{}, fmt.Errorf("update moved photo index: %w", err)
+	}
+	if s.cache != nil {
+		_ = s.cache.Invalidate(ctx, id)
+	}
+	return s.Get(ctx, principal, id)
+}
+
+var ErrConfirmationRequired = errors.New("explicit deletion confirmation required")
+
+func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string, confirmed bool) error {
+	if !confirmed {
+		return ErrConfirmationRequired
+	}
+	photo, err := s.getRaw(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !acl.CanWrite(principal, photo.OwnerID, "") {
+		return ErrForbidden
+	}
+	deletedAt := formatTime(time.Now().UTC())
+	if _, err := s.db.ExecContext(ctx, "UPDATE photos SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL", deletedAt, deletedAt, id); err != nil {
+		return fmt.Errorf("mark photo deleted: %w", err)
+	}
+	if err := s.storage.RemoveFile(photo.StoragePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_, _ = s.db.ExecContext(ctx, "UPDATE photos SET deleted_at=NULL, updated_at=? WHERE id=?", formatTime(time.Now().UTC()), id)
+		return fmt.Errorf("remove photo on disk: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM photos WHERE id=? AND deleted_at IS NOT NULL", id); err != nil {
+		// Keep the tombstone hidden from normal reads so a later scan can finish
+		// cleanup without resurrecting a deleted photo.
+		return fmt.Errorf("remove photo index after file deletion: %w", err)
+	}
+	if s.cache != nil {
+		_ = s.cache.Invalidate(ctx, id)
+	}
+	return nil
+}
+
+func (s *Service) getRaw(ctx context.Context, id string) (Photo, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, owner_id, folder_id, storage_path, filename, mime_type, size, width, height, checksum, captured_at, captured_at_source, file_created_at, indexed_at, source_revision, scan_status, camera_make, camera_model, orientation, focal_length, aperture, iso, gps_latitude, gps_longitude, created_at, updated_at FROM photos WHERE id=? AND deleted_at IS NULL`, id)
+	return scanPhoto(row)
+}
+
+func (s *Service) resolvePhotoName(ctx context.Context, folderID, name string, conflict ConflictStrategy) (string, error) {
+	if taken, err := s.filenameTaken(ctx, folderID, name); err != nil {
+		return "", err
+	} else if !taken {
+		return name, nil
+	}
+	if conflict != ConflictRename {
+		return "", ErrNameConflict
+	}
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	for suffix := 1; suffix < 10000; suffix++ {
+		candidate := base + " (" + strconv.Itoa(suffix) + ")" + ext
+		taken, err := s.filenameTaken(ctx, folderID, candidate)
+		if err != nil {
+			return "", err
+		}
+		if !taken {
+			return candidate, nil
+		}
+	}
+	return "", ErrNameConflict
+}
+
+func (s *Service) filenameTaken(ctx context.Context, folderID, filename string) (bool, error) {
+	var existing string
+	err := s.db.QueryRowContext(ctx, "SELECT filename FROM photos WHERE folder_id=? AND filename=? COLLATE NOCASE AND deleted_at IS NULL LIMIT 1", folderID, filename).Scan(&existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check filename: %w", err)
+	}
+	return true, nil
+}
+
+func newStorageRevision(previous string) string { return previous + ":changed" }
+
+func scanPhoto(row interface{ Scan(...any) error }) (Photo, error) {
+	var photo Photo
+	var width, height sql.NullInt64
+	var fileCreated, captured, indexed, created, updated string
+	var makeValue, modelValue sql.NullString
+	var orientation, iso sql.NullInt64
+	var focal, aperture, latitude, longitude sql.NullFloat64
+	if err := row.Scan(&photo.ID, &photo.OwnerID, &photo.FolderID, &photo.StoragePath, &photo.Filename, &photo.MIMEType, &photo.Size, &width, &height, &photo.Checksum, &captured, &photo.CapturedAtSource, &fileCreated, &indexed, &photo.SourceRevision, &photo.ScanStatus, &makeValue, &modelValue, &orientation, &focal, &aperture, &iso, &latitude, &longitude, &created, &updated); err != nil {
+		return Photo{}, err
+	}
+	photo.Width, photo.Height = int(width.Int64), int(height.Int64)
+	photo.CapturedAt, _ = time.Parse(time.RFC3339Nano, captured)
+	photo.IndexedAt, _ = time.Parse(time.RFC3339Nano, indexed)
+	photo.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	photo.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	if value, err := time.Parse(time.RFC3339Nano, fileCreated); err == nil {
+		photo.FileCreatedAt = &value
+	}
+	if makeValue.Valid {
+		photo.CameraMake = &makeValue.String
+	}
+	if modelValue.Valid {
+		photo.CameraModel = &modelValue.String
+	}
+	if orientation.Valid {
+		value := int(orientation.Int64)
+		photo.Orientation = &value
+	}
+	if iso.Valid {
+		value := int(iso.Int64)
+		photo.ISO = &value
+	}
+	if focal.Valid {
+		value := focal.Float64
+		photo.FocalLength = &value
+	}
+	if aperture.Valid {
+		value := aperture.Float64
+		photo.Aperture = &value
+	}
+	if latitude.Valid {
+		value := latitude.Float64
+		photo.GPSLatitude = &value
+	}
+	if longitude.Valid {
+		value := longitude.Float64
+		photo.GPSLongitude = &value
+	}
 	return photo, nil
 }
 
@@ -376,45 +619,6 @@ func (s *Service) findDuplicate(ctx context.Context, folderID, checksum string) 
 		return "", nil
 	}
 	return id, err
-}
-
-func (s *Service) resolveFilename(ctx context.Context, folderID, filename string, conflict ConflictStrategy) (string, error) {
-	var existing string
-	err := s.db.QueryRowContext(ctx, "SELECT filename FROM photos WHERE folder_id=? AND filename=? AND deleted_at IS NULL LIMIT 1", folderID, filename).Scan(&existing)
-	if errors.Is(err, sql.ErrNoRows) {
-		return filename, nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("check filename: %w", err)
-	}
-	if conflict != ConflictRename {
-		return "", ErrNameConflict
-	}
-	ext := filepath.Ext(filename)
-	base := strings.TrimSuffix(filename, ext)
-	for suffix := 1; suffix < 10000; suffix++ {
-		candidate := base + " (" + strconv.Itoa(suffix) + ")" + ext
-		err := s.db.QueryRowContext(ctx, "SELECT filename FROM photos WHERE folder_id=? AND filename=? AND deleted_at IS NULL LIMIT 1", folderID, candidate).Scan(&existing)
-		if errors.Is(err, sql.ErrNoRows) {
-			return candidate, nil
-		}
-		if err != nil {
-			return "", fmt.Errorf("check renamed filename: %w", err)
-		}
-	}
-	return "", ErrNameConflict
-}
-
-func (s *Service) filenameTaken(ctx context.Context, folderID, filename string) (bool, error) {
-	var existing string
-	err := s.db.QueryRowContext(ctx, "SELECT filename FROM photos WHERE folder_id=? AND filename=? AND deleted_at IS NULL LIMIT 1", folderID, filename).Scan(&existing)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("check filename: %w", err)
-	}
-	return true, nil
 }
 
 func newPhotoID() string {

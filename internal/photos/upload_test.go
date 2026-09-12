@@ -3,6 +3,7 @@ package photos
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
@@ -220,6 +221,94 @@ func TestDatabaseFailureRemovesAtomicallyRenamedFile(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("folder contains %d files after index failure, want none", len(entries))
 	}
+}
+
+func TestPhotoRenameMoveAndConfirmedDeleteUpdateDiskAndIndex(t *testing.T) {
+	fixture := newUploadFixture(t, 1<<20)
+	ctx := context.Background()
+	photo, err := fixture.service.Upload(ctx, fixture.principal, UploadInput{FolderID: fixture.folderID, Filename: "photo.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(jpegBytes(t, 2, 2))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := fixture.service.Rename(ctx, fixture.principal, photo.ID, RenameInput{Name: "renamed.jpg"})
+	if err != nil {
+		t.Fatalf("Rename() error = %v", err)
+	}
+	if renamed.Filename != "renamed.jpg" {
+		t.Fatalf("renamed = %+v", renamed)
+	}
+	secondFolder := newFolderForPhotoTest(t, fixture)
+	moved, err := fixture.service.Move(ctx, fixture.principal, photo.ID, secondFolder)
+	if err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+	if moved.FolderID != secondFolder {
+		t.Fatalf("moved folder = %q", moved.FolderID)
+	}
+	if err := fixture.service.Delete(ctx, fixture.principal, photo.ID, false); !errors.Is(err, ErrConfirmationRequired) {
+		t.Fatalf("Delete(without confirmation) error = %v", err)
+	}
+	if err := fixture.service.Delete(ctx, fixture.principal, photo.ID, true); err != nil {
+		t.Fatalf("Delete(confirmed) error = %v", err)
+	}
+	if _, err := fixture.service.Get(ctx, fixture.principal, photo.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get(deleted) error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPhotoDeleteIndexFailureLeavesHiddenTombstone(t *testing.T) {
+	fixture := newUploadFixture(t, 1<<20)
+	ctx := context.Background()
+	photo, err := fixture.service.Upload(ctx, fixture.principal, UploadInput{FolderID: fixture.folderID, Filename: "photo.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(jpegBytes(t, 2, 2))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.db.Exec(`CREATE TRIGGER reject_photo_delete BEFORE DELETE ON photos BEGIN SELECT RAISE(ABORT, 'forced index failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	defer fixture.service.db.Exec(`DROP TRIGGER reject_photo_delete`)
+	if err := fixture.service.Delete(ctx, fixture.principal, photo.ID, true); err == nil {
+		t.Fatal("Delete() error = nil, want index failure")
+	}
+	if _, err := fixture.service.Get(ctx, fixture.principal, photo.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get(deleted) error = %v, want ErrNotFound", err)
+	}
+	var deletedAt sql.NullString
+	if err := fixture.service.db.QueryRow("SELECT deleted_at FROM photos WHERE id=?", photo.ID).Scan(&deletedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !deletedAt.Valid {
+		t.Fatal("photo tombstone missing after index failure")
+	}
+	path, err := fixture.store.ResolvePath(photo.StoragePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("deleted file stat error = %v, want not exists", err)
+	}
+}
+
+func newFolderForPhotoTest(t *testing.T, fixture uploadFixture) string {
+	t.Helper()
+	var id string
+	if err := fixture.service.db.QueryRow("SELECT id FROM folders WHERE id<>? LIMIT 1", fixture.folderID).Scan(&id); err == nil {
+		return id
+	}
+	ownerID, _, _ := fixture.service.authorizedFolder(context.Background(), fixture.principal, fixture.folderID)
+	_ = ownerID
+	folderPath, err := fixture.store.ResolvePath(filepath.Join("users", fixture.principal.UserID, "second"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(folderPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	id = "f_second"
+	if _, err := fixture.service.db.Exec(`INSERT INTO folders (id, owner_id, storage_path, name, is_shared, created_at, updated_at) VALUES (?, ?, 'users/' || ? || '/second', 'second', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`, id, fixture.principal.UserID, fixture.principal.UserID); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func oversizedPNGHeader(width, height uint32) []byte {
