@@ -15,3 +15,17 @@
 | 1 万/10 万索引性能 | ☐ | `artifacts/performance/*.json` 与 `/usr/bin/time -v` |
 
 发布阻断项包括：任何越权响应、原图丢失或覆盖、备份无法恢复、数据库完整性检查失败、镜像无法启动、或未标记的实机性能缺口。
+
+## 2026-09-12 工作区验证快照
+
+以下记录对应提交 `1d8b9ba`，用于区分本地自动化结果与发布前仍需在目标环境完成的项目：
+
+| 检查 | 结果 | 证据或限制 |
+| --- | --- | --- |
+| Go 单元/集成测试、`go vet`、竞态测试 | 已完成 | `go test ./...`、`go test -race ./internal/... ./tests/integration`、`go vet ./...` |
+| CGO-free 测试与 amd64/arm64 构建 | 已完成 | `CGO_ENABLED=0 go test ./...`；两个 `GOOS=linux` 交叉构建均返回 0 |
+| Web 测试、类型检查、生产构建 | 已完成 | `npm test -- --run`（8 tests）、`npm run typecheck`、`npm run build` |
+| 权限矩阵集成测试 | 已完成 | `TestSecurityPermissionMatrixAcrossResources` 通过 |
+| 1 万/10 万索引基准 | 已完成 | ARM64 Oracle Neoverse-N1 主机；结果详见 `docs/operations/performance.md` |
+| Docker 镜像/Compose 启动与备份恢复 | 未完成 | 当前 Docker daemon socket 返回 permission denied |
+| 浏览器视口、键盘焦点与 NanoPi R5S 负载 | 未完成 | 当前环境没有目标浏览器记录或 NanoPi R5S 实机 |
