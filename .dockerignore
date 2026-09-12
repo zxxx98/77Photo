@@ -1,0 +1,10 @@
+.git
+.gitignore
+.worktrees
+web/node_modules
+web/dist
+data
+*.db
+*.db-shm
+*.db-wal
+README.md
