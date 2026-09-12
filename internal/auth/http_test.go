@@ -51,6 +51,9 @@ func TestHTTPSetupLoginMeAndLogout(t *testing.T) {
 	if meResp.StatusCode != http.StatusOK {
 		t.Fatalf("me status = %d, want 200", meResp.StatusCode)
 	}
+	if meResp.Header.Get(CSRFHeaderName()) != authBody.CSRFToken {
+		t.Fatalf("me csrf header = %q, want %q", meResp.Header.Get(CSRFHeaderName()), authBody.CSRFToken)
+	}
 	_ = meResp.Body.Close()
 
 	logoutReq, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/logout", nil)
@@ -72,6 +75,59 @@ func TestHTTPSetupLoginMeAndLogout(t *testing.T) {
 		t.Fatalf("me after logout status = %d, want 401", meAfter.StatusCode)
 	}
 	_ = meAfter.Body.Close()
+}
+
+func TestHTTPMeRestoresMissingCSRFTokenCookie(t *testing.T) {
+	db, err := dbstore.Open(context.Background(), filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	service := NewService(db, time.Hour, false)
+	_, session, err := service.SetupAdmin(context.Background(), "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewHTTPHandler(service, false))
+	defer server.Close()
+
+	meReq, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/auth/me", nil)
+	meReq.AddCookie(&http.Cookie{Name: SessionCookieName(), Value: session.Token})
+	meResp, err := http.DefaultClient.Do(meReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer meResp.Body.Close()
+	if meResp.StatusCode != http.StatusOK {
+		t.Fatalf("me status = %d, want 200", meResp.StatusCode)
+	}
+	csrf := meResp.Header.Get(CSRFHeaderName())
+	if csrf == "" || csrf == session.CSRFToken {
+		t.Fatalf("me csrf header = %q, want a rotated token", csrf)
+	}
+	var csrfCookie *http.Cookie
+	for _, cookie := range meResp.Cookies() {
+		if cookie.Name == CSRFTokenCookieName() {
+			csrfCookie = cookie
+			break
+		}
+	}
+	if csrfCookie == nil || csrfCookie.Value != csrf {
+		t.Fatalf("me csrf cookie = %#v, want token %q", csrfCookie, csrf)
+	}
+
+	logoutReq, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/logout", nil)
+	logoutReq.AddCookie(&http.Cookie{Name: SessionCookieName(), Value: session.Token})
+	logoutReq.AddCookie(csrfCookie)
+	logoutReq.Header.Set(CSRFHeaderName(), csrf)
+	logoutResp, err := http.DefaultClient.Do(logoutReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logoutResp.Body.Close()
+	if logoutResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("logout status = %d, want 204", logoutResp.StatusCode)
+	}
 }
 
 func TestHTTPLoginFailureIsUniform(t *testing.T) {

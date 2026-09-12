@@ -27,6 +27,7 @@ var (
 
 const (
 	sessionCookieName = "77photo_session"
+	csrfCookieName    = "77photo_csrf"
 	csrfHeaderName    = "X-CSRF-Token"
 )
 
@@ -177,6 +178,28 @@ WHERE s.token_hash = ? AND s.revoked_at IS NULL`, hash).Scan(
 	return account, session, nil
 }
 
+// RotateCSRF replaces the persisted CSRF digest for an active session and
+// returns the new opaque token. The raw token is only returned to the caller
+// so it can be sent to the browser in a response header/cookie.
+func (s *Service) RotateCSRF(ctx context.Context, sessionID string) (string, error) {
+	if sessionID == "" {
+		return "", ErrUnauthorized
+	}
+	token := randomToken()
+	result, err := s.db.ExecContext(ctx, "UPDATE sessions SET csrf_token_hash=? WHERE id=? AND revoked_at IS NULL", hashToken(token), sessionID)
+	if err != nil {
+		return "", fmt.Errorf("rotate csrf token: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("check rotated csrf token: %w", err)
+	}
+	if rows != 1 {
+		return "", ErrUnauthorized
+	}
+	return token, nil
+}
+
 func (s *Service) Revoke(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
@@ -223,15 +246,24 @@ func (s *Service) ValidateCSRF(session Session, supplied string) error {
 	return ErrCSRF
 }
 
-func SessionCookieName() string { return sessionCookieName }
-func CSRFHeaderName() string    { return csrfHeaderName }
+func SessionCookieName() string   { return sessionCookieName }
+func CSRFTokenCookieName() string { return csrfCookieName }
+func CSRFHeaderName() string      { return csrfHeaderName }
 
 func SetSessionCookie(w http.ResponseWriter, session Session, secure bool) {
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: session.Token, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: session.ExpiresAt, MaxAge: int(time.Until(session.ExpiresAt).Seconds())})
 }
 
+// SetCSRFTokenCookie uses the double-submit pattern: the token is readable by
+// the browser so a restored session can repopulate the in-memory API client,
+// while the session cookie remains HttpOnly.
+func SetCSRFTokenCookie(w http.ResponseWriter, token string, expiresAt time.Time, secure bool) {
+	http.SetCookie(w, &http.Cookie{Name: csrfCookieName, Value: token, Path: "/", HttpOnly: false, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: expiresAt, MaxAge: int(time.Until(expiresAt).Seconds())})
+}
+
 func ClearSessionCookie(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Unix(1, 0).UTC()})
+	http.SetCookie(w, &http.Cookie{Name: csrfCookieName, Value: "", Path: "/", HttpOnly: false, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Unix(1, 0).UTC()})
 }
 
 func validateCredentials(username, password string) error {

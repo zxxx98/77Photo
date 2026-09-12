@@ -39,6 +39,19 @@ describe('API client', () => {
     expect(new Headers(logoutInit.headers).get('X-CSRF-Token')).toBe('csrf-value');
   });
 
+  it('captures a CSRF token returned while restoring a session', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'u1', username: 'admin', role: 'admin', is_active: true }), { status: 200, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'restored-csrf' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = createApiClient(fetcher as typeof fetch);
+
+    await client.me();
+    await client.logout();
+
+    const logoutInit = fetcher.mock.calls[1][1] as RequestInit;
+    expect(new Headers(logoutInit.headers).get('X-CSRF-Token')).toBe('restored-csrf');
+  });
+
   it('serializes gallery filters and folder pagination', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
     const client = createApiClient(fetcher as typeof fetch);

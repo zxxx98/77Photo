@@ -136,6 +136,9 @@ paths:
       responses:
         '200':
           description: Current user
+          headers:
+            X-CSRF-Token:
+              $ref: '#/components/headers/CSRFToken'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/User' }

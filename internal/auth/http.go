@@ -101,11 +101,21 @@ func (h *HTTPHandler) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) me(w http.ResponseWriter, r *http.Request) {
-	account, _, _, err := h.authenticate(r)
+	account, session, _, err := h.authenticate(r)
 	if err != nil {
 		writeAuthError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
+	csrfToken := CSRFTokenFromRequest(r)
+	if h.service.ValidateCSRF(session, csrfToken) != nil {
+		csrfToken, err = h.service.RotateCSRF(r.Context(), session.ID)
+		if err != nil {
+			writeAuthError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "could not refresh csrf token", nil)
+			return
+		}
+		SetCSRFTokenCookie(w, csrfToken, session.ExpiresAt, h.secureCookie)
+	}
+	w.Header().Set(CSRFHeaderName(), csrfToken)
 	writeJSON(w, http.StatusOK, account)
 }
 
@@ -141,6 +151,14 @@ func SessionTokenFromRequest(r *http.Request) string {
 	return cookie.Value
 }
 
+func CSRFTokenFromRequest(r *http.Request) string {
+	cookie, err := r.Cookie(CSRFTokenCookieName())
+	if err != nil {
+		return ""
+	}
+	return cookie.Value
+}
+
 func (s *Service) AuthenticateRequest(ctx context.Context, r *http.Request) (Account, Session, string, error) {
 	token := SessionTokenFromRequest(r)
 	account, session, err := s.Current(ctx, token)
@@ -149,6 +167,7 @@ func (s *Service) AuthenticateRequest(ctx context.Context, r *http.Request) (Acc
 
 func writeAuthSession(w http.ResponseWriter, status int, account Account, session Session, secure bool) {
 	SetSessionCookie(w, session, secure)
+	SetCSRFTokenCookie(w, session.CSRFToken, session.ExpiresAt, secure)
 	w.Header().Set("X-CSRF-Token", session.CSRFToken)
 	writeJSON(w, status, map[string]any{"user": account, "csrf_token": session.CSRFToken})
 }

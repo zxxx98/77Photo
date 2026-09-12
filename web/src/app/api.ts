@@ -111,6 +111,8 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
       const error = payload.error ?? {};
       throw new ApiError(response.status, error.code ?? 'REQUEST_FAILED', error.message ?? 'Request failed', error.request_id ?? '');
     }
+    const responseCsrfToken = response.headers.get('X-CSRF-Token');
+    if (responseCsrfToken) csrfToken = responseCsrfToken;
     if (response.status === 204) return undefined;
     return response.json() as Promise<T>;
   }
