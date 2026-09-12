@@ -3,6 +3,7 @@ package folders
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -221,6 +222,10 @@ func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "request body is invalid", nil)
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "request body is invalid", nil)
 		return false
 	}

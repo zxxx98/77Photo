@@ -12,12 +12,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
 	"github.com/zxxx98/77Photo/internal/config"
 	"github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/folders"
 	"github.com/zxxx98/77Photo/internal/httpapi"
+	"github.com/zxxx98/77Photo/internal/indexer"
 	"github.com/zxxx98/77Photo/internal/photos"
+	"github.com/zxxx98/77Photo/internal/shares"
 	"github.com/zxxx98/77Photo/internal/storage"
 	"github.com/zxxx98/77Photo/internal/thumbnails"
 	"github.com/zxxx98/77Photo/internal/users"
@@ -33,6 +36,8 @@ func main() {
 }
 
 func run(parent context.Context, logger *slog.Logger) error {
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	cfg, err := config.LoadFromEnv()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -40,7 +45,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 	if err := cfg.ValidateFilesystem(); err != nil {
 		return fmt.Errorf("validate filesystem: %w", err)
 	}
-	db, err := database.Open(parent, cfg.DBPath)
+	db, err := database.Open(ctx, cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -53,17 +58,23 @@ func run(parent context.Context, logger *slog.Logger) error {
 	}
 	folderService := folders.NewService(db, photoStore)
 	photoService := photos.NewService(db, photoStore, cfg.MaxUploadSize)
+	authorizer := acl.NewAuthorizer(db)
+	folderService.SetAuthorizer(authorizer)
+	photoService.SetAuthorizer(authorizer)
+	shareService := shares.NewService(db)
+	indexerService := indexer.NewServiceWithContext(ctx, db, photoStore, photoService)
+	defer indexerService.Wait()
 	thumbnailService, err := thumbnails.NewService(photoService, photoStore, cfg.CacheDir, cfg.ThumbnailWorkers, thumbnails.DefaultQueueCapacity)
 	if err != nil {
 		return fmt.Errorf("initialize thumbnail service: %w", err)
 	}
 	photoService.SetCacheInvalidator(thumbnailService)
 	photoService.SetThumbnailEnqueuer(thumbnailService)
-	thumbnailService.Start(parent)
+	thumbnailService.Start(ctx)
 	defer thumbnailService.Close()
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, SecureCookies: secureCookies, Static: webassets.Handler()})
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, Shares: shareService, Indexer: indexerService, SecureCookies: secureCookies, Static: webassets.Handler()})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
@@ -72,8 +83,6 @@ func run(parent context.Context, logger *slog.Logger) error {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	serveErr := make(chan error, 1)
 	go func() {
 		logger.Info("server started", "addr", cfg.ListenAddr)

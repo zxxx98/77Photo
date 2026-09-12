@@ -56,6 +56,16 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.list(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/photos/shared/") {
+		folderID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/photos/shared/"), "/")
+		if folderID == "" || strings.Contains(folderID, "/") || r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
+			return
+		}
+		h.listShared(w, r, folderID)
+		return
+	}
 	if !strings.HasPrefix(r.URL.Path, "/api/v1/photos/") {
 		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "route not found", nil)
 		return
@@ -148,6 +158,30 @@ func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		filter.To = &parsed
 	}
+	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
+		limit, parseErr := strconv.Atoi(value)
+		if parseErr != nil {
+			writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "limit is invalid", nil)
+			return
+		}
+		filter.Limit = limit
+	}
+	page, err := h.service.List(r.Context(), principal(account), filter)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+func (h *HTTPHandler) listShared(w http.ResponseWriter, r *http.Request, folderID string) {
+	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	filter := ListFilter{Cursor: r.URL.Query().Get("cursor")}
+	filter.FolderID = &folderID
 	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
 		limit, parseErr := strconv.Atoi(value)
 		if parseErr != nil {
@@ -287,6 +321,7 @@ func (h *HTTPHandler) thumbnail(w http.ResponseWriter, r *http.Request, id strin
 	defer file.Close()
 	w.Header().Set("Content-Type", "image/webp")
 	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.Header().Set("Vary", "Cookie")
 	http.ServeContent(w, r, filepath.Base(path), time.Time{}, file)
 }
 
@@ -334,6 +369,7 @@ func (h *HTTPHandler) preview(w http.ResponseWriter, r *http.Request, id string)
 	defer file.Close()
 	w.Header().Set("Content-Type", "image/webp")
 	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.Header().Set("Vary", "Cookie")
 	http.ServeContent(w, r, filepath.Base(path), time.Time{}, file)
 }
 
@@ -370,6 +406,7 @@ func (h *HTTPHandler) serveOriginal(w http.ResponseWriter, r *http.Request, phot
 	w.Header().Set("Content-Type", photo.MIMEType)
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": photo.Filename}))
 	w.Header().Set("Cache-Control", cacheControl)
+	w.Header().Set("Vary", "Cookie")
 	http.ServeContent(w, r, photo.Filename, photoModTime(photo), file)
 }
 
@@ -456,6 +493,10 @@ func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "request body is invalid", nil)
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "request body is invalid", nil)
 		return false
 	}

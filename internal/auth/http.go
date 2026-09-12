@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -157,6 +158,10 @@ func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
+		writeAuthError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "request body is invalid", nil)
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		writeAuthError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "request body is invalid", nil)
 		return false
 	}

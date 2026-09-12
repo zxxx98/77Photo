@@ -11,6 +11,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
+RUN find internal/webassets/static -mindepth 1 -delete
 COPY --from=web-build /src/web/dist/ ./internal/webassets/static/
 ARG TARGETOS=linux
 ARG TARGETARCH

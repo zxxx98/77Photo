@@ -172,6 +172,10 @@ func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {
 		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "request body is invalid", nil)
 		return false
 	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "request body is invalid", nil)
+		return false
+	}
 	return true
 }
 
@@ -182,7 +186,13 @@ func decodeOptionalBody(w http.ResponseWriter, r *http.Request, target any) erro
 	if err == io.EOF {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return err
+	}
+	return nil
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, message string, details map[string]any) {

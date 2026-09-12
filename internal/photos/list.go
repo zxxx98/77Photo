@@ -70,7 +70,7 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 			}
 			return PhotoPage{}, err
 		}
-		if !acl.CanRead(principal, owner, "") {
+		if !s.canReadFolder(ctx, principal, folderID, owner) {
 			return PhotoPage{}, ErrForbidden
 		}
 	}
@@ -100,10 +100,7 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 		query += ` JOIN (WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id) SELECT id FROM descendants) d ON d.id=p.folder_id`
 		args = append(args, folderID)
 	}
-	if principal.Role != acl.RoleAdmin {
-		where = append(where, "p.owner_id=?")
-		args = append(args, principal.UserID)
-	}
+	appendVisibilityPredicate(&where, &args, principal, s.authorizer != nil)
 	if fromValue != "" {
 		where = append(where, "p.captured_at>=?")
 		args = append(args, fromValue)
@@ -129,6 +126,9 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 		if scanErr != nil {
 			return PhotoPage{}, scanErr
 		}
+		// Visibility is part of the SQL predicate above. Keeping the filter in
+		// the query avoids issuing an ACL lookup while the SQLite result set is
+		// still open (the service intentionally uses one pooled connection).
 		if len(items) < limit {
 			items = append(items, photo)
 		}
@@ -161,10 +161,7 @@ func (s *Service) hasPhotoAfter(ctx context.Context, principal acl.Principal, fo
 		query += ` JOIN (WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id) SELECT id FROM descendants) d ON d.id=p.folder_id`
 		args = append([]any{folderID}, args...)
 	}
-	if principal.Role != acl.RoleAdmin {
-		where = append(where, "p.owner_id=?")
-		args = append(args, principal.UserID)
-	}
+	appendVisibilityPredicate(&where, &args, principal, s.authorizer != nil)
 	if fromValue != "" {
 		where = append(where, "p.captured_at>=?")
 		args = append(args, fromValue)
@@ -180,6 +177,31 @@ func (s *Service) hasPhotoAfter(ctx context.Context, principal acl.Principal, fo
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// appendVisibilityPredicate keeps filtering in SQLite so cursor pagination is
+// based on the visible stream. Without this predicate, a page containing many
+// photos outside a member's ACL could end early and silently skip later shared
+// photos.
+func appendVisibilityPredicate(where *[]string, args *[]any, principal acl.Principal, withShares bool) {
+	if principal.Role == acl.RoleAdmin {
+		return
+	}
+	if !withShares {
+		*where = append(*where, "p.owner_id=?")
+		*args = append(*args, principal.UserID)
+		return
+	}
+	*where = append(*where, `(p.owner_id=? OR EXISTS (
+WITH RECURSIVE ancestors(id) AS (
+    SELECT p.folder_id
+    UNION ALL
+    SELECT f.parent_id FROM folders f JOIN ancestors a ON f.id=a.id WHERE f.parent_id IS NOT NULL
+)
+SELECT 1 FROM shares s JOIN ancestors a ON a.id=s.resource_id
+WHERE s.resource_type='folder' AND s.user_id=?
+))`)
+	*args = append(*args, principal.UserID, principal.UserID)
 }
 
 func (s *Service) encodeCursor(cursor photoCursor) string {

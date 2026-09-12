@@ -6,6 +6,8 @@ import LoginPage from '../features/auth/LoginPage';
 import GalleryWorkspace from '../features/gallery/GalleryWorkspace';
 import FoldersWorkspace from '../features/folders/FoldersWorkspace';
 import UploadWorkspace from '../features/upload/UploadWorkspace';
+import SharingWorkspace from '../features/sharing/SharingWorkspace';
+import SettingsWorkspace from '../features/settings/SettingsWorkspace';
 
 type View = 'gallery' | 'folders' | 'sharing' | 'settings' | 'upload';
 
@@ -74,7 +76,7 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
           </label>
           <button className="button button-primary upload-button" onClick={() => onViewChange('upload')}><Upload size={17} /> <span>Upload</span></button>
         </header>
-        <div className="content-scroll"><Workspace api={api} view={view} /></div>
+        <div className="content-scroll"><Workspace api={api} currentUser={user!} view={view} /></div>
       </main>
       <nav className="mobile-nav" aria-label="Mobile navigation">
         {navItems.slice(0, 3).map(({ id, label, icon: Icon }) => (
@@ -86,18 +88,13 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
   );
 }
 
-function Workspace({ api, view }: { api: ReturnType<typeof createApiClient>; view: View }) {
+function Workspace({ api, currentUser, view }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View }) {
   if (view === 'gallery') return <GalleryWorkspace api={api} />;
   if (view === 'folders') return <FoldersWorkspace api={api} />;
   if (view === 'upload') return <UploadWorkspace api={api} />;
-  const labels: Record<Exclude<View, 'gallery'>, { title: string; detail: string }> = {
-    folders: { title: 'Folders', detail: 'Your folders will appear here as you add memories.' },
-    sharing: { title: 'Sharing', detail: 'Shared family folders stay visible only to invited members.' },
-    settings: { title: 'Settings', detail: 'Account and library settings are kept simple and private.' },
-    upload: { title: 'Upload', detail: 'Choose a folder to start adding photos to your library.' },
-  };
-  const copy = labels[view];
-  return <section className="empty-workspace" aria-labelledby="workspace-title"><span className="eyebrow">77Photo</span><h1 id="workspace-title">{copy.title}</h1><p>{copy.detail}</p><button className="button button-secondary" onClick={() => window.history.back()}>Back to gallery</button></section>;
+  if (view === 'sharing') return <SharingWorkspace api={api} />;
+  if (view === 'settings') return <SettingsWorkspace api={api} currentUser={currentUser} />;
+  return null;
 }
 
 function LoadingScreen() { return <main className="loading-screen" aria-busy="true"><span className="brand-mark" aria-hidden="true">77</span><p>Opening your library…</p></main>; }

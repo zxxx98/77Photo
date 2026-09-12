@@ -13,7 +13,9 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/auth"
 	"github.com/zxxx98/77Photo/internal/folders"
+	"github.com/zxxx98/77Photo/internal/indexer"
 	"github.com/zxxx98/77Photo/internal/photos"
+	"github.com/zxxx98/77Photo/internal/shares"
 	"github.com/zxxx98/77Photo/internal/users"
 )
 
@@ -42,6 +44,8 @@ type Services struct {
 	Folders       *folders.Service
 	Photos        *photos.Service
 	Thumbnails    photos.ThumbnailService
+	Shares        *shares.Service
+	Indexer       *indexer.Service
 	SecureCookies bool
 	Static        http.Handler
 }
@@ -75,6 +79,14 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 		folderHandler := folders.NewHTTPHandler(services.Folders, services.Auth)
 		mux.Handle("/api/v1/folders", folderHandler)
 		mux.Handle("/api/v1/folders/", folderHandler)
+	}
+	if services.Auth != nil && services.Shares != nil {
+		mux.Handle("/api/v1/shares", shares.NewHTTPHandler(services.Shares, services.Auth))
+		mux.Handle("/api/v1/shares/", shares.NewHTTPHandler(services.Shares, services.Auth))
+	}
+	if services.Auth != nil && services.Indexer != nil {
+		mux.Handle("/api/v1/admin/rescan", indexer.NewHTTPHandler(services.Indexer, services.Auth))
+		mux.Handle("/api/v1/admin/rescan/", indexer.NewHTTPHandler(services.Indexer, services.Auth))
 	}
 	if services.Auth != nil && services.Photos != nil {
 		photoHandler := photos.NewHTTPHandler(services.Photos, services.Auth)

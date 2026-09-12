@@ -1,0 +1,10 @@
+{
+  "name": "77Photo",
+  "short_name": "77Photo",
+  "start_url": "/gallery",
+  "display": "standalone",
+  "background_color": "#faf9f7",
+  "theme_color": "#faf9f7",
+  "description": "A quiet, private family photo library.",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

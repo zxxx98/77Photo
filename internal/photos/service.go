@@ -106,13 +106,14 @@ type Photo struct {
 }
 
 type Service struct {
-	db        *sql.DB
-	storage   storage.Store
-	maxSize   int64
-	cache     CacheInvalidator
-	queue     ThumbnailEnqueuer
-	cursorKey [32]byte
-	cursorTTL time.Duration
+	db         *sql.DB
+	storage    storage.Store
+	maxSize    int64
+	cache      CacheInvalidator
+	queue      ThumbnailEnqueuer
+	cursorKey  [32]byte
+	cursorTTL  time.Duration
+	authorizer *acl.Authorizer
 }
 
 func NewService(db *sql.DB, store storage.Store, maxUploadSize int64) *Service {
@@ -127,6 +128,32 @@ func NewService(db *sql.DB, store storage.Store, maxUploadSize int64) *Service {
 func (s *Service) SetCacheInvalidator(invalidator CacheInvalidator) { s.cache = invalidator }
 
 func (s *Service) SetThumbnailEnqueuer(enqueuer ThumbnailEnqueuer) { s.queue = enqueuer }
+
+func (s *Service) SetAuthorizer(authorizer *acl.Authorizer) { s.authorizer = authorizer }
+
+func (s *Service) canRead(ctx context.Context, principal acl.Principal, photo Photo) bool {
+	if s.authorizer == nil {
+		return acl.CanRead(principal, photo.OwnerID, "")
+	}
+	ok, err := s.authorizer.CanRead(ctx, principal, photo.FolderID)
+	return err == nil && ok
+}
+
+func (s *Service) canWrite(ctx context.Context, principal acl.Principal, photo Photo) bool {
+	if s.authorizer == nil {
+		return acl.CanWrite(principal, photo.OwnerID, "")
+	}
+	ok, err := s.authorizer.CanWrite(ctx, principal, photo.FolderID)
+	return err == nil && ok
+}
+
+func (s *Service) canReadFolder(ctx context.Context, principal acl.Principal, folderID, ownerID string) bool {
+	if s.authorizer == nil {
+		return acl.CanRead(principal, ownerID, "")
+	}
+	ok, err := s.authorizer.CanRead(ctx, principal, folderID)
+	return err == nil && ok
+}
 
 func (s *Service) Upload(ctx context.Context, principal acl.Principal, input UploadInput) (Photo, error) {
 	if input.Body == nil || s.maxSize < 1 {
@@ -273,7 +300,7 @@ func (s *Service) Get(ctx context.Context, principal acl.Principal, id string) (
 	if err != nil {
 		return Photo{}, err
 	}
-	if !acl.CanRead(principal, photo.OwnerID, "") {
+	if !s.canRead(ctx, principal, photo) {
 		return Photo{}, ErrForbidden
 	}
 	return photo, nil
@@ -297,7 +324,7 @@ func (s *Service) Rename(ctx context.Context, principal acl.Principal, id string
 	if err != nil {
 		return Photo{}, err
 	}
-	if !acl.CanWrite(principal, photo.OwnerID, "") {
+	if !s.canWrite(ctx, principal, photo) {
 		return Photo{}, ErrForbidden
 	}
 	if err := storage.ValidateName(input.Name); err != nil {
@@ -340,7 +367,7 @@ func (s *Service) MoveWithConflict(ctx context.Context, principal acl.Principal,
 	if err != nil {
 		return Photo{}, err
 	}
-	if !acl.CanWrite(principal, photo.OwnerID, "") {
+	if !s.canWrite(ctx, principal, photo) {
 		return Photo{}, ErrForbidden
 	}
 	var targetOwner, targetStorage string
@@ -350,8 +377,14 @@ func (s *Service) MoveWithConflict(ctx context.Context, principal acl.Principal,
 		}
 		return Photo{}, fmt.Errorf("load target folder: %w", err)
 	}
-	if targetOwner != photo.OwnerID || !acl.CanWrite(principal, targetOwner, "") {
+	if targetOwner != photo.OwnerID || !s.canWrite(ctx, principal, photo) {
 		return Photo{}, ErrForbidden
+	}
+	if s.authorizer != nil {
+		ok, authErr := s.authorizer.CanWrite(ctx, principal, targetFolderID)
+		if authErr != nil || !ok {
+			return Photo{}, ErrForbidden
+		}
 	}
 	if targetFolderID == photo.FolderID {
 		return photo, nil
@@ -390,7 +423,7 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 	if err != nil {
 		return err
 	}
-	if !acl.CanWrite(principal, photo.OwnerID, "") {
+	if !s.canWrite(ctx, principal, photo) {
 		return ErrForbidden
 	}
 	deletedAt := formatTime(time.Now().UTC())
@@ -634,7 +667,12 @@ func (s *Service) authorizedFolder(ctx context.Context, principal acl.Principal,
 		}
 		return "", "", fmt.Errorf("load photo folder: %w", err)
 	}
-	if !acl.CanWrite(principal, ownerID, "") {
+	if s.authorizer != nil {
+		ok, authErr := s.authorizer.CanWrite(ctx, principal, folderID)
+		if authErr != nil || !ok {
+			return "", "", ErrForbidden
+		}
+	} else if !acl.CanWrite(principal, ownerID, "") {
 		return "", "", ErrForbidden
 	}
 	return ownerID, storagePath, nil

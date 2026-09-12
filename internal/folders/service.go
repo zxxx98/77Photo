@@ -26,18 +26,19 @@ var (
 )
 
 type Service struct {
-	db      *sql.DB
-	storage storage.Store
+	db         *sql.DB
+	storage    storage.Store
+	authorizer *acl.Authorizer
 }
 
 type CreateInput struct {
-	Name     string
-	ParentID *string
+	Name     string  `json:"name"`
+	ParentID *string `json:"parent_id,omitempty"`
 }
 
 type RenameInput struct {
-	Name     string
-	Conflict string
+	Name     string `json:"name"`
+	Conflict string `json:"conflict,omitempty"`
 }
 
 type Folder struct {
@@ -56,6 +57,24 @@ type Folder struct {
 
 func NewService(db *sql.DB, store storage.Store) *Service { return &Service{db: db, storage: store} }
 
+func (s *Service) SetAuthorizer(authorizer *acl.Authorizer) { s.authorizer = authorizer }
+
+func (s *Service) canRead(ctx context.Context, principal acl.Principal, folder Folder) bool {
+	if s.authorizer == nil {
+		return acl.CanRead(principal, folder.OwnerID, "")
+	}
+	ok, err := s.authorizer.CanRead(ctx, principal, folder.ID)
+	return err == nil && ok
+}
+
+func (s *Service) canWrite(ctx context.Context, principal acl.Principal, folder Folder) bool {
+	if s.authorizer == nil {
+		return acl.CanWrite(principal, folder.OwnerID, "")
+	}
+	ok, err := s.authorizer.CanWrite(ctx, principal, folder.ID)
+	return err == nil && ok
+}
+
 func (s *Service) List(ctx context.Context, principal acl.Principal, parentID *string) ([]Folder, error) {
 	if parentID != nil {
 		parent, err := s.getRaw(ctx, *parentID)
@@ -65,7 +84,7 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, parentID *s
 		if err != nil {
 			return nil, fmt.Errorf("load parent folder: %w", err)
 		}
-		if !acl.CanRead(principal, parent.OwnerID, "") {
+		if !s.canRead(ctx, principal, parent) {
 			return nil, ErrForbidden
 		}
 	}
@@ -87,22 +106,25 @@ FROM folders WHERE parent_id=? ORDER BY name COLLATE NOCASE, id`, *parentID)
 		return nil, fmt.Errorf("list folders: %w", err)
 	}
 	defer rows.Close()
-	items := make([]Folder, 0)
+	allItems := make([]Folder, 0)
 	for rows.Next() {
 		folder, err := scanFolder(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan folder: %w", err)
 		}
-		if !acl.CanRead(principal, folder.OwnerID, "") {
-			continue
-		}
-		items = append(items, folder)
+		allItems = append(allItems, folder)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list folder rows: %w", err)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, fmt.Errorf("close folder rows: %w", err)
+	}
+	items := make([]Folder, 0, len(allItems))
+	for _, folder := range allItems {
+		if s.canRead(ctx, principal, folder) {
+			items = append(items, folder)
+		}
 	}
 	for i := range items {
 		if err := s.addCounts(ctx, &items[i]); err != nil {
@@ -125,7 +147,7 @@ func (s *Service) Get(ctx context.Context, principal acl.Principal, id string) (
 	if err != nil {
 		return Folder{}, fmt.Errorf("get folder: %w", err)
 	}
-	if !acl.CanRead(principal, folder.OwnerID, "") {
+	if !s.canRead(ctx, principal, folder) {
 		return Folder{}, ErrForbidden
 	}
 	if err := s.addCounts(ctx, &folder); err != nil {
@@ -152,7 +174,7 @@ func (s *Service) Create(ctx context.Context, principal acl.Principal, input Cre
 		if err != nil {
 			return Folder{}, fmt.Errorf("load parent folder: %w", err)
 		}
-		if !acl.CanWrite(principal, parent.OwnerID, "") {
+		if !s.canWrite(ctx, principal, parent) {
 			return Folder{}, ErrForbidden
 		}
 		ownerID = parent.OwnerID
@@ -197,7 +219,7 @@ func (s *Service) Rename(ctx context.Context, principal acl.Principal, id string
 	if err != nil {
 		return Folder{}, err
 	}
-	if !acl.CanWrite(principal, folder.OwnerID, "") {
+	if !s.canWrite(ctx, principal, folder) {
 		return Folder{}, ErrForbidden
 	}
 	if err := storage.ValidateName(input.Name); err != nil {
@@ -247,7 +269,7 @@ func (s *Service) MoveWithConflict(ctx context.Context, principal acl.Principal,
 	if err != nil {
 		return Folder{}, err
 	}
-	if !acl.CanWrite(principal, folder.OwnerID, "") || !acl.CanWrite(principal, target.OwnerID, "") || folder.OwnerID != target.OwnerID {
+	if !s.canWrite(ctx, principal, folder) || !s.canWrite(ctx, principal, target) || folder.OwnerID != target.OwnerID {
 		return Folder{}, ErrForbidden
 	}
 	if id == targetID || s.isDescendant(ctx, id, targetID) {
@@ -285,7 +307,7 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 	if err != nil {
 		return err
 	}
-	if !acl.CanWrite(principal, folder.OwnerID, "") {
+	if !s.canWrite(ctx, principal, folder) {
 		return ErrForbidden
 	}
 	var children, photos int

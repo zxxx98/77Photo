@@ -2,8 +2,6 @@ services:
   77photo:
     build:
       context: .
-      platforms:
-        - linux/amd64
     image: 77photo:local
     restart: unless-stopped
     ports:

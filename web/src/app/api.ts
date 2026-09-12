@@ -49,6 +49,15 @@ export interface UploadProgress {
   total: number;
 }
 
+export interface Share {
+  id: string;
+  resource_type: 'folder';
+  resource_id: string;
+  user_id: string;
+  permission: 'read' | 'write';
+  created_at: string;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -75,6 +84,14 @@ export interface ApiClient {
   renamePhoto(id: string, name: string, conflict?: 'reject' | 'rename'): Promise<Photo>;
   movePhoto(id: string, folderId: string, conflict?: 'reject' | 'rename'): Promise<Photo>;
   deletePhoto(id: string): Promise<void>;
+  listShares(): Promise<{ items: Share[] }>;
+  createShare(input: { folder_id: string; user_id: string; permission: 'read' | 'write' }): Promise<Share>;
+  revokeShare(id: string): Promise<void>;
+  listUsers(): Promise<{ items: User[] }>;
+  createUser(input: { username: string; password: string; role: Role }): Promise<User>;
+  updateUser(id: string, input: Partial<Pick<User, 'username' | 'role' | 'is_active'>> & { password?: string }): Promise<User>;
+  deleteUser(id: string): Promise<void>;
+  startRescan(): Promise<{ id: string; status: string }>;
 }
 
 type Fetcher = typeof fetch;
@@ -143,5 +160,13 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     renamePhoto: (id, name, conflict = 'reject') => request<Photo>(`/api/v1/photos/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name, conflict }) }) as Promise<Photo>,
     movePhoto: (id, folderId, conflict = 'reject') => request<Photo>(`/api/v1/photos/${encodeURIComponent(id)}/move`, { method: 'POST', body: JSON.stringify({ target_folder_id: folderId, conflict }) }) as Promise<Photo>,
     deletePhoto: async (id) => { await request(`/api/v1/photos/${encodeURIComponent(id)}?confirm=true`, { method: 'DELETE' }); },
+    listShares: () => request<{ items: Share[] }>('/api/v1/shares') as Promise<{ items: Share[] }>,
+    createShare: (input) => request<Share>('/api/v1/shares', { method: 'POST', body: JSON.stringify(input) }) as Promise<Share>,
+    revokeShare: async (id) => { await request(`/api/v1/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }); },
+    listUsers: () => request<{ items: User[] }>('/api/v1/users') as Promise<{ items: User[] }>,
+    createUser: (input) => request<User>('/api/v1/users', { method: 'POST', body: JSON.stringify(input) }) as Promise<User>,
+    updateUser: (id, input) => request<User>(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }) as Promise<User>,
+    deleteUser: async (id) => { await request(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ photo_action: 'retain' }) }); },
+    startRescan: () => request<{ id: string; status: string }>('/api/v1/admin/rescan', { method: 'POST', body: JSON.stringify({}) }) as Promise<{ id: string; status: string }>,
   };
 }

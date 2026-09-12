@@ -1,6 +1,7 @@
 /data/
 /web/node_modules/
 /web/dist/
+/artifacts/
 *.db
 *.db-shm
 *.db-wal
