@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LoaderCircle, RefreshCw } from 'lucide-react';
+import { ArrowUpRight, LoaderCircle, RefreshCw } from 'lucide-react';
 import type { ApiClient, Photo } from '../../app/api';
 import Viewer from '../viewer/Viewer';
 
@@ -46,16 +46,25 @@ export default function GalleryWorkspace({ api }: { api: ApiClient }) {
   const groups = useMemo(() => groupByDate(photos), [photos]);
   return (
     <section className="gallery-workspace" aria-labelledby="gallery-title">
-      <div className="workspace-heading"><div><span className="eyebrow">Your library</span><h1 id="gallery-title">Timeline</h1></div><button className="view-toggle" aria-label="Refresh gallery" onClick={() => void load()}><RefreshCw size={18} /></button></div>
-      <div className="filter-row" aria-label="Gallery filters"><span className="filter-chip is-active">All photos</span><span className="filter-hint">{photos.length ? `${photos.length} memories` : 'Private by default'}</span></div>
+      <div className="workspace-heading gallery-heading"><div><span className="eyebrow">Your library</span><h1 id="gallery-title">Timeline</h1><p className="gallery-intro">A clear view of the moments you keep close.</p></div><div className="gallery-heading-actions"><span className="gallery-count">{photos.length ? `${photos.length} loaded` : 'No photos yet'}</span><button className="view-toggle" aria-label="Refresh gallery" onClick={() => void load()}><RefreshCw size={18} /></button></div></div>
+      <div className="filter-row" aria-label="Gallery filters"><button type="button" className="filter-chip is-active">All photos</button><span className="filter-hint">{photos.length ? 'Private by default' : 'Your private library'}</span></div>
       {loading && <div className="inline-state"><LoaderCircle className="spin" size={18} /> Loading your library…</div>}
       {!loading && error && <div className="inline-state" role="alert">{error}<button className="button button-secondary" onClick={() => void load()}>Retry</button></div>}
-      {!loading && !error && photos.length === 0 && <div className="empty-timeline"><span className="eyebrow">Your library</span><h2>Start with a first memory</h2><p>Upload a photo and it will appear here, grouped by the day it was captured.</p></div>}
+      {!loading && !error && photos.length === 0 && <EmptyTimeline />}
       {!loading && !error && groups.map(([date, items]) => <TimelineGroup key={date} date={date} photos={items} onSelect={(photo) => setSelected(photos.findIndex((item) => item.id === photo.id))} />)}
       <div ref={sentinel} className="gallery-sentinel" aria-hidden="true">{loadingMore && <LoaderCircle className="spin" size={18} />}</div>
       {selected !== null && <Viewer api={api} photos={photos} selected={selected} onClose={() => setSelected(null)} onDeleted={(id) => setPhotos((current) => current.filter((photo) => photo.id !== id))} onUpdated={(photo) => setPhotos((current) => current.map((item) => item.id === photo.id ? photo : item))} />}
     </section>
   );
+}
+
+function EmptyTimeline() {
+  return <div className="empty-timeline"><div className="empty-timeline-copy"><span className="eyebrow">Your first roll</span><h2>Bring a memory into view.</h2><p>Upload one photo and your library will start taking shape here, grouped by the day it was captured.</p><button className="button button-primary empty-upload" onClick={openUpload}><ArrowUpRight size={17} /> Upload first photo</button><span className="empty-note">JPEG, PNG, MP4 or WebM · stored on your server</span></div><div className="empty-mosaic" aria-hidden="true"><div className="memory-card memory-card-back memory-card-sage" /><div className="memory-card memory-card-back memory-card-blush" /><div className="memory-card memory-card-main"><div className="memory-card-image" /><div className="memory-card-caption"><span>First memory</span><span>Today</span></div></div><span className="memory-stamp">77</span></div></div>;
+}
+
+function openUpload() {
+  window.history.pushState({}, '', '#/upload');
+  window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
 function TimelineGroup({ date, photos, onSelect }: { date: string; photos: Photo[]; onSelect: (photo: Photo) => void }) {

@@ -2,6 +2,7 @@
 /web/node_modules/
 /web/dist/
 /artifacts/
+.superpowers/
 *.db
 *.db-shm
 *.db-wal
