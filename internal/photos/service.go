@@ -106,15 +106,22 @@ type Photo struct {
 }
 
 type Service struct {
-	db      *sql.DB
-	storage storage.Store
-	maxSize int64
-	cache   CacheInvalidator
-	queue   ThumbnailEnqueuer
+	db        *sql.DB
+	storage   storage.Store
+	maxSize   int64
+	cache     CacheInvalidator
+	queue     ThumbnailEnqueuer
+	cursorKey [32]byte
+	cursorTTL time.Duration
 }
 
 func NewService(db *sql.DB, store storage.Store, maxUploadSize int64) *Service {
-	return &Service{db: db, storage: store, maxSize: maxUploadSize}
+	service := &Service{db: db, storage: store, maxSize: maxUploadSize, cursorTTL: 15 * time.Minute}
+	if _, err := rand.Read(service.cursorKey[:]); err != nil {
+		fallback := sha256.Sum256([]byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
+		copy(service.cursorKey[:], fallback[:])
+	}
+	return service
 }
 
 func (s *Service) SetCacheInvalidator(invalidator CacheInvalidator) { s.cache = invalidator }

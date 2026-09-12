@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -46,6 +47,15 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.upload(w, r)
 		return
 	}
+	if r.URL.Path == "/api/v1/photos" || r.URL.Path == "/api/v1/photos/" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
+			return
+		}
+		h.list(w, r)
+		return
+	}
 	if !strings.HasPrefix(r.URL.Path, "/api/v1/photos/") {
 		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "route not found", nil)
 		return
@@ -75,6 +85,26 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.thumbnail(w, r, sourceID)
 		return
 	}
+	if strings.HasSuffix(id, "/preview") {
+		sourceID := strings.TrimSuffix(id, "/preview")
+		if sourceID == "" || strings.Contains(sourceID, "/") || r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
+			return
+		}
+		h.preview(w, r, sourceID)
+		return
+	}
+	if strings.HasSuffix(id, "/original") {
+		sourceID := strings.TrimSuffix(id, "/original")
+		if sourceID == "" || strings.Contains(sourceID, "/") || r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
+			return
+		}
+		h.original(w, r, sourceID)
+		return
+	}
 	if strings.Contains(id, "/") {
 		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "route not found", nil)
 		return
@@ -90,6 +120,48 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "GET, PATCH, DELETE")
 		writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
 	}
+}
+
+func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
+	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	filter := ListFilter{Cursor: r.URL.Query().Get("cursor")}
+	if value := strings.TrimSpace(r.URL.Query().Get("folder_id")); value != "" {
+		filter.FolderID = &value
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("from")); value != "" {
+		parsed, parseErr := time.Parse(time.RFC3339Nano, value)
+		if parseErr != nil || !strings.ContainsAny(value, "Z+-") {
+			writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "from timestamp is invalid", nil)
+			return
+		}
+		filter.From = &parsed
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("to")); value != "" {
+		parsed, parseErr := time.Parse(time.RFC3339Nano, value)
+		if parseErr != nil || !strings.ContainsAny(value, "Z+-") {
+			writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "to timestamp is invalid", nil)
+			return
+		}
+		filter.To = &parsed
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
+		limit, parseErr := strconv.Atoi(value)
+		if parseErr != nil {
+			writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "limit is invalid", nil)
+			return
+		}
+		filter.Limit = limit
+	}
+	page, err := h.service.List(r.Context(), principal(account), filter)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (h *HTTPHandler) upload(w http.ResponseWriter, r *http.Request) {
@@ -218,6 +290,96 @@ func (h *HTTPHandler) thumbnail(w http.ResponseWriter, r *http.Request, id strin
 	http.ServeContent(w, r, filepath.Base(path), time.Time{}, file)
 }
 
+func (h *HTTPHandler) preview(w http.ResponseWriter, r *http.Request, id string) {
+	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	photo, err := h.service.Get(r.Context(), principal(account), id)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	if strings.HasPrefix(photo.MIMEType, "video/") {
+		h.serveOriginal(w, r, photo, "private, max-age=60")
+		return
+	}
+	if h.thumbnails == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "THUMBNAIL_UNAVAILABLE", "thumbnail service is unavailable", nil)
+		return
+	}
+	state, path, err := h.thumbnails.Ensure(r.Context(), id, 1280)
+	if err != nil {
+		if errors.Is(err, thumbnails.ErrQueueFull) {
+			writeJSON(w, http.StatusAccepted, map[string]any{"status": string(thumbnails.Pending), "photo_id": id})
+			return
+		}
+		if errors.Is(err, thumbnails.ErrInvalidSize) || errors.Is(err, thumbnails.ErrUnsupported) {
+			writeError(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "preview is not available for this media", nil)
+			return
+		}
+		writeError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "preview could not be prepared", nil)
+		return
+	}
+	if state != thumbnails.Ready {
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": string(state), "photo_id": id})
+		return
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": string(thumbnails.Pending), "photo_id": id})
+		return
+	}
+	defer file.Close()
+	w.Header().Set("Content-Type", "image/webp")
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	http.ServeContent(w, r, filepath.Base(path), time.Time{}, file)
+}
+
+func (h *HTTPHandler) original(w http.ResponseWriter, r *http.Request, id string) {
+	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	photo, err := h.service.Get(r.Context(), principal(account), id)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	h.serveOriginal(w, r, photo, "private, no-store")
+}
+
+func (h *HTTPHandler) serveOriginal(w http.ResponseWriter, r *http.Request, photo Photo, cacheControl string) {
+	path, err := h.service.storage.ResolvePath(photo.StoragePath)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "photo file not found", nil)
+		return
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, r, http.StatusNotFound, "NOT_FOUND", "photo file not found", nil)
+			return
+		}
+		writeError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "photo file could not be opened", nil)
+		return
+	}
+	defer file.Close()
+	w.Header().Set("Content-Type", photo.MIMEType)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": photo.Filename}))
+	w.Header().Set("Cache-Control", cacheControl)
+	http.ServeContent(w, r, photo.Filename, photoModTime(photo), file)
+}
+
+func photoModTime(photo Photo) time.Time {
+	if photo.FileCreatedAt != nil {
+		return photo.FileCreatedAt.UTC()
+	}
+	return time.Time{}
+}
+
 func (h *HTTPHandler) rename(w http.ResponseWriter, r *http.Request, id string) {
 	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
@@ -303,9 +465,17 @@ func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {
 func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):
-		writeError(w, r, http.StatusForbidden, "WRITE_FORBIDDEN", "photo folder is not writable", nil)
+		code, message := "WRITE_FORBIDDEN", "photo folder is not writable"
+		if r.Method == http.MethodGet {
+			code, message = "READ_FORBIDDEN", "photo is not accessible"
+		}
+		writeError(w, r, http.StatusForbidden, code, message, nil)
 	case errors.Is(err, ErrNotFound):
 		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "photo not found", nil)
+	case errors.Is(err, ErrInvalidCursor), errors.Is(err, ErrInvalidFilter):
+		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "photo query is invalid", nil)
+	case errors.Is(err, ErrCursorExpired):
+		writeError(w, r, http.StatusGone, "CURSOR_EXPIRED", "cursor expired; restart pagination without cursor", nil)
 	case errors.Is(err, storage.ErrInvalidName):
 		writeError(w, r, http.StatusUnprocessableEntity, "INVALID_REQUEST", "filename is invalid", nil)
 	case errors.Is(err, ErrUploadTooLarge):

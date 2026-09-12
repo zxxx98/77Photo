@@ -155,6 +155,49 @@ func TestHTTPThumbnailQueuesMissingVariantThenServesWebP(t *testing.T) {
 	})
 }
 
+func TestHTTPListAndOriginalRangeUsePhotoACL(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, session, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	photoService := NewService(db, store, 1<<20)
+	folder, err := folders.NewService(db, store).Create(ctx, acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}, folders.CreateInput{Name: "uploads"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	photo, err := photoService.Upload(ctx, acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}, UploadInput{FolderID: folder.ID, Filename: "photo.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(jpegTestBytes(t))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHTTPHandler(photoService, authService)
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/photos?limit=10", nil)
+	listReq.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
+	listRes := httptest.NewRecorder()
+	handler.ServeHTTP(listRes, listReq)
+	if listRes.Code != http.StatusOK || !bytes.Contains(listRes.Body.Bytes(), []byte(photo.ID)) {
+		t.Fatalf("list response = %d %s", listRes.Code, listRes.Body.String())
+	}
+	rangeReq := httptest.NewRequest(http.MethodGet, "/api/v1/photos/"+photo.ID+"/original", nil)
+	rangeReq.Header.Set("Range", "bytes=0-4")
+	rangeReq.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
+	rangeRes := httptest.NewRecorder()
+	handler.ServeHTTP(rangeRes, rangeReq)
+	if rangeRes.Code != http.StatusPartialContent || rangeRes.Header().Get("Content-Range") == "" || len(rangeRes.Body.Bytes()) != 5 {
+		t.Fatalf("range response = %d headers=%v len=%d", rangeRes.Code, rangeRes.Header(), len(rangeRes.Body.Bytes()))
+	}
+}
+
 func waitForThumbnail(t *testing.T, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
