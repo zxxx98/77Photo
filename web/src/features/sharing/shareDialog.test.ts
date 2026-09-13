@@ -30,11 +30,11 @@ describe('share dialog rules', () => {
     expect(successMessage('folder', 'forever')).toContain('Folder shared forever');
   });
 
-  it('offers exactly one checkbox choice for each duration', () => {
+  it('provides explanatory copy for each share duration', () => {
     expect(shareDurations).toEqual([
-      { value: '1_day', label: '1 day' },
-      { value: '7_days', label: '7 days' },
-      { value: 'forever', label: 'Forever' },
+      { value: '1_day', label: '1 day', detail: 'Short-term access' },
+      { value: '7_days', label: '7 days', detail: 'Recommended' },
+      { value: 'forever', label: 'Forever', detail: 'Does not expire' },
     ]);
     expect(selectShareDuration('forever', '1_day')).toBe('1_day');
   });

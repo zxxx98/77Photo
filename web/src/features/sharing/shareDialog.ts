@@ -1,9 +1,9 @@
 import type { ShareDuration, ShareResourceType } from '../../app/api';
 
-export const shareDurations: Array<{ value: ShareDuration; label: string }> = [
-  { value: '1_day', label: '1 day' },
-  { value: '7_days', label: '7 days' },
-  { value: 'forever', label: 'Forever' },
+export const shareDurations: Array<{ value: ShareDuration; label: string; detail: string }> = [
+  { value: '1_day', label: '1 day', detail: 'Short-term access' },
+  { value: '7_days', label: '7 days', detail: 'Recommended' },
+  { value: 'forever', label: 'Forever', detail: 'Does not expire' },
 ];
 
 export function selectShareDuration(_current: ShareDuration, next: ShareDuration): ShareDuration {
