@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { Check, Copy, Link as LinkIcon, Share2, X } from 'lucide-react';
 import type { ApiClient, ShareDuration, ShareLink, ShareResourceType } from '../../app/api';
-import { selectShareDuration, shareCopy, shareDurations, successMessage } from './shareDialog';
+import { createCopyLinkHandler, selectShareDuration, shareCopy, shareDurations, successMessage } from './shareDialog';
 
 type ShareResource = { type: ShareResourceType; id: string; name: string };
 
@@ -69,7 +69,7 @@ export default function ShareDialog({ api, resource, onClose }: { api: ApiClient
       </form> : <div className="share-dialog-success">
         <p className="share-success-message" role="status">{successMessage(resource.type, duration)}</p>
         <label className="share-url-field">Share link<input value={link.url} readOnly aria-label="Share link" /></label>
-        <button className="button button-secondary share-copy-button" type="button" onClick={() => void copyLink}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? 'Copied' : 'Copy link'}</button>
+        <button className="button button-secondary share-copy-button" type="button" onClick={createCopyLinkHandler(copyLink)}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? 'Copied' : 'Copy link'}</button>
         {error && <p className="form-message" role="alert">{error}</p>}
         <p className="share-dialog-note">Keep this link private if it grants access to personal memories.</p>
       </div>}

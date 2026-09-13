@@ -10,6 +10,10 @@ export function selectShareDuration(_current: ShareDuration, next: ShareDuration
   return next;
 }
 
+export function createCopyLinkHandler(copyLink: () => Promise<void>): () => void {
+  return () => void copyLink();
+}
+
 export function shareCopy(type: ShareResourceType, name: string) {
   const resource = type === 'photo' ? 'photo' : 'folder';
   return {

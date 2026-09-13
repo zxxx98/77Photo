@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { selectShareDuration, shareButtonLabel, shareCopy, shareDurations, successMessage } from './shareDialog';
+import { createCopyLinkHandler, selectShareDuration, shareButtonLabel, shareCopy, shareDurations, successMessage } from './shareDialog';
 
 describe('share dialog rules', () => {
+  it('runs the copy action when the copy button is clicked', () => {
+    let copyCalls = 0;
+    const handleCopy = createCopyLinkHandler(async () => {
+      copyCalls += 1;
+    });
+
+    handleCopy();
+
+    expect(copyCalls).toBe(1);
+  });
+
   it('selects the newly checked duration', () => {
     expect(selectShareDuration('1_day', '7_days')).toBe('7_days');
     expect(selectShareDuration('7_days', 'forever')).toBe('forever');
