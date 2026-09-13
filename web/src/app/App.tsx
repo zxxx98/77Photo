@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Folder, Image, LogOut, Menu, Search, Settings, Share2, Upload, X } from 'lucide-react';
 import { createApiClient } from './api';
 import { SessionStore } from './auth';
+import { openUploadPicker } from './uploadPicker';
 import LoginPage from '../features/auth/LoginPage';
 import GalleryWorkspace from '../features/gallery/GalleryWorkspace';
 import FoldersWorkspace from '../features/folders/FoldersWorkspace';
 import UploadWorkspace from '../features/upload/UploadWorkspace';
 import SharingWorkspace from '../features/sharing/SharingWorkspace';
 import SettingsWorkspace from '../features/settings/SettingsWorkspace';
+import type { UploadSelection } from '../features/upload/uploadSelection';
 
 type View = 'gallery' | 'folders' | 'sharing' | 'settings' | 'upload';
 
@@ -38,7 +40,24 @@ export default function App() {
 
 function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof createApiClient>; store: SessionStore; view: View; onViewChange: (view: View) => void }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [uploadSelection, setUploadSelection] = useState<UploadSelection | null>(null);
+  const pickerRef = useRef<HTMLInputElement>(null);
+  const selectionIdRef = useRef(0);
   const user = store.snapshot.user;
+  const chooseUpload = useCallback(() => {
+    openUploadPicker(() => onViewChange('upload'), pickerRef.current);
+  }, [onViewChange]);
+  const handlePickerChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (files.length === 0) return;
+    const id = selectionIdRef.current;
+    selectionIdRef.current += 1;
+    setUploadSelection({ id, files });
+  }, []);
+  const consumeUploadSelection = useCallback((id: number) => {
+    setUploadSelection((current) => current?.id === id ? null : current);
+  }, []);
   return (
     <div className="app-frame">
       <button className={`scrim ${sidebarOpen ? 'is-visible' : ''}`} aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />
@@ -74,9 +93,10 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
             <span className="sr-only">Search your library</span>
             <input placeholder="Search your library" disabled aria-label="Search your library" />
           </label>
-          <button className="button button-primary upload-button" onClick={() => onViewChange('upload')}><Upload size={17} /> <span>Upload</span></button>
+          <button className="button button-primary upload-button" onClick={chooseUpload}><Upload size={17} /> <span>Upload</span></button>
+          <input ref={pickerRef} className="sr-only" type="file" accept="image/jpeg,image/png,video/mp4,video/webm" multiple tabIndex={-1} aria-hidden="true" onChange={handlePickerChange} />
         </header>
-        <div className="content-scroll"><Workspace api={api} currentUser={user!} view={view} /></div>
+        <div className="content-scroll"><Workspace api={api} currentUser={user!} view={view} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} /></div>
       </main>
       <nav className="mobile-nav" aria-label="Mobile navigation">
         {navItems.slice(0, 3).map(({ id, label, icon: Icon }) => (
@@ -88,10 +108,10 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
   );
 }
 
-function Workspace({ api, currentUser, view }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View }) {
+function Workspace({ api, currentUser, view, uploadSelection, onUploadSelectionConsumed }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View; uploadSelection: UploadSelection | null; onUploadSelectionConsumed: (id: number) => void }) {
   if (view === 'gallery') return <GalleryWorkspace api={api} />;
   if (view === 'folders') return <FoldersWorkspace api={api} />;
-  if (view === 'upload') return <UploadWorkspace api={api} />;
+  if (view === 'upload') return <UploadWorkspace api={api} selection={uploadSelection} onSelectionConsumed={onUploadSelectionConsumed} />;
   if (view === 'sharing') return <SharingWorkspace api={api} />;
   if (view === 'settings') return <SettingsWorkspace api={api} currentUser={currentUser} />;
   return null;

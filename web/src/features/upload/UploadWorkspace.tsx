@@ -1,19 +1,27 @@
-import { ChangeEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, FileImage, LoaderCircle, UploadCloud, X } from 'lucide-react';
 import type { ApiClient, Folder, UploadProgress } from '../../app/api';
+import { queuedItemsFromFiles, type UploadSelection } from './uploadSelection';
 
 type UploadItem = { file: File; status: 'queued' | 'uploading' | 'done' | 'failed' | 'cancelled'; progress: number; message?: string };
 
-export default function UploadWorkspace({ api }: { api: ApiClient }) {
+export default function UploadWorkspace({ api, selection, onSelectionConsumed }: { api: ApiClient; selection?: UploadSelection | null; onSelectionConsumed?: (id: number) => void }) {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folderId, setFolderId] = useState('');
   const [items, setItems] = useState<UploadItem[]>([]);
   const [running, setRunning] = useState(false);
   const controllers = useMemo(() => new Map<number, AbortController>(), []);
+  const consumedSelectionRef = useRef<number | null>(null);
   useEffect(() => { void api.listFolders().then((response) => { setFolders(response.items); if (!folderId && response.items[0]) setFolderId(response.items[0].id); }).catch(() => undefined); }, [api, folderId]);
+  useEffect(() => {
+    if (!selection || selection.id === consumedSelectionRef.current) return;
+    consumedSelectionRef.current = selection.id;
+    setItems((current) => [...current, ...queuedItemsFromFiles(selection.files)]);
+    onSelectionConsumed?.(selection.id);
+  }, [onSelectionConsumed, selection]);
   const completed = useMemo(() => items.filter((item) => item.status === 'done').length, [items]);
 
-  function selectFiles(event: ChangeEvent<HTMLInputElement>) { setItems((current) => [...current, ...Array.from(event.target.files ?? []).map((file) => ({ file, status: 'queued' as const, progress: 0 }))]); event.target.value = ''; }
+  function selectFiles(event: ChangeEvent<HTMLInputElement>) { setItems((current) => [...current, ...queuedItemsFromFiles(Array.from(event.target.files ?? []))]); event.target.value = ''; }
   function update(index: number, patch: Partial<UploadItem>) { setItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item)); }
   async function start() {
     if (!folderId || running) return;
