@@ -13,6 +13,8 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/auth"
 	dbstore "github.com/zxxx98/77Photo/internal/database"
+	"github.com/zxxx98/77Photo/internal/sharelinks"
+	"github.com/zxxx98/77Photo/internal/storage"
 	"github.com/zxxx98/77Photo/internal/users"
 	"github.com/zxxx98/77Photo/internal/webassets"
 )
@@ -41,5 +43,35 @@ func TestNewHandlerWithServicesMountsAuthAndUserRoutes(t *testing.T) {
 	handler.ServeHTTP(spa, httptest.NewRequest(http.MethodGet, "/gallery", nil))
 	if spa.Code != http.StatusOK || !strings.Contains(spa.Body.String(), "77Photo") {
 		t.Fatalf("SPA route status/body = %d/%q", spa.Code, spa.Body.String())
+	}
+}
+
+func TestNewHandlerWithServicesMountsPublicShareRoutes(t *testing.T) {
+	db, err := dbstore.Open(context.Background(), filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
+	handler := NewHandlerWithServices(HealthChecks{}, logger, Services{ShareLinks: sharelinks.NewService(db, store, nil, false)})
+	public := httptest.NewRecorder()
+	handler.ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/api/v1/share-links/not-a-real-token", nil))
+	if public.Code != http.StatusNotFound || !strings.Contains(public.Body.String(), "SHARE_UNAVAILABLE") {
+		t.Fatalf("public route status/body = %d/%q", public.Code, public.Body.String())
+	}
+	unknown := httptest.NewRecorder()
+	handler.ServeHTTP(unknown, httptest.NewRequest(http.MethodGet, "/api/v1/unknown", nil))
+	if unknown.Code != http.StatusNotFound || strings.Contains(unknown.Body.String(), "SHARE_UNAVAILABLE") {
+		t.Fatalf("unknown route status/body = %d/%q", unknown.Code, unknown.Body.String())
+	}
+	logs := bytes.NewBuffer(nil)
+	logHandler := NewHandlerWithServices(HealthChecks{}, slog.New(slog.NewTextHandler(logs, nil)), Services{ShareLinks: sharelinks.NewService(db, store, nil, false)})
+	logHandler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/share-links/secret-token/photos", nil))
+	if strings.Contains(logs.String(), "secret-token") {
+		t.Fatalf("share token was written to request logs: %s", logs.String())
 	}
 }

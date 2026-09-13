@@ -15,6 +15,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/folders"
 	"github.com/zxxx98/77Photo/internal/indexer"
 	"github.com/zxxx98/77Photo/internal/photos"
+	"github.com/zxxx98/77Photo/internal/sharelinks"
 	"github.com/zxxx98/77Photo/internal/shares"
 	"github.com/zxxx98/77Photo/internal/users"
 )
@@ -45,6 +46,7 @@ type Services struct {
 	Photos        *photos.Service
 	Thumbnails    photos.ThumbnailService
 	Shares        *shares.Service
+	ShareLinks    *sharelinks.Service
 	Indexer       *indexer.Service
 	SecureCookies bool
 	Static        http.Handler
@@ -83,6 +85,11 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 	if services.Auth != nil && services.Shares != nil {
 		mux.Handle("/api/v1/shares", shares.NewHTTPHandler(services.Shares, services.Auth))
 		mux.Handle("/api/v1/shares/", shares.NewHTTPHandler(services.Shares, services.Auth))
+	}
+	if services.ShareLinks != nil {
+		shareLinkHandler := sharelinks.NewHTTPHandler(services.ShareLinks, services.Auth)
+		mux.Handle("/api/v1/share-links", shareLinkHandler)
+		mux.Handle("/api/v1/share-links/", shareLinkHandler)
 	}
 	if services.Auth != nil && services.Indexer != nil {
 		mux.Handle("/api/v1/admin/rescan", indexer.NewHTTPHandler(services.Indexer, services.Auth))
@@ -149,11 +156,28 @@ func loggingMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 		logger.Info("http request",
 			"request_id", RequestID(r.Context()),
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", redactLogPath(r.URL.Path),
 			"status", status,
 			"duration_ms", time.Since(started).Milliseconds(),
 		)
 	})
+}
+
+func redactLogPath(path string) string {
+	const prefix = "/api/v1/share-links/"
+	if !strings.HasPrefix(path, prefix) {
+		return path
+	}
+	remainder := strings.TrimPrefix(path, prefix)
+	if remainder == "" {
+		return prefix + "[redacted]"
+	}
+	parts := strings.SplitN(remainder, "/", 2)
+	redacted := prefix + "[redacted]"
+	if len(parts) == 2 {
+		redacted += "/" + parts[1]
+	}
+	return redacted
 }
 
 type statusWriter struct {

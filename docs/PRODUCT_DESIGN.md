@@ -13,7 +13,7 @@
 - 上传、移动、删除、重命名
 - 基础 EXIF 信息读取
 - 手机、平板与桌面 Web 自适应
-- 家庭共享目录
+- 文件夹与照片的只读公开链接
 
 项目优先面向 NanoPi R5S、树莓派、小型 ARM64 NAS、低配 x86 家庭服务器等设备。
 
@@ -235,7 +235,7 @@ UI 可以显示用户名，但内部使用不可变 user ID。
 /photos/shared/{folder-id}/
 ```
 
-共享目录本身也属于一个资源，通过 ACL 控制成员访问权限。
+共享目录本身也属于一个资源，通过旧的 ACL 控制成员访问权限。对外分享使用独立的只读 `share_links`，不会改变成员权限模型。
 
 ### 6.3 缩略图目录
 
@@ -367,7 +367,7 @@ updated_at
 - 没有 EXIF 时回退到文件时间
 - `checksum` 用于重复文件检测和变更判断
 
-### shares
+### shares（legacy member ACL）
 
 ```text
 id
@@ -384,6 +384,24 @@ created_at
 - write
 
 管理员不依赖 share 记录管理系统资源。
+
+### share_links
+
+公开链接独立于旧的家庭成员 ACL：
+
+```text
+id
+resource_type       # photo 或 folder
+resource_id
+token_hash
+password_hash       # 可选，仅保存 Argon2id 摘要
+expires_at          # 1 天、7 天或 NULL（永久）
+created_at
+updated_at
+revoked_at
+```
+
+链接本身是只读的。照片链接只暴露一张照片，文件夹链接只暴露该文件夹及其子文件夹中的照片。原图下载、编辑、删除和成员选择都不属于公开链接能力。
 
 ### sessions
 
@@ -528,7 +546,7 @@ GET /api/v1/photos?from=2026-09-01&to=2026-09-30
 
 优先使用 cursor pagination，避免大图库中 offset 越来越慢。
 
-### Share
+### Legacy member ACL share
 
 ```text
 GET    /api/v1/shares
@@ -536,9 +554,21 @@ POST   /api/v1/shares
 DELETE /api/v1/shares/{id}
 ```
 
-V1 首先实现“共享给已有家庭成员”。
+以上接口保留用于兼容已有成员 ACL，但不再由 Web 导航或分享页面使用。
 
-匿名外链分享放到 V2。
+### Public link share
+
+```text
+POST   /api/v1/share-links
+GET    /api/v1/share-links/{token}
+POST   /api/v1/share-links/{token}/unlock
+GET    /api/v1/share-links/{token}/photos
+GET    /api/v1/share-links/{token}/photos/{photoId}/preview
+```
+
+创建链接需要登录、资源所有权（或管理员权限）和 CSRF。接收者不需要登录；没有设置密码时任何持有链接的人都可以查看。设置密码后，接收者先通过解锁接口，服务器下发仅 HttpOnly、按链接路径限定的访问 cookie。
+
+有效时长只有 `1_day`、`7_days` 和 `forever`。公开页面只显示预览或浏览器内联视频，不提供原图下载、上传、编辑、删除、权限设置或家庭成员选择。
 
 ---
 
@@ -639,7 +669,7 @@ THUMBNAIL_WORKERS=1
 ┌────────┬──────────────────────────────────┐
 │ 图库   │ 2026年9月                       │
 │ 文件夹 │                                  │
-│ 共享   │ ▣ ▣ ▣ ▣ ▣ ▣                    │
+│ 设置   │ ▣ ▣ ▣ ▣ ▣ ▣                    │
 │        │ ▣ ▣ ▣ ▣ ▣ ▣                    │
 │        │ ▣ ▣ ▣ ▣ ▣ ▣                    │
 │        │                                  │
@@ -656,9 +686,8 @@ V1 建议只有以下核心页面：
 3. 文件夹浏览
 4. 图片详情
 5. 上传
-6. 共享目录
-7. 我的设置
-8. 管理员用户管理
+6. 我的设置
+7. 管理员用户管理
 
 不要在第一版堆太多导航入口。
 
@@ -678,6 +707,7 @@ V1 建议只有以下核心页面：
 - 移动
 - 重命名
 - 删除
+- 只读分享链接（Share2 icon）
 
 EXIF 信息第一版只展示常用字段：
 
@@ -969,8 +999,11 @@ V1 完成标准：
 
 ### Sharing
 
-- [ ] 家庭成员之间共享文件夹
-- [ ] read / write 权限
+- [ ] 从照片详情页创建只读公开链接
+- [ ] 从文件夹行创建只读公开链接
+- [ ] 1 天 / 7 天 / 永久时长与可选密码
+- [ ] 公开链接照片与文件夹文案区分
+- [ ] 公开查看页不提供原图下载和编辑操作
 
 ### Web
 
@@ -1000,7 +1033,7 @@ V1 完成标准：
 在 V1 稳定之后再考虑：
 
 - 收藏
-- 匿名外链分享
+- 公开链接批量管理与更丰富的访问控制
 - 分片上传
 - Android 自动备份 App
 - 上传失败恢复
@@ -1093,11 +1126,12 @@ V1 完成标准：
 - 上传照片到自己的 `2026/宝宝` 文件夹
 - Bob 登录后无法查看 Alice 的私人目录
 
-### 场景 B：家庭共享
+### 场景 B：公开分享
 
-- Alice 创建共享文件夹
-- 给 Bob read/write 权限
-- Bob 可以上传和浏览其中照片
+- Alice 从照片详情或文件夹行创建公开链接
+- 可选择 1 天、7 天、永久，并可选设置密码
+- 没有密码时接收者无需登录即可查看
+- 有密码时接收者只能解锁后查看，且只能看到预览
 
 ### 场景 C：图库浏览
 

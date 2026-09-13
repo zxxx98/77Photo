@@ -20,6 +20,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/httpapi"
 	"github.com/zxxx98/77Photo/internal/indexer"
 	"github.com/zxxx98/77Photo/internal/photos"
+	"github.com/zxxx98/77Photo/internal/sharelinks"
 	"github.com/zxxx98/77Photo/internal/shares"
 	"github.com/zxxx98/77Photo/internal/storage"
 	"github.com/zxxx98/77Photo/internal/thumbnails"
@@ -74,7 +75,8 @@ func run(parent context.Context, logger *slog.Logger) error {
 	defer thumbnailService.Close()
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, Shares: shareService, Indexer: indexerService, SecureCookies: secureCookies, Static: webassets.Handler()})
+	shareLinkService := sharelinks.NewService(db, photoStore, thumbnailService, secureCookies)
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, SecureCookies: secureCookies, Static: webassets.Handler()})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
