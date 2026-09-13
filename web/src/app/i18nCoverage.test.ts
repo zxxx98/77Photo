@@ -37,11 +37,23 @@ describe('translation coverage', () => {
     expect(appSource.slice(accountStart, signOutStart)).not.toContain('<LanguageToggle />');
 
     const pageSources = import.meta.glob([
-      '../features/auth/LoginPage.tsx',
+      '../features/auth/AuthPageFrame.tsx',
       '../features/sharing/PublicSharePage.tsx',
     ], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
     for (const source of Object.values(pageSources)) expect(source).toContain('<LanguageToggle />');
+  });
+
+  it('keeps first-run setup copy behind translation keys', () => {
+    const setupSources = import.meta.glob([
+      '../features/auth/AuthPageFrame.tsx',
+      '../features/auth/SetupPage.tsx',
+    ], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+    const forbidden = ['Create your administrator', 'Confirm password', 'Use at least 12 characters', '创建管理员', '确认密码', '密码至少 12 个字符'];
+
+    for (const source of Object.values(setupSources)) {
+      for (const phrase of forbidden) expect(source).not.toContain(phrase);
+    }
   });
 
   it('does not leave previous workspace literals behind', () => {

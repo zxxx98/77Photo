@@ -65,6 +65,8 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
 .submit-button { width: 100%; margin-top: 5px; }
 .form-message { display: flex; align-items: center; gap: 8px; margin: -3px 0 0; color: #8a5e5e; font-size: 12px; line-height: 1.5; }
 .login-note { margin: 24px 0 0; color: var(--slate-soft); font-size: 11px; text-align: center; }
+.setup-form { gap: 17px; }
+.setup-guidance { display: flex; align-items: center; gap: 7px; margin: -3px 0 0; color: #6f9a87; font-size: 11px; line-height: 1.5; }
 
 /* App shell */
 .app-frame { min-height: 100svh; display: flex; }

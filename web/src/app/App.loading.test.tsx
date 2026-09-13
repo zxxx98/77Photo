@@ -66,4 +66,40 @@ describe('application loading transitions', () => {
     expect(container.querySelector('.gallery-skeleton')).toBeNull();
     expect(container.querySelector('.empty-timeline')).not.toBeNull();
   });
+
+  it('shows first-run setup when the installation has no users', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === '/api/v1/auth/me') return { ok: false, status: 401, headers: new Headers(), json: async () => ({ error: { code: 'AUTH_REQUIRED' } }) } as Response;
+      if (path === '/api/v1/setup/status') return jsonResponse({ required: true });
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+
+    await act(async () => {
+      root.render(<I18nProvider><App /></I18nProvider>);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('.setup-page')).not.toBeNull();
+    expect(container.querySelector('#setup-title')).not.toBeNull();
+  });
+
+  it('shows login when the installation is already initialized', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === '/api/v1/auth/me') return { ok: false, status: 401, headers: new Headers(), json: async () => ({ error: { code: 'AUTH_REQUIRED' } }) } as Response;
+      if (path === '/api/v1/setup/status') return jsonResponse({ required: false });
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+
+    await act(async () => {
+      root.render(<I18nProvider><App /></I18nProvider>);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('.login-page')).not.toBeNull();
+    expect(container.querySelector('.setup-page')).toBeNull();
+  });
 });

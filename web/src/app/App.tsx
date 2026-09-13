@@ -7,6 +7,7 @@ import type { TranslationKey } from './i18n';
 import { readPublicShareToken, readView, type AppView } from './routes';
 import { openUploadPicker } from './uploadPicker';
 import LoginPage from '../features/auth/LoginPage';
+import SetupPage from '../features/auth/SetupPage';
 import GalleryWorkspace from '../features/gallery/GalleryWorkspace';
 import FoldersWorkspace from '../features/folders/FoldersWorkspace';
 import UploadWorkspace from '../features/upload/UploadWorkspace';
@@ -41,6 +42,7 @@ export default function App() {
 
   if (publicShareToken) return <PublicSharePage api={api} token={publicShareToken} />;
   if (snapshot.status === 'loading') return <AppShellSkeleton />;
+  if (snapshot.status === 'setup') return <SetupPage store={store} />;
   if (snapshot.status === 'unauthenticated') return <LoginPage store={store} />;
   return <AppShell api={api} store={store} view={view} onViewChange={(nextView) => { writeView(nextView); setView(nextView); }} />;
 }
