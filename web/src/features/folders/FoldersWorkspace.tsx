@@ -20,6 +20,7 @@ export default function FoldersWorkspace({ api, onUpload }: { api: ApiClient; on
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setError(null);
     void api.listFolders(parent?.id).then((response) => { if (active) setFolders(response.items); }).catch(() => { if (active) setError(t('folders.loadFailed')); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [api, parent, t]);
@@ -28,6 +29,7 @@ export default function FoldersWorkspace({ api, onUpload }: { api: ApiClient; on
     event.preventDefault();
     if (!name.trim()) return;
     setCreating(true);
+    setError(null);
     try {
       const folder = await api.createFolder(name.trim(), parent?.id ?? null);
       setFolders((current) => [...current, folder].sort((a, b) => a.name.localeCompare(b.name)));
