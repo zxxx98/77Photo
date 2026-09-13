@@ -88,7 +88,6 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
         <div className="account-area">
           <div className="avatar" aria-hidden="true">{user?.username.slice(0, 1).toUpperCase()}</div>
           <div className="account-copy"><strong>{user?.username}</strong><span>{user?.role === 'admin' ? t('shell.administrator') : t('shell.familyMember')}</span></div>
-          <LanguageToggle />
           <button className="icon-button" aria-label={t('common.signOut')} onClick={() => void store.logout()}><LogOut size={18} /></button>
         </div>
       </aside>
@@ -100,7 +99,10 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
             <span className="sr-only">{t('common.search')}</span>
             <input placeholder={t('common.search')} disabled aria-label={t('common.search')} />
           </label>
-          <button className="button button-primary upload-button" onClick={chooseUpload}><Upload size={17} /> <span>{t('common.upload')}</span></button>
+          <div className="topbar-actions">
+            <LanguageToggle />
+            <button className="button button-primary upload-button" onClick={chooseUpload}><Upload size={17} /> <span>{t('common.upload')}</span></button>
+          </div>
           <input ref={pickerRef} className="sr-only" type="file" accept="image/jpeg,image/png,video/mp4,video/webm" multiple tabIndex={-1} aria-hidden="true" onChange={handlePickerChange} />
         </header>
         <div className="content-scroll"><Workspace api={api} currentUser={user!} view={view} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} /></div>
