@@ -1,8 +1,11 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useState } from 'react';
 import { ImageOff, LoaderCircle, LockKeyhole } from 'lucide-react';
+import { useI18n } from '../../app/I18nProvider';
 import { ApiError, type ApiClient, type PublicPhoto, type PublicShare } from '../../app/api';
+import LanguageToggle from '../i18n/LanguageToggle';
 
 export default function PublicSharePage({ api, token }: { api: ApiClient; token: string }) {
+  const { t } = useI18n();
   const [share, setShare] = useState<PublicShare | null>(null);
   const [photos, setPhotos] = useState<PublicPhoto[]>([]);
   const [password, setPassword] = useState('');
@@ -18,11 +21,11 @@ export default function PublicSharePage({ api, token }: { api: ApiClient; token:
       setPhotos(response.items);
       setError(null);
     } catch {
-      setError('This shared item is unavailable.');
+      setError(t('public.unavailableTitle'));
     } finally {
       setLoadingPhotos(false);
     }
-  }, [api, token]);
+  }, [api, t, token]);
 
   useEffect(() => {
     let active = true;
@@ -35,7 +38,7 @@ export default function PublicSharePage({ api, token }: { api: ApiClient; token:
       if (!active) return;
       setShare(response);
       if (!response.password_required) void loadPhotos();
-    }).catch(() => { if (active) setError('This shared item is unavailable.'); }).finally(() => { if (active) setLoading(false); });
+    }).catch(() => { if (active) setError(t('public.unavailableTitle')); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [api, loadPhotos, token]);
 
@@ -50,27 +53,28 @@ export default function PublicSharePage({ api, token }: { api: ApiClient; token:
       setPassword('');
       await loadPhotos();
     } catch (caught) {
-      setError(caught instanceof ApiError && caught.code === 'SHARE_UNAVAILABLE' ? 'This shared item is unavailable.' : 'The password is incorrect.');
+      setError(caught instanceof ApiError && caught.code === 'SHARE_UNAVAILABLE' ? t('public.unavailableTitle') : t('public.incorrectPassword'));
     } finally {
       setLoading(false);
     }
   }
 
-  if (loading && !share) return <PublicPageFrame><div className="public-share-state"><LoaderCircle className="spin" size={21} /><p>Opening shared memories…</p></div></PublicPageFrame>;
-  if (!share) return <PublicPageFrame><div className="public-share-state"><ImageOff size={24} /><h1>This shared item is unavailable.</h1><p>The link may have expired or been removed.</p></div></PublicPageFrame>;
-  if (share.password_required && !unlocked) return <PublicPageFrame><div className="public-share-gate"><span className="public-share-lock"><LockKeyhole size={21} /></span><span className="eyebrow">Private link</span><h1>Password required</h1><p>Enter the password to view this {share.resource_type}.</p><form onSubmit={unlock}><label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoFocus autoComplete="current-password" /></label>{error && <p className="form-message" role="alert">{error}</p>}<button className="button button-primary" type="submit" disabled={loading || !password}>{loading ? 'Checking…' : 'View shared memories'}</button></form></div></PublicPageFrame>;
+  if (loading && !share) return <PublicPageFrame><div className="public-share-state"><LoaderCircle className="spin" size={21} /><p>{t('public.openingMemories')}</p></div></PublicPageFrame>;
+  if (!share) return <PublicPageFrame><div className="public-share-state"><ImageOff size={24} /><h1>{t('public.unavailableTitle')}</h1><p>{t('public.unavailableDescription')}</p></div></PublicPageFrame>;
+  if (share.password_required && !unlocked) return <PublicPageFrame><div className="public-share-gate"><span className="public-share-lock"><LockKeyhole size={21} /></span><span className="eyebrow">{t('public.privateLink')}</span><h1>{t('public.passwordRequired')}</h1><p>{t('public.enterPassword', { resource: t(share.resource_type === 'photo' ? 'common.photo' : 'common.folder') })}</p><form onSubmit={unlock}><label>{t('auth.password')}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoFocus autoComplete="current-password" /></label>{error && <p className="form-message" role="alert">{error}</p>}<button className="button button-primary" type="submit" disabled={loading || !password}>{loading ? t('public.checking') : t('public.viewSharedMemories')}</button></form></div></PublicPageFrame>;
 
   return <PublicPageFrame>
     <section className="public-share-content" aria-labelledby="public-share-title">
-      <div className="public-share-heading"><div><span className="eyebrow">Shared {share.resource_type}</span><h1 id="public-share-title">{share.name}</h1>{share.folder_path && <p>{share.folder_path}</p>}</div><span className="public-share-readonly">View only</span></div>
+      <div className="public-share-heading"><div><span className="eyebrow">{t('public.sharedResource', { resource: t(share.resource_type === 'photo' ? 'common.photo' : 'common.folder') })}</span><h1 id="public-share-title">{share.name}</h1>{share.folder_path && <p>{share.folder_path}</p>}</div><span className="public-share-readonly">{t('public.viewOnly')}</span></div>
       {error && <p className="form-message" role="alert">{error}</p>}
-      {loadingPhotos ? <div className="public-share-state"><LoaderCircle className="spin" size={21} /><p>Loading memories…</p></div> : photos.length === 0 ? <div className="public-share-empty"><ImageOff size={24} /><p>No photos in this shared item.</p></div> : <div className="public-photo-grid">{photos.map((photo) => <PublicPhotoTile key={photo.id} api={api} token={token} photo={photo} />)}</div>}
+      {loadingPhotos ? <div className="public-share-state"><LoaderCircle className="spin" size={21} /><p>{t('public.loadingMemories')}</p></div> : photos.length === 0 ? <div className="public-share-empty"><ImageOff size={24} /><p>{t('public.noPhotos')}</p></div> : <div className="public-photo-grid">{photos.map((photo) => <PublicPhotoTile key={photo.id} api={api} token={token} photo={photo} />)}</div>}
     </section>
   </PublicPageFrame>;
 }
 
 function PublicPageFrame({ children }: { children: ReactNode }) {
-  return <main className="public-share-page"><div className="public-share-brand"><span className="brand-mark" aria-hidden="true">77</span><span>77Photo</span></div>{children}<p className="public-share-footer">Shared from a private 77Photo library</p></main>;
+  const { t } = useI18n();
+  return <main className="public-share-page"><div className="public-share-top"><div className="public-share-brand"><span className="brand-mark" aria-hidden="true">77</span><span>77Photo</span></div><LanguageToggle /></div>{children}<p className="public-share-footer">{t('public.footer')}</p></main>;
 }
 
 function PublicPhotoTile({ api, token, photo }: { api: ApiClient; token: string; photo: PublicPhoto }) {

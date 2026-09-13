@@ -17,6 +17,6 @@ describe('hash routes', () => {
     const sources = import.meta.glob('../features/upload/UploadWorkspace.tsx', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
     const source = Object.values(sources)[0] ?? '';
     expect(source).not.toContain('Start upload');
-    expect(source).toContain('Retry');
+    expect(source).toContain("t('common.retry')");
   });
 });

@@ -1,18 +1,20 @@
 import { FormEvent, useState } from 'react';
 import { Check, Copy, Link as LinkIcon, Share2, X } from 'lucide-react';
 import type { ApiClient, ShareDuration, ShareLink, ShareResourceType } from '../../app/api';
-import { createCopyLinkHandler, selectShareDuration, shareCopy, shareDurations, successMessage } from './shareDialog';
+import { createCopyLinkHandler, durationLabel, selectShareDuration, shareCopy, shareDurations, successMessage } from './shareDialog';
+import { useI18n } from '../../app/I18nProvider';
 
 type ShareResource = { type: ShareResourceType; id: string; name: string };
 
 export default function ShareDialog({ api, resource, onClose }: { api: ApiClient; resource: ShareResource; onClose: () => void }) {
+  const { locale, t } = useI18n();
   const [duration, setDuration] = useState<ShareDuration>('forever');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<ShareLink | null>(null);
   const [copied, setCopied] = useState(false);
-  const copy = shareCopy(resource.type, resource.name);
+  const copy = shareCopy(resource.type, resource.name, locale);
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -27,7 +29,7 @@ export default function ShareDialog({ api, resource, onClose }: { api: ApiClient
       });
       setLink(created);
     } catch {
-      setError('Unable to create the share link.');
+      setError(t('sharing.unableCreate'));
     } finally {
       setBusy(false);
     }
@@ -40,38 +42,38 @@ export default function ShareDialog({ api, resource, onClose }: { api: ApiClient
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
-      setError('The link could not be copied.');
+      setError(t('sharing.copyFailed'));
     }
   }
 
   return <div className="share-dialog-scrim" role="presentation">
     <section className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title">
-      <button className="icon-button share-dialog-close" type="button" aria-label="Close share dialog" onClick={onClose}><X size={19} /></button>
+      <button className="icon-button share-dialog-close" type="button" aria-label={t('sharing.closeDialog')} onClick={onClose}><X size={19} /></button>
       <div className="share-dialog-heading">
         <span className="share-dialog-icon"><Share2 size={19} /></span>
-        <div><span className="eyebrow">Public link</span><h2 id="share-dialog-title">{copy.title}</h2></div>
+        <div><span className="eyebrow">{t('sharing.publicLink')}</span><h2 id="share-dialog-title">{copy.title}</h2></div>
       </div>
       <p className="share-dialog-name" title={resource.name}>{resource.name}</p>
       {!link ? <form className="share-dialog-form" onSubmit={create}>
-        <p className="share-dialog-note">Anyone with the link can view. No account or sign-in required.</p>
+        <p className="share-dialog-note">{t('sharing.anyoneCanView')}</p>
         <fieldset className="share-duration-fieldset">
-          <legend>Link duration</legend>
+          <legend>{t('sharing.linkDuration')}</legend>
           <div className="share-duration-list">
-            {shareDurations.map((option) => <label className="share-duration-option" key={option.value}>
-              <input type="checkbox" checked={duration === option.value} onChange={() => setDuration(selectShareDuration(duration, option.value))} />
-              <span>{option.label}</span>
+            {shareDurations.map((option) => <label className="share-duration-option" key={option}>
+              <input type="checkbox" checked={duration === option} onChange={() => setDuration(selectShareDuration(duration, option))} />
+              <span>{durationLabel(option, locale)}</span>
             </label>)}
           </div>
         </fieldset>
-        <label className="share-password-field">Optional password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Leave blank for no password" autoComplete="new-password" /></label>
+        <label className="share-password-field">{t('sharing.optionalPassword')}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={t('sharing.noPassword')} autoComplete="new-password" /></label>
         {error && <p className="form-message" role="alert">{error}</p>}
-        <button className="button button-primary share-submit" type="submit" disabled={busy}>{busy ? 'Creating link…' : copy.createLabel}</button>
+        <button className="button button-primary share-submit" type="submit" disabled={busy}>{busy ? t('sharing.creatingLink') : copy.createLabel}</button>
       </form> : <div className="share-dialog-success">
-        <p className="share-success-message" role="status">{successMessage(resource.type, duration)}</p>
-        <label className="share-url-field">Share link<input value={link.url} readOnly aria-label="Share link" /></label>
-        <button className="button button-secondary share-copy-button" type="button" onClick={createCopyLinkHandler(copyLink)}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? 'Copied' : 'Copy link'}</button>
+        <p className="share-success-message" role="status">{successMessage(resource.type, duration, locale)}</p>
+        <label className="share-url-field">{t('sharing.shareLink')}<input value={link.url} readOnly aria-label={t('sharing.shareLink')} /></label>
+        <button className="button button-secondary share-copy-button" type="button" onClick={createCopyLinkHandler(copyLink)}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? t('sharing.copied') : t('sharing.copyLink')}</button>
         {error && <p className="form-message" role="alert">{error}</p>}
-        <p className="share-dialog-note">Keep this link private if it grants access to personal memories.</p>
+        <p className="share-dialog-note">{t('sharing.keepLinkPrivate')}</p>
       </div>}
       <span className="sr-only"><LinkIcon /></span>
     </section>

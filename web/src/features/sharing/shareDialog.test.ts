@@ -30,11 +30,18 @@ describe('share dialog rules', () => {
     expect(successMessage('folder', 'forever')).toContain('Folder shared forever');
   });
 
+  it('returns resource-specific copy in both locales', () => {
+    expect(shareCopy('photo', 'IMG_2048.jpg', 'zh').title).toBe('分享照片');
+    expect(shareCopy('photo', 'IMG_2048.jpg', 'en').title).toBe('Share photo');
+    expect(successMessage('folder', 'forever', 'zh')).toContain('文件夹已永久分享');
+    expect(successMessage('folder', 'forever', 'en')).toContain('Folder shared forever');
+  });
+
   it('offers exactly one checkbox choice for each duration', () => {
     expect(shareDurations).toEqual([
-      { value: '1_day', label: '1 day' },
-      { value: '7_days', label: '7 days' },
-      { value: 'forever', label: 'Forever' },
+      '1_day',
+      '7_days',
+      'forever',
     ]);
     expect(selectShareDuration('forever', '1_day')).toBe('1_day');
   });

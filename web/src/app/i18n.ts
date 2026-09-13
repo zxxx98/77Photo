@@ -70,6 +70,7 @@ const english = {
   'gallery.noPhotosYet': 'No photos yet',
   'gallery.refresh': 'Refresh gallery',
   'gallery.filters': 'Gallery filters',
+  'gallery.loading': 'Loading your library…',
   'gallery.allPhotos': 'All photos',
   'gallery.privateByDefault': 'Private by default',
   'gallery.yourPrivateLibrary': 'Your private library',
@@ -80,6 +81,8 @@ const english = {
   'gallery.uploadFirstPhoto': 'Upload first photo',
   'gallery.supportedStored': 'JPEG, PNG, MP4 or WebM · stored on your server',
   'gallery.previewPending': 'Preview pending',
+  'gallery.firstMemory': 'First memory',
+  'gallery.today': 'Today',
   'gallery.onePhoto': '{count} photo',
   'gallery.manyPhotos': '{count} photos',
 
@@ -108,6 +111,7 @@ const english = {
   'upload.uploaded': 'Uploaded',
   'upload.cancelled': 'Cancelled',
   'upload.failed': 'Upload failed',
+  'upload.progress': '{progress}%',
   'upload.cancelFile': 'Cancel {name}',
   'upload.uploadError': 'This file could not be uploaded.',
 
@@ -158,6 +162,7 @@ const english = {
   'public.unavailableDescription': 'The link may have expired or been removed.',
   'public.privateLink': 'Private link',
   'public.passwordRequired': 'Password required',
+  'public.incorrectPassword': 'The password is incorrect.',
   'public.enterPassword': 'Enter the password to view this {resource}.',
   'public.checking': 'Checking…',
   'public.viewSharedMemories': 'View shared memories',
@@ -252,6 +257,7 @@ const chinese: Record<TranslationKey, string> = {
   'gallery.noPhotosYet': '还没有照片',
   'gallery.refresh': '刷新照片库',
   'gallery.filters': '照片筛选',
+  'gallery.loading': '正在加载你的图库…',
   'gallery.allPhotos': '全部照片',
   'gallery.privateByDefault': '默认私密',
   'gallery.yourPrivateLibrary': '你的私密图库',
@@ -262,6 +268,8 @@ const chinese: Record<TranslationKey, string> = {
   'gallery.uploadFirstPhoto': '上传第一张照片',
   'gallery.supportedStored': 'JPEG、PNG、MP4 或 WebM · 存储在你的服务器上',
   'gallery.previewPending': '预览暂不可用',
+  'gallery.firstMemory': '第一段回忆',
+  'gallery.today': '今天',
   'gallery.onePhoto': '{count} 张照片',
   'gallery.manyPhotos': '{count} 张照片',
 
@@ -290,6 +298,7 @@ const chinese: Record<TranslationKey, string> = {
   'upload.uploaded': '已上传',
   'upload.cancelled': '已取消',
   'upload.failed': '上传失败',
+  'upload.progress': '{progress}%',
   'upload.cancelFile': '取消 {name}',
   'upload.uploadError': '此文件无法上传。',
 
@@ -340,6 +349,7 @@ const chinese: Record<TranslationKey, string> = {
   'public.unavailableDescription': '链接可能已过期或被移除。',
   'public.privateLink': '私密链接',
   'public.passwordRequired': '需要密码',
+  'public.incorrectPassword': '密码不正确。',
   'public.enterPassword': '输入密码以查看此{resource}。',
   'public.checking': '正在验证…',
   'public.viewSharedMemories': '查看分享的回忆',
@@ -427,5 +437,15 @@ export function formatDate(locale: Locale, value: string | number | Date): strin
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+  }).format(date);
+}
+
+export function formatCalendarDate(locale: Locale, value: string | number | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
   }).format(date);
 }
