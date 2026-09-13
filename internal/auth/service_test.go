@@ -21,6 +21,22 @@ func newAuthService(t *testing.T) (*Service, *sql.DB) {
 	return NewService(db, 2*time.Hour, false), db
 }
 
+func TestSetupRequiredTracksFirstAdministrator(t *testing.T) {
+	service, _ := newAuthService(t)
+	ctx := context.Background()
+	required, err := service.SetupRequired(ctx)
+	if err != nil || !required {
+		t.Fatalf("SetupRequired() = %v, %v; want true, nil", required, err)
+	}
+	if _, _, err := service.SetupAdmin(ctx, "owner", "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	required, err = service.SetupRequired(ctx)
+	if err != nil || required {
+		t.Fatalf("SetupRequired() = %v, %v; want false, nil", required, err)
+	}
+}
+
 func TestSetupAdminIsOneTimeAndCreatesSession(t *testing.T) {
 	service, _ := newAuthService(t)
 	ctx := context.Background()

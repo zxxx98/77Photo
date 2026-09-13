@@ -69,6 +69,7 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 	})
 	if services.Auth != nil {
 		authHandler := auth.NewHTTPHandler(services.Auth, services.SecureCookies)
+		mux.Handle("/api/v1/setup/status", authHandler)
 		mux.Handle("/api/v1/setup/admin", authHandler)
 		mux.Handle("/api/v1/auth/", authHandler)
 	}

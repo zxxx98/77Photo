@@ -67,6 +67,14 @@ func NewService(db *sql.DB, ttl time.Duration, secureCookie bool) *Service {
 	return &Service{db: db, ttl: ttl, secureCookie: secureCookie, limiter: newLoginLimiter()}
 }
 
+func (s *Service) SetupRequired(ctx context.Context) (bool, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&count); err != nil {
+		return false, fmt.Errorf("check admin setup: %w", err)
+	}
+	return count == 0, nil
+}
+
 func (s *Service) SetupAdmin(ctx context.Context, username, password string) (Account, Session, error) {
 	if err := validateCredentials(username, password); err != nil {
 		return Account{}, Session{}, err

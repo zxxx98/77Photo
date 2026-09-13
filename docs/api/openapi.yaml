@@ -75,6 +75,25 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
 
+  /api/v1/setup/status:
+    get:
+      tags: [setup]
+      summary: Check whether first-run setup is required
+      description: Returns only whether the installation has no users and still requires its first administrator.
+      operationId: getSetupStatus
+      security: []
+      responses:
+        '200':
+          description: Current setup requirement
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SetupStatusResponse' }
+        '500':
+          description: Setup state could not be determined
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
   /api/v1/auth/login:
     post:
       tags: [auth]
@@ -993,6 +1012,11 @@ components:
       properties:
         username: { type: string, minLength: 1, maxLength: 64 }
         password: { type: string, minLength: 12, maxLength: 256, format: password }
+    SetupStatusResponse:
+      type: object
+      required: [required]
+      properties:
+        required: { type: boolean }
     LoginRequest:
       type: object
       required: [username, password]

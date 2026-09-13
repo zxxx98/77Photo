@@ -28,6 +28,11 @@ func TestNewHandlerWithServicesMountsAuthAndUserRoutes(t *testing.T) {
 	authService := auth.NewService(db, time.Hour, false)
 	userService := users.NewService(db, authService)
 	handler := NewHandlerWithServices(HealthChecks{Database: func(context.Context) error { return nil }, Storage: func(context.Context) error { return nil }}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), Services{Auth: authService, Users: userService, Static: webassets.Handler()})
+	setupStatus := httptest.NewRecorder()
+	handler.ServeHTTP(setupStatus, httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil))
+	if setupStatus.Code != http.StatusOK || !strings.Contains(setupStatus.Body.String(), `"required":true`) {
+		t.Fatalf("setup status = %d/%q, want 200/required", setupStatus.Code, setupStatus.Body.String())
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/admin", strings.NewReader(`{"username":"admin","password":"correct horse battery staple"}`))
 	req.Header.Set("Content-Type", "application/json")

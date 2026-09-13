@@ -20,6 +20,12 @@ func NewHTTPHandler(service *Service, secureCookie bool) http.Handler {
 
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.URL.Path == "/api/v1/setup/status":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		h.setupStatus(w, r)
 	case r.URL.Path == "/api/v1/setup/admin":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -47,6 +53,15 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeAuthError(w, r, http.StatusNotFound, "NOT_FOUND", "route not found", nil)
 	}
+}
+
+func (h *HTTPHandler) setupStatus(w http.ResponseWriter, r *http.Request) {
+	required, err := h.service.SetupRequired(r.Context())
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"required": required})
 }
 
 func (h *HTTPHandler) setup(w http.ResponseWriter, r *http.Request) {

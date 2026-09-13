@@ -77,6 +77,42 @@ func TestHTTPSetupLoginMeAndLogout(t *testing.T) {
 	_ = meAfter.Body.Close()
 }
 
+func TestHTTPSetupStatusTracksInitialization(t *testing.T) {
+	service, _ := newAuthService(t)
+	server := httptest.NewServer(NewHTTPHandler(service, false))
+	defer server.Close()
+
+	assertRequired := func(want bool) {
+		t.Helper()
+		resp, err := http.Get(server.URL + "/api/v1/setup/status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK || resp.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("status response = %d, cache=%q", resp.StatusCode, resp.Header.Get("Cache-Control"))
+		}
+		var body struct {
+			Required bool `json:"required"`
+		}
+		decodeJSON(t, resp, &body)
+		if body.Required != want {
+			t.Fatalf("required = %v, want %v", body.Required, want)
+		}
+	}
+
+	assertRequired(true)
+	if _, _, err := service.SetupAdmin(context.Background(), "owner", "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	assertRequired(false)
+
+	resp := doJSON(t, http.DefaultClient, server.URL+"/api/v1/setup/status", http.MethodPost, `{}`, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("POST setup status = %d, want 405", resp.StatusCode)
+	}
+}
+
 func TestHTTPMeRestoresMissingCSRFTokenCookie(t *testing.T) {
 	db, err := dbstore.Open(context.Background(), filepath.Join(t.TempDir(), "77photo.db"))
 	if err != nil {
