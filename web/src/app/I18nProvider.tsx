@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { browserStorage, formatCalendarDate, formatCount, formatDate, readStoredLocale, setStoredLocale, translate, type Locale, type TranslationKey, type TranslationParams } from './i18n';
 
 export interface I18nContextValue {
@@ -26,6 +26,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     formatDate: (value) => formatDate(locale, value),
     formatCalendarDate: (value) => formatCalendarDate(locale, value),
   }), [locale, setLocale]);
+  useEffect(() => {
+    document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
+  }, [locale]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
