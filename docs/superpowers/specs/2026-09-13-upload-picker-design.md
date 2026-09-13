@@ -17,14 +17,17 @@ item, then acknowledges that ID so revisiting the page cannot enqueue the
 same files again. The existing upload workspace input remains available for
 drag/drop-area selection, and both paths use the same queued item shape.
 
-Selecting files never starts network activity. The existing `Start upload`
-button continues to submit queued, failed, or cancelled items and preserve
-the current progress, cancellation, retry, and destination-folder behavior.
+Selecting files queues them and starts the upload automatically once a
+destination folder is available. The existing `Start upload` button remains
+available for manually retrying queued, failed, or cancelled items and
+preserves the current progress, cancellation, retry, and destination-folder
+behavior.
 
 ## Validation
 
 Add a focused unit test for the header action helper to verify it navigates and
-opens the picker in one event. Add a focused unit test for converting selected
-files into queued upload items. Run the full Vitest suite, TypeScript
-typecheck, and production build; manually verify the header action opens the
-native picker and that starting an upload still sends the existing request.
+opens the picker in one event. Add focused unit tests for converting selected
+files into queued upload items and requesting automatic upload. Run the full
+Vitest suite, TypeScript typecheck, and production build; manually verify both
+file inputs start uploading after selection and that retry still sends the
+existing request.

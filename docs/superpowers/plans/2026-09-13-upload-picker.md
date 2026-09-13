@@ -4,7 +4,7 @@
 
 **Goal:** Make the authenticated header Upload action open the native file picker and carry the selected files into the upload queue.
 
-**Architecture:** Keep a hidden multi-file input mounted in `AppShell` so the header click can call `input.click()` synchronously. Store each picker selection with an ID, pass it to `UploadWorkspace`, append it once as queued items, and acknowledge it so remounts do not duplicate files. Keep the existing workspace input and Start upload flow unchanged.
+**Architecture:** Keep a hidden multi-file input mounted in `AppShell` so the header click can call `input.click()` synchronously. Store each picker selection with an ID, pass it to `UploadWorkspace`, append it once as queued items, and acknowledge it so remounts do not duplicate files. Both file inputs mark newly queued files for automatic upload when a destination folder is available; the existing Start upload button remains a manual retry path.
 
 **Tech Stack:** React 18, TypeScript, Vitest, Vite, Go static asset embedding.
 
@@ -20,7 +20,7 @@
 
 - [x] **Step 1: Write the failing tests**
 
-  Test that the header action navigates before synchronously clicking the picker, and that selected files become queued items with zero progress.
+  Test that the header action navigates before synchronously clicking the picker, that selected files become queued items with zero progress, and that a non-empty selection requests automatic upload.
 
 - [x] **Step 2: Run the focused tests and verify they fail because the helpers do not exist**
 
@@ -36,7 +36,7 @@
 
 - [x] **Step 1: Implement the smallest helpers that make Task 1 green**
 
-  `openUploadPicker(navigate, input)` invokes `navigate()` and then `input?.click()`. `queuedItemsFromFiles(files)` maps each file to `{ file, status: 'queued', progress: 0 }`.
+  `openUploadPicker(navigate, input)` invokes `navigate()` and then `input?.click()`. `queuedItemsFromFiles(files)` maps each file to `{ file, status: 'queued', progress: 0 }`, and `shouldAutoStartAfterSelection(files)` reports whether a non-empty selection should trigger upload.
 
 - [x] **Step 2: Wire AppShell to the helpers**
 
@@ -44,7 +44,7 @@
 
 - [x] **Step 3: Consume picker selections once in UploadWorkspace**
 
-  Add an optional selection prop and acknowledgement callback. On a new selection ID, append `queuedItemsFromFiles(selection.files)` and acknowledge that ID. Use the helper for the existing drop-zone input as well.
+  Add an optional selection prop and acknowledgement callback. On a new selection ID, append `queuedItemsFromFiles(selection.files)`, mark automatic upload pending, and acknowledge that ID. Use the helper and the same auto-start marker for the existing drop-zone input as well. An effect waits for a destination folder and starts queued work once.
 
 ### Task 3: Verify, build, and deploy
 

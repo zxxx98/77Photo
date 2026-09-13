@@ -12,3 +12,7 @@ export interface QueuedUploadItem {
 export function queuedItemsFromFiles(files: File[]): QueuedUploadItem[] {
   return files.map((file) => ({ file, status: 'queued', progress: 0 }));
 }
+
+export function shouldAutoStartAfterSelection(files: File[]): boolean {
+  return files.length > 0;
+}

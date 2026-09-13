@@ -1,7 +1,7 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, FileImage, LoaderCircle, UploadCloud, X } from 'lucide-react';
 import type { ApiClient, Folder, UploadProgress } from '../../app/api';
-import { queuedItemsFromFiles, type UploadSelection } from './uploadSelection';
+import { queuedItemsFromFiles, shouldAutoStartAfterSelection, type UploadSelection } from './uploadSelection';
 
 type UploadItem = { file: File; status: 'queued' | 'uploading' | 'done' | 'failed' | 'cancelled'; progress: number; message?: string };
 
@@ -12,19 +12,31 @@ export default function UploadWorkspace({ api, selection, onSelectionConsumed }:
   const [running, setRunning] = useState(false);
   const controllers = useMemo(() => new Map<number, AbortController>(), []);
   const consumedSelectionRef = useRef<number | null>(null);
+  const autoStartFilesRef = useRef<File[]>([]);
   useEffect(() => { void api.listFolders().then((response) => { setFolders(response.items); if (!folderId && response.items[0]) setFolderId(response.items[0].id); }).catch(() => undefined); }, [api, folderId]);
   useEffect(() => {
     if (!selection || selection.id === consumedSelectionRef.current) return;
     consumedSelectionRef.current = selection.id;
     setItems((current) => [...current, ...queuedItemsFromFiles(selection.files)]);
+    requestAutoStart(selection.files);
     onSelectionConsumed?.(selection.id);
   }, [onSelectionConsumed, selection]);
   const completed = useMemo(() => items.filter((item) => item.status === 'done').length, [items]);
 
-  function selectFiles(event: ChangeEvent<HTMLInputElement>) { setItems((current) => [...current, ...queuedItemsFromFiles(Array.from(event.target.files ?? []))]); event.target.value = ''; }
+  function selectFiles(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (files.length === 0) return;
+    setItems((current) => [...current, ...queuedItemsFromFiles(files)]);
+    requestAutoStart(files);
+  }
   function update(index: number, patch: Partial<UploadItem>) { setItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item)); }
+  function requestAutoStart(files: File[]) {
+    if (shouldAutoStartAfterSelection(files)) autoStartFilesRef.current.push(...files);
+  }
   async function start() {
     if (!folderId || running) return;
+    autoStartFilesRef.current = [];
     setRunning(true);
     const queue = items.map((item, index) => ({ item, index })).filter(({ item }) => item.status === 'queued' || item.status === 'failed' || item.status === 'cancelled');
     let cursor = 0;
@@ -32,6 +44,13 @@ export default function UploadWorkspace({ api, selection, onSelectionConsumed }:
     await Promise.all([worker(), worker()]);
     setRunning(false);
   }
+  useEffect(() => {
+    const pendingFiles = autoStartFilesRef.current;
+    if (pendingFiles.length === 0 || running || !folderId || items.length === 0) return;
+    if (!pendingFiles.every((file) => items.some((item) => item.file === file && item.status === 'queued'))) return;
+    autoStartFilesRef.current = [];
+    void start();
+  }, [folderId, items, running]);
 
   return <section className="upload-workspace" aria-labelledby="upload-title"><div className="workspace-heading"><div><span className="eyebrow">Add to your library</span><h1 id="upload-title">Upload</h1></div><span className="upload-count">{completed}/{items.length || 0} complete</span></div><label className="folder-select-label">Destination<select value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">Choose a folder</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label><label className="drop-zone"><UploadCloud size={27} /><strong>Choose photos or videos</strong><span>JPEG, PNG, MP4 or WebM · one request per file</span><input type="file" accept="image/jpeg,image/png,video/mp4,video/webm" multiple onChange={selectFiles} /></label>{items.length > 0 && <div className="upload-list">{items.map((item, index) => <div className="upload-row" key={`${item.file.name}-${index}`}><FileImage size={19} /><div className="upload-row-copy"><strong>{item.file.name}</strong><small>{item.status === 'failed' ? item.message : item.status === 'cancelled' ? 'Cancelled' : item.status === 'done' ? 'Uploaded' : item.status === 'uploading' ? `${item.progress}%` : 'Waiting'}</small><div className="progress-track"><span style={{ width: `${item.progress}%` }} /></div></div>{item.status === 'done' ? <Check size={18} className="success-icon" /> : item.status === 'failed' ? <X size={18} className="error-icon" /> : item.status === 'cancelled' ? <button className="text-button" onClick={() => update(index, { status: 'queued', message: undefined })}>Retry</button> : item.status === 'uploading' ? <button className="icon-button" aria-label={`Cancel ${item.file.name}`} onClick={() => controllers.get(index)?.abort()}><X size={18} /></button> : null}</div>)}</div>}<button className="button button-primary upload-start" disabled={!folderId || !items.some((item) => item.status === 'queued' || item.status === 'failed' || item.status === 'cancelled') || running} onClick={() => void start()}>{running ? 'Uploading…' : 'Start upload'}</button></section>;
 }
