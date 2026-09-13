@@ -2,6 +2,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiError, createApiClient } from './api';
 
 describe('API client', () => {
+  it('reads setup status and submits first administrator credentials', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ required: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ user: { id: 'u1', username: 'owner', role: 'admin', is_active: true }, csrf_token: 'csrf' }), { status: 201, headers: { 'Content-Type': 'application/json' } }));
+    const client = createApiClient(fetcher as typeof fetch);
+
+    await expect(client.setupStatus()).resolves.toEqual({ required: true });
+    await client.setupAdmin('owner', 'correct horse battery staple');
+
+    expect(fetcher.mock.calls[0][0]).toBe('/api/v1/setup/status');
+    expect(fetcher.mock.calls[0][1]).toEqual(expect.objectContaining({ method: 'GET', credentials: 'include' }));
+    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/setup/admin');
+    expect(JSON.parse((fetcher.mock.calls[1][1] as RequestInit).body as string)).toEqual({ username: 'owner', password: 'correct horse battery staple' });
+  });
+
   it('sends same-origin credentials and decodes login response', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       user: { id: 'u1', username: 'admin', role: 'admin', is_active: true },

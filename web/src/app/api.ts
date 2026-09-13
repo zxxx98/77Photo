@@ -105,6 +105,8 @@ export class ApiError extends Error {
 }
 
 export interface ApiClient {
+  setupStatus(): Promise<{ required: boolean }>;
+  setupAdmin(username: string, password: string): Promise<AuthResponse>;
   login(username: string, password: string): Promise<AuthResponse>;
   me(): Promise<User>;
   logout(): Promise<void>;
@@ -156,6 +158,8 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
   }
 
   return {
+    setupStatus: () => request<{ required: boolean }>('/api/v1/setup/status') as Promise<{ required: boolean }>,
+    setupAdmin: (username, password) => request<AuthResponse>('/api/v1/setup/admin', { method: 'POST', body: JSON.stringify({ username, password }) }) as Promise<AuthResponse>,
     login: (username, password) => request<AuthResponse>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }) as Promise<AuthResponse>,
     me: () => request<User>('/api/v1/auth/me') as Promise<User>,
     logout: async () => { await request('/api/v1/auth/logout', { method: 'POST' }); },

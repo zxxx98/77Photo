@@ -1,6 +1,6 @@
 import type { ApiClient, AuthResponse, User } from './api';
 
-export type SessionStatus = 'loading' | 'authenticated' | 'unauthenticated';
+export type SessionStatus = 'loading' | 'setup' | 'authenticated' | 'unauthenticated';
 
 export interface SessionSnapshot {
   status: SessionStatus;
@@ -8,7 +8,7 @@ export interface SessionSnapshot {
   error: string | null;
 }
 
-type SessionApi = Pick<ApiClient, 'me' | 'login' | 'logout'> & Partial<Pick<ApiClient, 'setCsrfToken'>>;
+type SessionApi = Pick<ApiClient, 'me' | 'setupStatus' | 'setupAdmin' | 'login' | 'logout'> & Partial<Pick<ApiClient, 'setCsrfToken'>>;
 
 export class SessionStore {
   private readonly api: SessionApi;
@@ -34,7 +34,26 @@ export class SessionStore {
       this.setSnapshot({ status: 'authenticated', user, error: null });
     } catch {
       this.clearSession();
-      this.setSnapshot({ status: 'unauthenticated', user: null, error: null });
+      try {
+        const setup = await this.api.setupStatus();
+        this.setSnapshot({ status: setup.required ? 'setup' : 'unauthenticated', user: null, error: null });
+      } catch {
+        this.setSnapshot({ status: 'unauthenticated', user: null, error: null });
+      }
+    }
+  }
+
+  async setupAdmin(username: string, password: string): Promise<void> {
+    this.setSnapshot({ status: 'loading', user: null, error: null });
+    try {
+      const response = await this.api.setupAdmin(username, password);
+      this._csrfToken = response.csrf_token;
+      this.api.setCsrfToken?.(this._csrfToken);
+      this.setSnapshot({ status: 'authenticated', user: response.user, error: null });
+    } catch (error) {
+      this.clearSession();
+      await this.restore();
+      throw error;
     }
   }
 
