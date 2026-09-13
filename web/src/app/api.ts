@@ -58,6 +58,38 @@ export interface Share {
   created_at: string;
 }
 
+export type ShareResourceType = 'photo' | 'folder';
+export type ShareDuration = '1_day' | '7_days' | 'forever';
+
+export interface ShareLink {
+  id: string;
+  resource_type: ShareResourceType;
+  resource_id: string;
+  url: string;
+  expires_at?: string | null;
+  password_protected: boolean;
+}
+
+export interface PublicShare {
+  resource_type: ShareResourceType;
+  name: string;
+  folder_name?: string;
+  folder_path?: string;
+  password_required: boolean;
+  expires_at?: string | null;
+}
+
+export interface PublicPhoto {
+  id: string;
+  folder_id: string;
+  filename: string;
+  mime_type: string;
+  size: number;
+  captured_at: string;
+  width?: number;
+  height?: number;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -79,6 +111,7 @@ export interface ApiClient {
   setCsrfToken(token: string | null): void;
   listPhotos(params?: { folderId?: string; cursor?: string; limit?: number }): Promise<PhotoPage>;
   listFolders(parentId?: string): Promise<{ items: Folder[] }>;
+  getFolder(id: string): Promise<Folder>;
   createFolder(name: string, parentId?: string | null): Promise<Folder>;
   uploadPhoto(file: File, folderId: string, onProgress?: (progress: UploadProgress) => void, signal?: AbortSignal): Promise<Photo>;
   renamePhoto(id: string, name: string, conflict?: 'reject' | 'rename'): Promise<Photo>;
@@ -87,6 +120,11 @@ export interface ApiClient {
   listShares(): Promise<{ items: Share[] }>;
   createShare(input: { folder_id: string; user_id: string; permission: 'read' | 'write' }): Promise<Share>;
   revokeShare(id: string): Promise<void>;
+  createShareLink(input: { resource_type: ShareResourceType; resource_id: string; duration: ShareDuration; password?: string }): Promise<ShareLink>;
+  getPublicShare(token: string): Promise<PublicShare>;
+  unlockPublicShare(token: string, password: string): Promise<PublicShare>;
+  listPublicSharePhotos(token: string): Promise<{ items: PublicPhoto[] }>;
+  publicSharePreviewURL(token: string, photoID: string): string;
   listUsers(): Promise<{ items: User[] }>;
   createUser(input: { username: string; password: string; role: Role }): Promise<User>;
   updateUser(id: string, input: Partial<Pick<User, 'username' | 'role' | 'is_active'>> & { password?: string }): Promise<User>;
@@ -134,6 +172,7 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
       const suffix = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : '';
       return request<{ items: Folder[] }>(`/api/v1/folders${suffix}`) as Promise<{ items: Folder[] }>;
     },
+    getFolder: (id) => request<Folder>(`/api/v1/folders/${encodeURIComponent(id)}`) as Promise<Folder>,
     createFolder: (name, parentId = null) => request<Folder>('/api/v1/folders', { method: 'POST', body: JSON.stringify({ name, parent_id: parentId }) }) as Promise<Folder>,
     uploadPhoto: (file, folderId, onProgress, signal) => new Promise<Photo>((resolve, reject) => {
       const request = new XMLHttpRequest();
@@ -165,6 +204,11 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     listShares: () => request<{ items: Share[] }>('/api/v1/shares') as Promise<{ items: Share[] }>,
     createShare: (input) => request<Share>('/api/v1/shares', { method: 'POST', body: JSON.stringify(input) }) as Promise<Share>,
     revokeShare: async (id) => { await request(`/api/v1/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }); },
+    createShareLink: (input) => request<ShareLink>('/api/v1/share-links', { method: 'POST', body: JSON.stringify(input) }) as Promise<ShareLink>,
+    getPublicShare: (token) => request<PublicShare>(`/api/v1/share-links/${encodeURIComponent(token)}`) as Promise<PublicShare>,
+    unlockPublicShare: (token, password) => request<PublicShare>(`/api/v1/share-links/${encodeURIComponent(token)}/unlock`, { method: 'POST', body: JSON.stringify({ password }) }) as Promise<PublicShare>,
+    listPublicSharePhotos: (token) => request<{ items: PublicPhoto[] }>(`/api/v1/share-links/${encodeURIComponent(token)}/photos`) as Promise<{ items: PublicPhoto[] }>,
+    publicSharePreviewURL: (token, photoID) => `/api/v1/share-links/${encodeURIComponent(token)}/photos/${encodeURIComponent(photoID)}/preview`,
     listUsers: () => request<{ items: User[] }>('/api/v1/users') as Promise<{ items: User[] }>,
     createUser: (input) => request<User>('/api/v1/users', { method: 'POST', body: JSON.stringify(input) }) as Promise<User>,
     updateUser: (id, input) => request<User>(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }) as Promise<User>,

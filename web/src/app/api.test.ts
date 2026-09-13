@@ -87,4 +87,28 @@ describe('API client', () => {
     expect(open).toHaveBeenCalledWith('POST', '/api/v1/photos/upload');
     expect(send).toHaveBeenCalledWith(expect.any(FormData));
   });
+
+  it('serializes contextual share link requests and public share reads', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'sl_1', resource_type: 'photo', resource_id: 'p_1', url: '/#/share/token', password_protected: true }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'f_1', name: 'Summer trip' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ resource_type: 'photo', name: 'photo.jpg', password_required: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ resource_type: 'photo', name: 'photo.jpg', password_required: false }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const client = createApiClient(fetcher as typeof fetch);
+
+    await client.createShareLink({ resource_type: 'photo', resource_id: 'p_1', duration: '7_days', password: 'correct horse battery staple' });
+    await client.getFolder('f_1');
+    await client.getPublicShare('token');
+    await client.unlockPublicShare('token', 'correct horse battery staple');
+    await client.listPublicSharePhotos('token');
+
+    expect(fetcher.mock.calls[0][0]).toBe('/api/v1/share-links');
+    expect(JSON.parse((fetcher.mock.calls[0][1] as RequestInit).body as string)).toEqual({ resource_type: 'photo', resource_id: 'p_1', duration: '7_days', password: 'correct horse battery staple' });
+    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/folders/f_1');
+    expect(fetcher.mock.calls[2][0]).toBe('/api/v1/share-links/token');
+    expect(fetcher.mock.calls[3][0]).toBe('/api/v1/share-links/token/unlock');
+    expect(fetcher.mock.calls[4][0]).toBe('/api/v1/share-links/token/photos');
+    expect(client.publicSharePreviewURL('token/value', 'p/1')).toBe('/api/v1/share-links/token%2Fvalue/photos/p%2F1/preview');
+  });
 });

@@ -1,0 +1,30 @@
+import { describe, expect, it } from 'vitest';
+import { selectShareDuration, shareButtonLabel, shareCopy, shareDurations, successMessage } from './shareDialog';
+
+describe('share dialog rules', () => {
+  it('selects the newly checked duration', () => {
+    expect(selectShareDuration('1_day', '7_days')).toBe('7_days');
+    expect(selectShareDuration('7_days', 'forever')).toBe('forever');
+  });
+
+  it('keeps copy contextual to the shared resource', () => {
+    expect(shareCopy('photo', 'IMG_2048.jpg').title).toBe('Share photo');
+    expect(shareCopy('folder', 'Family / Summer trip').createLabel).toBe('Create folder link');
+    expect(shareButtonLabel('photo')).toBe('Share photo');
+    expect(shareButtonLabel('folder')).toBe('Share folder');
+  });
+
+  it('describes successful sharing with the resource and duration', () => {
+    expect(successMessage('photo', '7_days')).toContain('Photo shared for 7 days');
+    expect(successMessage('folder', 'forever')).toContain('Folder shared forever');
+  });
+
+  it('offers exactly one checkbox choice for each duration', () => {
+    expect(shareDurations).toEqual([
+      { value: '1_day', label: '1 day' },
+      { value: '7_days', label: '7 days' },
+      { value: 'forever', label: 'Forever' },
+    ]);
+    expect(selectShareDuration('forever', '1_day')).toBe('1_day');
+  });
+});
