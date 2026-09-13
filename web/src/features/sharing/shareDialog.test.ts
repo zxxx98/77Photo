@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createCopyLinkHandler, selectShareDuration, shareButtonLabel, shareCopy, shareDurations, successMessage } from './shareDialog';
+import { createCopyLinkHandler, durationDetail, durationLabel, selectShareDuration, shareButtonLabel, shareCopy, shareDurations, successMessage } from './shareDialog';
 
 describe('share dialog rules', () => {
   it('runs the copy action when the copy button is clicked', () => {
@@ -37,5 +37,19 @@ describe('share dialog rules', () => {
       { value: 'forever', label: 'Forever', detail: 'Does not expire' },
     ]);
     expect(selectShareDuration('forever', '1_day')).toBe('1_day');
+  });
+
+  it('returns resource-specific copy in both locales', () => {
+    expect(shareCopy('photo', 'IMG_2048.jpg', 'zh').title).toBe('分享照片');
+    expect(shareCopy('photo', 'IMG_2048.jpg', 'en').title).toBe('Share photo');
+    expect(successMessage('folder', 'forever', 'zh')).toContain('文件夹已永久分享');
+    expect(successMessage('folder', 'forever', 'en')).toContain('Folder shared forever');
+  });
+
+  it('localizes duration labels and details', () => {
+    expect(durationLabel('1_day', 'zh')).toBe('1 天');
+    expect(durationLabel('7_days', 'en')).toBe('7 days');
+    expect(durationDetail('forever', 'zh')).toBe('永不过期');
+    expect(durationDetail('1_day', 'en')).toBe('Short-term access');
   });
 });

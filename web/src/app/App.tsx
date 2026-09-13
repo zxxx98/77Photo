@@ -2,6 +2,8 @@ import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, useSync
 import { Folder, Image, LogOut, Menu, Search, Settings, Upload, X } from 'lucide-react';
 import { createApiClient } from './api';
 import { SessionStore } from './auth';
+import { useI18n } from './I18nProvider';
+import type { TranslationKey } from './i18n';
 import { readPublicShareToken, readView, type AppView } from './routes';
 import { openUploadPicker } from './uploadPicker';
 import LoginPage from '../features/auth/LoginPage';
@@ -11,13 +13,14 @@ import UploadWorkspace from '../features/upload/UploadWorkspace';
 import PublicSharePage from '../features/sharing/PublicSharePage';
 import SettingsWorkspace from '../features/settings/SettingsWorkspace';
 import type { UploadSelection } from '../features/upload/uploadSelection';
+import LanguageToggle from '../features/i18n/LanguageToggle';
 
 type View = AppView;
 
-const navItems: Array<{ id: View; label: string; icon: typeof Image }> = [
-  { id: 'gallery', label: 'Gallery', icon: Image },
-  { id: 'folders', label: 'Folders', icon: Folder },
-  { id: 'settings', label: 'Settings', icon: Settings },
+const navItems: Array<{ id: View; labelKey: TranslationKey; icon: typeof Image }> = [
+  { id: 'gallery', labelKey: 'shell.gallery', icon: Image },
+  { id: 'folders', labelKey: 'shell.folders', icon: Folder },
+  { id: 'settings', labelKey: 'shell.settings', icon: Settings },
 ];
 
 export default function App() {
@@ -41,6 +44,7 @@ export default function App() {
 }
 
 function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof createApiClient>; store: SessionStore; view: View; onViewChange: (view: View) => void }) {
+  const { t } = useI18n();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [uploadSelection, setUploadSelection] = useState<UploadSelection | null>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
@@ -62,49 +66,50 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
   }, []);
   return (
     <div className="app-frame">
-      <button className={`scrim ${sidebarOpen ? 'is-visible' : ''}`} aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />
-      <aside className={`sidebar ${sidebarOpen ? 'is-open' : ''}`} aria-label="Primary navigation">
+      <button className={`scrim ${sidebarOpen ? 'is-visible' : ''}`} aria-label={t('common.closeNavigation')} onClick={() => setSidebarOpen(false)} />
+      <aside className={`sidebar ${sidebarOpen ? 'is-open' : ''}`} aria-label={t('common.primaryNavigation')}>
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">77</span>
-          <div><strong>77Photo</strong><span>private memories</span></div>
-          <button className="icon-button mobile-close" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}><X size={19} /></button>
+          <div><strong>77Photo</strong><span>{t('shell.privateMemories')}</span></div>
+          <button className="icon-button mobile-close" aria-label={t('common.closeNavigation')} onClick={() => setSidebarOpen(false)}><X size={19} /></button>
         </div>
         <nav className="primary-nav">
-          <span className="nav-caption">Library</span>
-          {navItems.map(({ id, label, icon: Icon }) => (
+          <span className="nav-caption">{t('shell.library')}</span>
+          {navItems.map(({ id, labelKey, icon: Icon }) => (
             <button key={id} className={`nav-item ${view === id ? 'is-active' : ''}`} onClick={() => { onViewChange(id); setSidebarOpen(false); }}>
-              <Icon size={18} strokeWidth={1.7} /><span>{label}</span>
+              <Icon size={18} strokeWidth={1.7} /><span>{t(labelKey)}</span>
             </button>
           ))}
         </nav>
         <div className="sidebar-note">
           <span className="status-dot" aria-hidden="true" />
-          <div><strong>Private library</strong><span>Stored on your server</span></div>
+          <div><strong>{t('shell.privateLibrary')}</strong><span>{t('shell.storedOnServer')}</span></div>
         </div>
         <div className="account-area">
           <div className="avatar" aria-hidden="true">{user?.username.slice(0, 1).toUpperCase()}</div>
-          <div className="account-copy"><strong>{user?.username}</strong><span>{user?.role === 'admin' ? 'Administrator' : 'Family member'}</span></div>
-          <button className="icon-button" aria-label="Sign out" onClick={() => void store.logout()}><LogOut size={18} /></button>
+          <div className="account-copy"><strong>{user?.username}</strong><span>{user?.role === 'admin' ? t('shell.administrator') : t('shell.familyMember')}</span></div>
+          <LanguageToggle />
+          <button className="icon-button" aria-label={t('common.signOut')} onClick={() => void store.logout()}><LogOut size={18} /></button>
         </div>
       </aside>
       <main className="main-content">
         <header className="topbar">
-          <button className="icon-button menu-button" aria-label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
+          <button className="icon-button menu-button" aria-label={t('common.openNavigation')} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
           <label className="search-field">
             <Search size={18} aria-hidden="true" />
-            <span className="sr-only">Search your library</span>
-            <input placeholder="Search your library" disabled aria-label="Search your library" />
+            <span className="sr-only">{t('common.search')}</span>
+            <input placeholder={t('common.search')} disabled aria-label={t('common.search')} />
           </label>
-          <button className="button button-primary upload-button" onClick={chooseUpload}><Upload size={17} /> <span>Upload</span></button>
+          <button className="button button-primary upload-button" onClick={chooseUpload}><Upload size={17} /> <span>{t('common.upload')}</span></button>
           <input ref={pickerRef} className="sr-only" type="file" accept="image/jpeg,image/png,video/mp4,video/webm" multiple tabIndex={-1} aria-hidden="true" onChange={handlePickerChange} />
         </header>
         <div className="content-scroll"><Workspace api={api} currentUser={user!} view={view} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} /></div>
       </main>
-      <nav className="mobile-nav" aria-label="Mobile navigation">
-        {navItems.slice(0, 2).map(({ id, label, icon: Icon }) => (
-          <button key={id} className={`mobile-nav-item ${view === id ? 'is-active' : ''}`} onClick={() => onViewChange(id)}><Icon size={19} /><span>{label}</span></button>
+      <nav className="mobile-nav" aria-label={t('common.mobileNavigation')}>
+        {navItems.slice(0, 2).map(({ id, labelKey, icon: Icon }) => (
+          <button key={id} className={`mobile-nav-item ${view === id ? 'is-active' : ''}`} onClick={() => onViewChange(id)}><Icon size={19} /><span>{t(labelKey)}</span></button>
         ))}
-        <button className={`mobile-nav-item ${view === 'settings' ? 'is-active' : ''}`} onClick={() => onViewChange('settings')}><Settings size={19} /><span>Settings</span></button>
+        <button className={`mobile-nav-item ${view === 'settings' ? 'is-active' : ''}`} onClick={() => onViewChange('settings')}><Settings size={19} /><span>{t('shell.settings')}</span></button>
       </nav>
     </div>
   );
@@ -118,7 +123,7 @@ function Workspace({ api, currentUser, view, uploadSelection, onUploadSelectionC
   return null;
 }
 
-function LoadingScreen() { return <main className="loading-screen" aria-busy="true"><span className="brand-mark" aria-hidden="true">77</span><p>Opening your library…</p></main>; }
+function LoadingScreen() { const { t } = useI18n(); return <main className="loading-screen" aria-busy="true"><span className="brand-mark" aria-hidden="true">77</span><p>{t('shell.openingLibrary')}</p></main>; }
 
 function writeView(view: View) {
   window.history.pushState({}, '', `#/${view}`);
