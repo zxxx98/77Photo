@@ -3,6 +3,7 @@ import { ArrowUpRight, LoaderCircle, RefreshCw } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
 import type { ApiClient, Photo } from '../../app/api';
 import Viewer from '../viewer/Viewer';
+import { GallerySkeleton } from '../loading/LoadingStates';
 
 export default function GalleryWorkspace({ api }: { api: ApiClient }) {
   const { t, formatCount } = useI18n();
@@ -50,7 +51,7 @@ export default function GalleryWorkspace({ api }: { api: ApiClient }) {
     <section className="gallery-workspace" aria-labelledby="gallery-title">
       <div className="workspace-heading gallery-heading"><div><span className="eyebrow">{t('gallery.yourLibrary')}</span><h1 id="gallery-title">{t('gallery.timeline')}</h1><p className="gallery-intro">{t('gallery.intro')}</p></div><div className="gallery-heading-actions"><span className="gallery-count">{photos.length ? t('gallery.loaded', { count: formatCount(photos.length) }) : t('gallery.noPhotosYet')}</span><button className="view-toggle" aria-label={t('gallery.refresh')} onClick={() => void load()}><RefreshCw size={18} /></button></div></div>
       <div className="filter-row" aria-label={t('gallery.filters')}><button type="button" className="filter-chip is-active">{t('gallery.allPhotos')}</button><span className="filter-hint">{photos.length ? t('gallery.privateByDefault') : t('gallery.yourPrivateLibrary')}</span></div>
-      {loading && <div className="inline-state"><LoaderCircle className="spin" size={18} /> {t('gallery.loading')}</div>}
+      {loading && <GallerySkeleton />}
       {!loading && error && <div className="inline-state" role="alert">{error}<button className="button button-secondary" onClick={() => void load()}>{t('common.retry')}</button></div>}
       {!loading && !error && photos.length === 0 && <EmptyTimeline />}
       {!loading && !error && groups.map(([date, items]) => <TimelineGroup key={date} date={date} photos={items} onSelect={(photo) => setSelected(photos.findIndex((item) => item.id === photo.id))} />)}

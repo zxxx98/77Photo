@@ -15,6 +15,7 @@ import SettingsWorkspace from '../features/settings/SettingsWorkspace';
 import type { UploadSelection } from '../features/upload/uploadSelection';
 import LanguageToggle from '../features/i18n/LanguageToggle';
 import BrandMark from '../features/branding/BrandMark';
+import { AppShellSkeleton } from '../features/loading/LoadingStates';
 
 type View = AppView;
 
@@ -39,7 +40,7 @@ export default function App() {
   }, []);
 
   if (publicShareToken) return <PublicSharePage api={api} token={publicShareToken} />;
-  if (snapshot.status === 'loading') return <LoadingScreen />;
+  if (snapshot.status === 'loading') return <AppShellSkeleton />;
   if (snapshot.status === 'unauthenticated') return <LoginPage store={store} />;
   return <AppShell api={api} store={store} view={view} onViewChange={(nextView) => { writeView(nextView); setView(nextView); }} />;
 }
@@ -106,7 +107,7 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
           </div>
           <input ref={pickerRef} className="sr-only" type="file" accept="image/jpeg,image/png,video/mp4,video/webm" multiple tabIndex={-1} aria-hidden="true" onChange={handlePickerChange} />
         </header>
-        <div className="content-scroll"><Workspace api={api} currentUser={user!} view={view} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} /></div>
+        <div className="content-scroll"><Workspace api={api} currentUser={user!} view={view} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} onUpload={chooseUpload} /></div>
       </main>
       <nav className="mobile-nav" aria-label={t('common.mobileNavigation')}>
         {navItems.slice(0, 2).map(({ id, labelKey, icon: Icon }) => (
@@ -118,15 +119,13 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
   );
 }
 
-function Workspace({ api, currentUser, view, uploadSelection, onUploadSelectionConsumed }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View; uploadSelection: UploadSelection | null; onUploadSelectionConsumed: (id: number) => void }) {
+function Workspace({ api, currentUser, view, uploadSelection, onUploadSelectionConsumed, onUpload }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View; uploadSelection: UploadSelection | null; onUploadSelectionConsumed: (id: number) => void; onUpload: () => void }) {
   if (view === 'gallery') return <GalleryWorkspace api={api} />;
-  if (view === 'folders') return <FoldersWorkspace api={api} />;
+  if (view === 'folders') return <FoldersWorkspace api={api} onUpload={onUpload} />;
   if (view === 'upload') return <UploadWorkspace api={api} selection={uploadSelection} onSelectionConsumed={onUploadSelectionConsumed} />;
   if (view === 'settings') return <SettingsWorkspace api={api} currentUser={currentUser} />;
   return null;
 }
-
-function LoadingScreen() { const { t } = useI18n(); return <main className="loading-screen" aria-busy="true"><BrandMark /><p>{t('shell.openingLibrary')}</p></main>; }
 
 function writeView(view: View) {
   window.history.pushState({}, '', `#/${view}`);

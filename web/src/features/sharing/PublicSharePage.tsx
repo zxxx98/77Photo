@@ -1,9 +1,10 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useState } from 'react';
-import { ImageOff, LoaderCircle, LockKeyhole } from 'lucide-react';
+import { ImageOff, LockKeyhole } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
 import { ApiError, type ApiClient, type PublicPhoto, type PublicShare } from '../../app/api';
 import LanguageToggle from '../i18n/LanguageToggle';
 import BrandMark from '../branding/BrandMark';
+import { PublicShareSkeleton } from '../loading/LoadingStates';
 
 export default function PublicSharePage({ api, token }: { api: ApiClient; token: string }) {
   const { t } = useI18n();
@@ -60,7 +61,7 @@ export default function PublicSharePage({ api, token }: { api: ApiClient; token:
     }
   }
 
-  if (loading && !share) return <PublicPageFrame><div className="public-share-state"><LoaderCircle className="spin" size={21} /><p>{t('public.openingMemories')}</p></div></PublicPageFrame>;
+  if (loading && !share) return <PublicPageFrame><PublicShareSkeleton withHeading /></PublicPageFrame>;
   if (!share) return <PublicPageFrame><div className="public-share-state"><ImageOff size={24} /><h1>{t('public.unavailableTitle')}</h1><p>{t('public.unavailableDescription')}</p></div></PublicPageFrame>;
   if (share.password_required && !unlocked) return <PublicPageFrame><div className="public-share-gate"><span className="public-share-lock"><LockKeyhole size={21} /></span><span className="eyebrow">{t('public.privateLink')}</span><h1>{t('public.passwordRequired')}</h1><p>{t('public.enterPassword', { resource: t(share.resource_type === 'photo' ? 'common.photo' : 'common.folder') })}</p><form onSubmit={unlock}><label>{t('auth.password')}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoFocus autoComplete="current-password" /></label>{error && <p className="form-message" role="alert">{error}</p>}<button className="button button-primary" type="submit" disabled={loading || !password}>{loading ? t('public.checking') : t('public.viewSharedMemories')}</button></form></div></PublicPageFrame>;
 
@@ -68,7 +69,7 @@ export default function PublicSharePage({ api, token }: { api: ApiClient; token:
     <section className="public-share-content" aria-labelledby="public-share-title">
       <div className="public-share-heading"><div><span className="eyebrow">{t('public.sharedResource', { resource: t(share.resource_type === 'photo' ? 'common.photo' : 'common.folder') })}</span><h1 id="public-share-title">{share.name}</h1>{share.folder_path && <p>{share.folder_path}</p>}</div><span className="public-share-readonly">{t('public.viewOnly')}</span></div>
       {error && <p className="form-message" role="alert">{error}</p>}
-      {loadingPhotos ? <div className="public-share-state"><LoaderCircle className="spin" size={21} /><p>{t('public.loadingMemories')}</p></div> : photos.length === 0 ? <div className="public-share-empty"><ImageOff size={24} /><p>{t('public.noPhotos')}</p></div> : <div className="public-photo-grid">{photos.map((photo) => <PublicPhotoTile key={photo.id} api={api} token={token} photo={photo} />)}</div>}
+      {loadingPhotos ? <PublicShareSkeleton /> : photos.length === 0 ? <div className="public-share-empty"><ImageOff size={24} /><p>{t('public.noPhotos')}</p></div> : <div className="public-photo-grid">{photos.map((photo) => <PublicPhotoTile key={photo.id} api={api} token={token} photo={photo} />)}</div>}
     </section>
   </PublicPageFrame>;
 }

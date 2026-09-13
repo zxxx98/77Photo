@@ -13,6 +13,10 @@ const sharingSources = import.meta.glob([
   '../features/sharing/ShareDialog.tsx',
   '../features/sharing/PublicSharePage.tsx',
 ], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const stateSources = import.meta.glob([
+  '../features/loading/LoadingStates.tsx',
+  '../features/folders/FolderEmptyState.tsx',
+], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
 describe('translation coverage', () => {
   it('does not leave the previous shell and login literals behind', () => {
@@ -67,6 +71,14 @@ describe('translation coverage', () => {
     ];
 
     for (const source of Object.values(sharingSources)) {
+      for (const phrase of forbidden) expect(source).not.toContain(phrase);
+    }
+  });
+
+  it('keeps loading and empty states behind translation keys', () => {
+    const forbidden = ['Start organizing here', 'Upload photos', 'New folder', 'Loading folders', 'Opening shared memories'];
+
+    for (const source of Object.values(stateSources)) {
       for (const phrase of forbidden) expect(source).not.toContain(phrase);
     }
   });
