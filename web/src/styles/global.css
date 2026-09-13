@@ -33,6 +33,9 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
 .button-secondary:hover { border-color: rgba(61, 74, 92, .24); background: rgba(255,255,255,.35); }
 .icon-button { display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 14px; color: var(--slate-soft); background: transparent; }
 .icon-button:hover { color: var(--slate); background: var(--slate-faint); }
+.language-toggle { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border); border-radius: 13px; padding: 0 11px; color: var(--slate-soft); background: transparent; font-size: 11px; white-space: nowrap; }
+.language-toggle:hover { border-color: rgba(61, 74, 92, .24); background: var(--slate-faint); }
+.language-toggle span.is-active { color: var(--slate); font-weight: 700; }
 
 /* Login */
 .login-page { min-height: 100svh; display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(420px, .92fr); }
