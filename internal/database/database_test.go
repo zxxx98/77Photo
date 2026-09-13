@@ -34,7 +34,7 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
 	}
 
-	for _, table := range []string{"users", "folders", "photos", "shares", "sessions", "schema_migrations"} {
+	for _, table := range []string{"users", "folders", "photos", "shares", "sessions", "share_links", "share_link_access", "schema_migrations"} {
 		var count int
 		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -47,8 +47,8 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 2 {
-		t.Fatalf("schema migration count = %d, want 2", migrationCount)
+	if migrationCount != 3 {
+		t.Fatalf("schema migration count = %d, want 3", migrationCount)
 	}
 }
 
@@ -83,8 +83,8 @@ VALUES ('u-restart', 'restart', 'hash', 'user', '2026-01-01T00:00:00Z', '2026-01
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 2 {
-		t.Fatalf("schema migration count = %d, want 2", migrationCount)
+	if migrationCount != 3 {
+		t.Fatalf("schema migration count = %d, want 3", migrationCount)
 	}
 }
 
