@@ -54,12 +54,13 @@ export default function ShareDialog({ api, resource, onClose }: { api: ApiClient
       <p className="share-dialog-name" title={resource.name}>{resource.name}</p>
       {!link ? <form className="share-dialog-form" onSubmit={create}>
         <p className="share-dialog-note">Anyone with the link can view. No account or sign-in required.</p>
-        <fieldset className="share-duration-fieldset">
+        <fieldset className="share-duration-fieldset" aria-describedby="share-duration-help">
           <legend>Link duration</legend>
+          <p className="share-duration-help" id="share-duration-help">Choose when this link expires.</p>
           <div className="share-duration-list">
-            {shareDurations.map((option) => <label className="share-duration-option" key={option.value}>
-              <input type="checkbox" checked={duration === option.value} onChange={() => setDuration(selectShareDuration(duration, option.value))} />
-              <span>{option.label}</span>
+            {shareDurations.map((option) => <label className={`share-duration-option ${duration === option.value ? 'is-selected' : ''}`} key={option.value}>
+              <input type="radio" name="share-duration" value={option.value} checked={duration === option.value} onChange={() => setDuration(selectShareDuration(duration, option.value))} />
+              <span className="share-duration-copy"><span className="share-duration-label">{option.label}</span><span className="share-duration-detail">{option.detail}</span></span>
             </label>)}
           </div>
         </fieldset>
