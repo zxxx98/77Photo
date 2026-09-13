@@ -14,6 +14,7 @@ import PublicSharePage from '../features/sharing/PublicSharePage';
 import SettingsWorkspace from '../features/settings/SettingsWorkspace';
 import type { UploadSelection } from '../features/upload/uploadSelection';
 import LanguageToggle from '../features/i18n/LanguageToggle';
+import BrandMark from '../features/branding/BrandMark';
 
 type View = AppView;
 
@@ -69,7 +70,7 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
       <button className={`scrim ${sidebarOpen ? 'is-visible' : ''}`} aria-label={t('common.closeNavigation')} onClick={() => setSidebarOpen(false)} />
       <aside className={`sidebar ${sidebarOpen ? 'is-open' : ''}`} aria-label={t('common.primaryNavigation')}>
         <div className="brand-lockup">
-          <span className="brand-mark" aria-hidden="true">77</span>
+          <BrandMark />
           <div><strong>77Photo</strong><span>{t('shell.privateMemories')}</span></div>
           <button className="icon-button mobile-close" aria-label={t('common.closeNavigation')} onClick={() => setSidebarOpen(false)}><X size={19} /></button>
         </div>
@@ -123,7 +124,7 @@ function Workspace({ api, currentUser, view, uploadSelection, onUploadSelectionC
   return null;
 }
 
-function LoadingScreen() { const { t } = useI18n(); return <main className="loading-screen" aria-busy="true"><span className="brand-mark" aria-hidden="true">77</span><p>{t('shell.openingLibrary')}</p></main>; }
+function LoadingScreen() { const { t } = useI18n(); return <main className="loading-screen" aria-busy="true"><BrandMark /><p>{t('shell.openingLibrary')}</p></main>; }
 
 function writeView(view: View) {
   window.history.pushState({}, '', `#/${view}`);

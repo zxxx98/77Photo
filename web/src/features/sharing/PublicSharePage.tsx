@@ -3,6 +3,7 @@ import { ImageOff, LoaderCircle, LockKeyhole } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
 import { ApiError, type ApiClient, type PublicPhoto, type PublicShare } from '../../app/api';
 import LanguageToggle from '../i18n/LanguageToggle';
+import BrandMark from '../branding/BrandMark';
 
 export default function PublicSharePage({ api, token }: { api: ApiClient; token: string }) {
   const { t } = useI18n();
@@ -74,7 +75,7 @@ export default function PublicSharePage({ api, token }: { api: ApiClient; token:
 
 function PublicPageFrame({ children }: { children: ReactNode }) {
   const { t } = useI18n();
-  return <main className="public-share-page"><div className="public-share-top"><div className="public-share-brand"><span className="brand-mark" aria-hidden="true">77</span><span>77Photo</span></div><LanguageToggle /></div>{children}<p className="public-share-footer">{t('public.footer')}</p></main>;
+  return <main className="public-share-page"><div className="public-share-top"><div className="public-share-brand"><BrandMark /><span>77Photo</span></div><LanguageToggle /></div>{children}<p className="public-share-footer">{t('public.footer')}</p></main>;
 }
 
 function PublicPhotoTile({ api, token, photo }: { api: ApiClient; token: string; photo: PublicPhoto }) {
