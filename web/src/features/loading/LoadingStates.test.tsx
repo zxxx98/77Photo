@@ -28,4 +28,5 @@ describe('loading skeletons', () => {
     expect(render(<PublicShareSkeleton />)).toContain('public-skeleton-grid');
     expect(render(<AppShellSkeleton />)).toContain('app-shell-skeleton');
   });
+
 });

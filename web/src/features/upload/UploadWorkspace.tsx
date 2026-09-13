@@ -1,5 +1,5 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, FileImage, LoaderCircle, UploadCloud, X } from 'lucide-react';
+import { Check, FileImage, UploadCloud, X } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
 import type { ApiClient, Folder, UploadProgress } from '../../app/api';
 import { queuedItemsFromFiles, shouldAutoStartAfterSelection, type UploadSelection } from './uploadSelection';

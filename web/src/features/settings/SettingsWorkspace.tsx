@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { LoaderCircle, ShieldCheck, UserRound, RefreshCw } from 'lucide-react';
+import { ShieldCheck, UserRound, RefreshCw } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
 import type { ApiClient, User } from '../../app/api';
 

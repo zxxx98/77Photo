@@ -351,9 +351,6 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
 }
 .empty-workspace { padding-top: 6vh; }
 .empty-workspace p { max-width: 390px; margin: 18px 0 28px; color: var(--slate-soft); font-size: 14px; line-height: 1.7; }
-.loading-screen { min-height: 100svh; display: grid; place-content: center; justify-items: center; gap: 16px; color: var(--slate-soft); font-size: 13px; }
-.loading-screen p { margin: 0; }
-
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
 @media (max-width: 900px) {
   .login-page { grid-template-columns: 1fr; }
@@ -375,6 +372,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
   .mobile-nav-item { min-height: 44px; display: grid; place-items: center; gap: 3px; border: 0; border-radius: 13px; color: var(--slate-soft); background: transparent; font-size: 10px; }
   .mobile-nav-item.is-active { color: var(--slate); background: rgba(212,165,165,.16); }
   .content-scroll { padding-bottom: 110px; }
+  .app-shell-skeleton-sidebar { display: none; }
 }
 @media (max-width: 560px) {
   .login-atmosphere { min-height: 275px; }
@@ -392,6 +390,9 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
   .upload-button { width: 44px; padding: 0; }
   .upload-button span { display: none; }
   .content-scroll { min-height: calc(100svh - 76px); padding: 28px 16px 110px; }
+  .app-shell-skeleton-topbar { height: 76px; padding: 0 16px; }
+  .app-shell-skeleton-button { width: 44px; }
+  .app-shell-skeleton-content { padding: 40px 16px; }
   .workspace-heading h1 { font-size: 31px; }
   .gallery-intro { max-width: 220px; font-size: 12px; }
   .gallery-count { font-size: 10px; }
