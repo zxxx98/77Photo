@@ -53,6 +53,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
 .strip-three { width: 29%; height: 67%; right: 65%; bottom: 12%; background: #e6d0ad; transform: rotate(18deg); }
 .login-panel { display: grid; place-items: center; padding: 42px clamp(28px, 7vw, 110px); background: var(--warm-white); }
 .login-panel-inner { width: min(100%, 390px); }
+.login-toolbar { display: flex; align-items: center; justify-content: flex-end; }
 .mobile-brand { display: none; }
 .login-heading { margin: 64px 0 38px; }
 .login-heading h2 { margin: 14px 0 10px; font-size: clamp(27px, 3vw, 36px); font-weight: 500; letter-spacing: -.055em; }
@@ -321,7 +322,8 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
   .atmosphere-copy { padding-top: 31px; }
   .atmosphere-copy p { max-width: 245px; font-size: 13px; }
   .login-panel { min-height: calc(100svh - 275px); place-items: start center; padding: 32px 24px 50px; }
-  .mobile-brand { display: flex; margin-bottom: 34px; }
+  .login-toolbar { justify-content: space-between; }
+  .mobile-brand { display: flex; }
   .login-heading { margin: 0 0 30px; }
   .login-heading h2 { font-size: 29px; }
   .topbar { height: 76px; padding: 0 16px; gap: 10px; }

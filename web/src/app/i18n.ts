@@ -33,6 +33,8 @@ const english = {
   'common.shareFolder': 'Share folder',
   'common.openNavigation': 'Open navigation',
   'common.closeNavigation': 'Close navigation',
+  'common.primaryNavigation': 'Primary navigation',
+  'common.mobileNavigation': 'Mobile navigation',
   'common.language': 'Language',
 
   'auth.familyLibrary': 'Your family library',
@@ -58,6 +60,7 @@ const english = {
   'shell.storedOnServer': 'Stored on your server',
   'shell.administrator': 'Administrator',
   'shell.familyMember': 'Family member',
+  'shell.privateMemories': 'private memories',
   'shell.openingLibrary': 'Opening your library…',
 
   'gallery.yourLibrary': 'Your library',
@@ -212,6 +215,8 @@ const chinese: Record<TranslationKey, string> = {
   'common.shareFolder': '分享文件夹',
   'common.openNavigation': '打开导航',
   'common.closeNavigation': '关闭导航',
+  'common.primaryNavigation': '主导航',
+  'common.mobileNavigation': '移动端导航',
   'common.language': '语言',
 
   'auth.familyLibrary': '你的家庭图库',
@@ -237,6 +242,7 @@ const chinese: Record<TranslationKey, string> = {
   'shell.storedOnServer': '存储在你的服务器上',
   'shell.administrator': '管理员',
   'shell.familyMember': '家庭成员',
+  'shell.privateMemories': '私密回忆',
   'shell.openingLibrary': '正在打开图库…',
 
   'gallery.yourLibrary': '你的图库',
