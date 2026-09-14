@@ -2,7 +2,9 @@ package indexer
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -49,7 +51,11 @@ type Job struct {
 }
 
 type folderRecord struct{ id, owner, path string }
-type scanRoot struct{ path string }
+type scanRoot struct {
+	path     string
+	owner    string
+	folderID string
+}
 
 type Service struct {
 	db        *sql.DB
@@ -146,25 +152,17 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 	if s.photos == nil {
 		return errors.New("photo service is required")
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT id, owner_id, storage_path FROM folders")
+	folders, err := s.loadFolders(ctx)
 	if err != nil {
 		return err
 	}
-	folders := make(map[string]folderRecord)
-	for rows.Next() {
-		var record folderRecord
-		if err := rows.Scan(&record.id, &record.owner, &record.path); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		folders[filepath.Clean(filepath.FromSlash(record.path))] = record
-	}
-	if err := rows.Close(); err != nil {
+	roots, err := s.scanRoots(ctx, folders)
+	if err != nil {
 		return err
 	}
 	seen := make(map[string]struct{})
 	walkedRoots := make(map[string]bool)
-	for _, rootRecord := range uniqueScanRoots(folders) {
+	for _, rootRecord := range roots {
 		root, err := s.storage.ResolvePath(rootRecord.path)
 		if err != nil {
 			continue
@@ -178,10 +176,28 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 				s.increment(job, func(counts *Counts) { counts.Failed++ })
 				return nil
 			}
-			if entry.IsDir() {
+			if entry.Type()&os.ModeSymlink != 0 {
 				return nil
 			}
-			if entry.Type()&os.ModeSymlink != 0 || strings.HasPrefix(entry.Name(), ".") || strings.HasSuffix(entry.Name(), ".tmp") {
+			if entry.IsDir() {
+				if path == root {
+					return nil
+				}
+				if strings.HasPrefix(entry.Name(), ".") {
+					return filepath.SkipDir
+				}
+				relative, relErr := filepath.Rel(s.storage.Root(), path)
+				if relErr != nil {
+					s.increment(job, func(counts *Counts) { counts.Failed++ })
+					return filepath.SkipDir
+				}
+				if _, ensureErr := s.ensureFolder(ctx, folders, rootRecord, filepath.Clean(relative)); ensureErr != nil {
+					s.increment(job, func(counts *Counts) { counts.Failed++ })
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasPrefix(entry.Name(), ".") || strings.HasSuffix(entry.Name(), ".tmp") {
 				return nil
 			}
 			relative, relErr := filepath.Rel(s.storage.Root(), path)
@@ -214,7 +230,7 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 			return walkErr
 		}
 	}
-	rows, err = s.db.QueryContext(ctx, "SELECT owner_id, storage_path FROM photos WHERE deleted_at IS NULL AND scan_status='indexed'")
+	rows, err := s.db.QueryContext(ctx, "SELECT owner_id, storage_path FROM photos WHERE deleted_at IS NULL AND scan_status='indexed'")
 	if err != nil {
 		return err
 	}
@@ -240,28 +256,105 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 	return rows.Err()
 }
 
-func (s *Service) increment(job *Job, update func(*Counts)) {
-	s.mu.Lock()
-	update(&job.Counts)
-	s.mu.Unlock()
+func (s *Service) loadFolders(ctx context.Context) (map[string]folderRecord, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT id, owner_id, storage_path FROM folders")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	folders := make(map[string]folderRecord)
+	for rows.Next() {
+		var record folderRecord
+		if err := rows.Scan(&record.id, &record.owner, &record.path); err != nil {
+			return nil, err
+		}
+		folders[filepath.Clean(filepath.FromSlash(record.path))] = record
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return folders, nil
 }
 
-func uniqueScanRoots(folders map[string]folderRecord) []scanRoot {
+func (s *Service) scanRoots(ctx context.Context, folders map[string]folderRecord) ([]scanRoot, error) {
 	roots := make(map[string]scanRoot)
+	rows, err := s.db.QueryContext(ctx, "SELECT id FROM users")
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var owner string
+		if err := rows.Scan(&owner); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		path := filepath.ToSlash(filepath.Join("users", owner))
+		roots[path] = scanRoot{path: path, owner: owner}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
 	for _, folder := range folders {
 		root := managedRoot(folder.path)
-		if root == "" {
+		if !strings.HasPrefix(root, "shared/") || filepath.ToSlash(filepath.Clean(filepath.FromSlash(folder.path))) != root {
 			continue
 		}
-		if _, exists := roots[root]; !exists {
-			roots[root] = scanRoot{path: root}
-		}
+		roots[root] = scanRoot{path: root, owner: folder.owner, folderID: folder.id}
 	}
 	result := make([]scanRoot, 0, len(roots))
 	for _, root := range roots {
 		result = append(result, root)
 	}
-	return result
+	return result, nil
+}
+
+func (s *Service) ensureFolder(ctx context.Context, folders map[string]folderRecord, root scanRoot, storagePath string) (folderRecord, error) {
+	storagePath = filepath.Clean(storagePath)
+	if record, ok := folders[storagePath]; ok {
+		return record, nil
+	}
+	name := filepath.Base(storagePath)
+	if err := storage.ValidateName(name); err != nil {
+		return folderRecord{}, err
+	}
+	rootPath := filepath.Clean(filepath.FromSlash(root.path))
+	parentPath := filepath.Dir(storagePath)
+	var parentID any
+	if parentPath == rootPath {
+		if root.folderID != "" {
+			parentID = root.folderID
+		}
+	} else {
+		parent, ok := folders[parentPath]
+		if !ok {
+			return folderRecord{}, fmt.Errorf("scan parent folder is not indexed: %s", filepath.ToSlash(parentPath))
+		}
+		parentID = parent.id
+	}
+	record := folderRecord{id: newFolderID(), owner: root.owner, path: filepath.ToSlash(storagePath)}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO folders (id, owner_id, parent_id, storage_path, name, is_shared, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 0, ?, ?)`, record.id, record.owner, parentID, record.path, name, now, now)
+	if err != nil {
+		var existing folderRecord
+		queryErr := s.db.QueryRowContext(ctx, "SELECT id, owner_id, storage_path FROM folders WHERE storage_path=?", record.path).Scan(&existing.id, &existing.owner, &existing.path)
+		if queryErr == nil {
+			if existing.owner != root.owner {
+				return folderRecord{}, fmt.Errorf("scan folder owner mismatch for %s", record.path)
+			}
+			folders[storagePath] = existing
+			return existing, nil
+		}
+		return folderRecord{}, fmt.Errorf("index scanned folder %s: %w", record.path, err)
+	}
+	folders[storagePath] = record
+	return record, nil
+}
+
+func (s *Service) increment(job *Job, update func(*Counts)) {
+	s.mu.Lock()
+	update(&job.Counts)
+	s.mu.Unlock()
 }
 
 func managedRoot(storagePath string) string {
@@ -271,6 +364,14 @@ func managedRoot(storagePath string) string {
 		return ""
 	}
 	return parts[0] + "/" + parts[1]
+}
+
+func newFolderID() string {
+	raw := make([]byte, 12)
+	if _, err := rand.Read(raw); err != nil {
+		panic("crypto/rand unavailable")
+	}
+	return "f_" + hex.EncodeToString(raw)
 }
 
 func newJobID() string { return fmt.Sprintf("scan_%d", time.Now().UnixNano()) }
