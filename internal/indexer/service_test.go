@@ -70,6 +70,73 @@ func TestRescanDiscoversFilesAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRescanDiscoversFilesystemFolders(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	importPath := filepath.Join("users", admin.ID, "camera-import", "2026")
+	directory, err := store.ResolvePath(importPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(filepath.Join(directory, "found.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jpeg.Encode(file, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	photoService := photos.NewService(db, store, 1<<20)
+	service := NewService(db, store, photoService)
+	principal := acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}
+	job, err := service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+
+	var parentID string
+	if err := db.QueryRowContext(ctx, "SELECT id FROM folders WHERE storage_path=?", filepath.ToSlash(filepath.Join("users", admin.ID, "camera-import"))).Scan(&parentID); err != nil {
+		t.Fatalf("load discovered parent folder: %v", err)
+	}
+	var childID, childOwner, actualParent string
+	if err := db.QueryRowContext(ctx, "SELECT id, owner_id, parent_id FROM folders WHERE storage_path=?", filepath.ToSlash(importPath)).Scan(&childID, &childOwner, &actualParent); err != nil {
+		t.Fatalf("load discovered child folder: %v", err)
+	}
+	if childOwner != admin.ID {
+		t.Fatalf("discovered folder owner = %q, want %q", childOwner, admin.ID)
+	}
+	if actualParent != parentID {
+		t.Fatalf("discovered folder parent = %q, want %q", actualParent, parentID)
+	}
+	var photoFolderID string
+	if err := db.QueryRowContext(ctx, "SELECT folder_id FROM photos WHERE storage_path=? AND scan_status='indexed'", filepath.ToSlash(filepath.Join(importPath, "found.jpg"))).Scan(&photoFolderID); err != nil {
+		t.Fatalf("load discovered photo: %v", err)
+	}
+	if photoFolderID != childID {
+		t.Fatalf("photo folder = %q, want %q", photoFolderID, childID)
+	}
+}
+
 func TestRescanDiscoversManagedSharedRoot(t *testing.T) {
 	ctx := context.Background()
 	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
