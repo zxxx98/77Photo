@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, LoaderCircle, RefreshCw } from 'lucide-react';
+import { ArrowUpRight, CirclePlay, LoaderCircle, RefreshCw } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
 import type { ApiClient, Photo } from '../../app/api';
 import Viewer from '../viewer/Viewer';
@@ -80,7 +80,7 @@ function PhotoTile({ photo, onSelect }: { photo: Photo; onSelect: (photo: Photo)
   const { t } = useI18n();
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
-  return <figure className="photo-tile" onClick={() => onSelect(photo)}><div className={`photo-frame ${failed ? 'is-failed' : ''}`}>{failed ? <span>{t('gallery.previewPending')}</span> : <img src={`/api/v1/photos/${encodeURIComponent(photo.id)}/thumbnail?size=256&retry=${retry}`} alt={photo.filename} loading="lazy" onError={() => { setFailed(true); window.setTimeout(() => { setFailed(false); setRetry((value) => value + 1); }, 1800); }} />}</div><figcaption>{photo.filename}</figcaption></figure>;
+  return <figure className="photo-tile" onClick={() => onSelect(photo)}><div className={`photo-frame ${failed ? 'is-failed' : ''}`}>{failed ? <span>{t('gallery.previewPending')}</span> : <img src={`/api/v1/photos/${encodeURIComponent(photo.id)}/thumbnail?size=256&retry=${retry}`} alt={photo.filename} loading="lazy" onError={() => { setFailed(true); window.setTimeout(() => { setFailed(false); setRetry((value) => value + 1); }, 1800); }} />}{photo.is_live_photo && !failed && <span className="live-photo-badge" title="Live Photo"><CirclePlay size={12} /> LIVE</span>}</div><figcaption>{photo.filename}</figcaption></figure>;
 }
 
 function groupByDate(photos: Photo[]): Array<[string, Photo[]]> {
