@@ -101,6 +101,7 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 		photoHandler.SetThumbnailService(services.Thumbnails)
 		mux.Handle("/api/v1/photos/upload", photoHandler)
 		mux.Handle("/api/v1/photos/", photoHandler)
+		mux.Handle("/api/v1/live-photos/", photos.NewLiveHTTPHandler(services.Photos, services.Auth))
 	}
 	return requestIDMiddleware(loggingMiddleware(mux, logger))
 }
