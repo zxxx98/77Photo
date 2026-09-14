@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 132" role="img" aria-labelledby="title desc">
+  <title id="title">77Photo quiet frame logo</title>
+  <desc id="desc">A dark slate rounded square containing two warm white geometric sevens and a sage green memory dot, beside the 77Photo wordmark.</desc>
+  <rect width="520" height="132" rx="18" fill="#faf9f7"/>
+  <text x="24" y="19" fill="#6e7886" font-family="Manrope, DM Sans, sans-serif" font-size="9" font-weight="700" letter-spacing="2">01 / QUIET FRAME</text>
+  <g transform="translate(24 30)">
+    <rect width="72" height="72" rx="21" fill="#3d4a5c"/>
+    <path d="M18 28h18L24 53" fill="none" stroke="#faf9f7" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+    <path d="M37 28h18L43 53" fill="none" stroke="#faf9f7" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+    <circle cx="56" cy="55" r="3.5" fill="#a8c5b8"/>
+  </g>
+  <g transform="translate(126 39)">
+    <text fill="#3d4a5c" font-family="Manrope, DM Sans, sans-serif" font-size="25" font-weight="700" letter-spacing="-1.2">77Photo</text>
+    <text x="1" y="25" fill="#6e7886" font-family="Manrope, DM Sans, sans-serif" font-size="12" letter-spacing=".4">私密回忆</text>
+  </g>
+</svg>

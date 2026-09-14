@@ -1,8 +1,6 @@
 services:
   77photo:
-    build:
-      context: .
-    image: 77photo:local
+    image: ghcr.io/zxxx98/77photo:latest
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -16,11 +14,9 @@ services:
       PHOTO_SESSION_TTL: 720h
       PHOTO_COOKIE_SECURE: "true"
     volumes:
-      - photo-data:/data/photos
-      - photo-cache:/data/cache
-      - photo-database:/data/database
-
-volumes:
-  photo-data:
-  photo-cache:
-  photo-database:
+      # Original photos and videos: HDD
+      - /mnt/disk2/data/77Photo:/data/photos
+      # Rebuildable thumbnail cache: SSD
+      - /mnt/nvme/data/77Photo/cache:/data/cache
+      # SQLite database: SSD
+      - /mnt/nvme/data/77Photo/database:/data/database

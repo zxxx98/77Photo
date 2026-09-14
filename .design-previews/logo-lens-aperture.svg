@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 132" role="img" aria-labelledby="title desc">
+  <title id="title">77Photo lens aperture logo</title>
+  <desc id="desc">A calm camera lens aperture mark in slate, cream and sage, beside the 77Photo wordmark.</desc>
+  <rect width="520" height="132" rx="18" fill="#faf9f7"/>
+  <text x="24" y="19" fill="#6e7886" font-family="Manrope, DM Sans, sans-serif" font-size="9" font-weight="700" letter-spacing="2">03 / LENS APERTURE</text>
+  <g transform="translate(24 30)">
+    <rect width="72" height="72" rx="21" fill="#3d4a5c"/>
+    <circle cx="36" cy="36" r="26" fill="none" stroke="#e8d4b8" stroke-width="3"/>
+    <path d="M36 15 48 26 44 43 28 49 19 36 25 20Z" fill="#a8c5b8"/>
+    <circle cx="36" cy="36" r="11" fill="#3d4a5c"/>
+    <path d="M29 31h7l-5 10M37 31h7l-5 10" fill="none" stroke="#faf9f7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.6"/>
+  </g>
+  <g transform="translate(126 39)">
+    <text fill="#3d4a5c" font-family="Manrope, DM Sans, sans-serif" font-size="25" font-weight="700" letter-spacing="-1.2">77Photo</text>
+    <text x="1" y="25" fill="#6e7886" font-family="Manrope, DM Sans, sans-serif" font-size="12" letter-spacing=".4">私密回忆</text>
+  </g>
+</svg>

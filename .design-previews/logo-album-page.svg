@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 132" role="img" aria-labelledby="title desc">
+  <title id="title">77Photo album page logo</title>
+  <desc id="desc">A warm paper album page with a folded corner and a small landscape illustration, beside the 77Photo wordmark.</desc>
+  <rect width="520" height="132" rx="18" fill="#faf9f7"/>
+  <text x="24" y="19" fill="#6e7886" font-family="Manrope, DM Sans, sans-serif" font-size="9" font-weight="700" letter-spacing="2">02 / ALBUM PAGE</text>
+  <g transform="translate(24 30)">
+    <rect x="3" y="3" width="72" height="72" rx="21" fill="#e8d4b8" opacity=".52"/>
+    <path d="M16 20c0-4.4 3.6-8 8-8h29l15 15v37c0 4.4-3.6 8-8 8H24c-4.4 0-8-3.6-8-8V20Z" fill="#3d4a5c"/>
+    <path d="M53 12v15h15" fill="#a8c5b8"/>
+    <path d="m26 58 12-14 10 9 7-8 13 13H26Z" fill="#faf9f7"/>
+    <circle cx="43" cy="34" r="4" fill="#e8d4b8"/>
+    <path d="M25 64h43" fill="none" stroke="#a8c5b8" stroke-linecap="round" stroke-width="3"/>
+  </g>
+  <g transform="translate(126 39)">
+    <text fill="#3d4a5c" font-family="Manrope, DM Sans, sans-serif" font-size="25" font-weight="700" letter-spacing="-1.2">77Photo</text>
+    <text x="1" y="25" fill="#6e7886" font-family="Manrope, DM Sans, sans-serif" font-size="12" letter-spacing=".4">私密回忆</text>
+  </g>
+</svg>
