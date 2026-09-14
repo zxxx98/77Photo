@@ -1,6 +1,9 @@
 package auth
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPasswordHashUsesArgon2idAndVerifies(t *testing.T) {
 	password := "correct horse battery staple"
@@ -23,5 +26,20 @@ func TestPasswordHashUsesArgon2idAndVerifies(t *testing.T) {
 	}
 	if hash == otherHash {
 		t.Fatal("two password hashes are identical; salts must be independent")
+	}
+}
+
+func TestValidateCredentialsUsesCharacterLimits(t *testing.T) {
+	if err := ValidateCredentials(strings.Repeat("界", 64), strings.Repeat("合", 12)); err != nil {
+		t.Fatalf("valid Unicode credentials rejected: %v", err)
+	}
+	if err := ValidateCredentials(strings.Repeat("界", 65), strings.Repeat("合", 12)); err == nil {
+		t.Fatal("65-character username accepted")
+	}
+	if err := ValidateCredentials("owner", strings.Repeat("合", 11)); err == nil {
+		t.Fatal("11-character password accepted")
+	}
+	if err := ValidateCredentials("owner", strings.Repeat("合", 257)); err == nil {
+		t.Fatal("257-character password accepted")
 	}
 }

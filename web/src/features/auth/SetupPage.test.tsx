@@ -87,4 +87,39 @@ describe('first-run setup page', () => {
     expect(setupAdmin).toHaveBeenCalledWith('owner', 'correct horse battery staple');
     expect(store.snapshot.status).toBe('authenticated');
   });
+
+  it('rejects credentials beyond the documented character limits', async () => {
+    const { store, setupAdmin } = createStore();
+    await renderPage(store);
+    const [username, password, confirmation] = [...container.querySelectorAll<HTMLInputElement>('input')];
+
+    await act(async () => {
+      setInput(username!, '界'.repeat(65));
+      setInput(password!, '合'.repeat(12));
+      setInput(confirmation!, '合'.repeat(12));
+      container.querySelector<HTMLFormElement>('form')?.requestSubmit();
+    });
+
+    expect(setupAdmin).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('最多 64 个字符');
+  });
+
+  it('keeps entered credentials visible and shows an error after a request failure', async () => {
+    const { store, setupAdmin } = createStore();
+    setupAdmin.mockRejectedValueOnce(new Error('network unavailable'));
+    await renderPage(store);
+    const [username, password, confirmation] = [...container.querySelectorAll<HTMLInputElement>('input')];
+
+    await act(async () => {
+      setInput(username!, 'owner');
+      setInput(password!, 'correct horse battery staple');
+      setInput(confirmation!, 'correct horse battery staple');
+      container.querySelector<HTMLFormElement>('form')?.requestSubmit();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('.setup-page')).not.toBeNull();
+    expect(container.querySelector<HTMLInputElement>('input')?.value).toBe('owner');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('无法创建管理员');
+  });
 });

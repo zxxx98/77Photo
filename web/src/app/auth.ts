@@ -1,4 +1,5 @@
 import type { ApiClient, AuthResponse, User } from './api';
+import { ApiError } from './api';
 
 export type SessionStatus = 'loading' | 'setup' | 'authenticated' | 'unauthenticated';
 
@@ -44,15 +45,16 @@ export class SessionStore {
   }
 
   async setupAdmin(username: string, password: string): Promise<void> {
-    this.setSnapshot({ status: 'loading', user: null, error: null });
     try {
       const response = await this.api.setupAdmin(username, password);
       this._csrfToken = response.csrf_token;
       this.api.setCsrfToken?.(this._csrfToken);
       this.setSnapshot({ status: 'authenticated', user: response.user, error: null });
     } catch (error) {
-      this.clearSession();
-      await this.restore();
+      if (error instanceof ApiError && error.code === 'SETUP_COMPLETE') {
+        this.clearSession();
+        await this.restore();
+      }
       throw error;
     }
   }

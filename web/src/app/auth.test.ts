@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ApiError } from './api';
 import { SessionStore } from './auth';
 
 describe('SessionStore', () => {
@@ -70,7 +71,7 @@ describe('SessionStore', () => {
     const api = {
       me: vi.fn().mockRejectedValue(new Error('unauthorized')),
       setupStatus: vi.fn().mockResolvedValue({ required: false }),
-      setupAdmin: vi.fn().mockRejectedValue(new Error('setup complete')),
+      setupAdmin: vi.fn().mockRejectedValue(new ApiError(409, 'SETUP_COMPLETE', 'setup complete')),
       login: vi.fn(),
       logout: vi.fn(),
     };
@@ -79,6 +80,23 @@ describe('SessionStore', () => {
     await expect(store.setupAdmin('owner', 'correct horse battery staple')).rejects.toThrow('setup complete');
 
     expect(store.snapshot.status).toBe('unauthenticated');
+  });
+
+  it('keeps setup mounted after an ordinary setup failure', async () => {
+    const api = {
+      me: vi.fn().mockRejectedValue(new Error('unauthorized')),
+      setupStatus: vi.fn().mockResolvedValue({ required: true }),
+      setupAdmin: vi.fn().mockRejectedValue(new Error('network unavailable')),
+      login: vi.fn(),
+      logout: vi.fn(),
+    };
+    const store = new SessionStore(api);
+    await store.restore();
+
+    await expect(store.setupAdmin('owner', 'correct horse battery staple')).rejects.toThrow('network unavailable');
+
+    expect(store.snapshot.status).toBe('setup');
+    expect(api.setupStatus).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a failed login actionable without persisting credentials', async () => {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zxxx98/77Photo/internal/acl"
 )
@@ -275,11 +276,11 @@ func ClearSessionCookie(w http.ResponseWriter, secure bool) {
 }
 
 func validateCredentials(username, password string) error {
-	if strings.TrimSpace(username) == "" || len([]byte(username)) > 64 {
-		return fmt.Errorf("username must be 1-64 bytes")
+	if strings.TrimSpace(username) == "" || utf8.RuneCountInString(username) > 64 {
+		return fmt.Errorf("username must be 1-64 characters")
 	}
-	if len([]byte(password)) < 12 || len([]byte(password)) > 256 {
-		return fmt.Errorf("password must be 12-256 bytes")
+	if utf8.RuneCountInString(password) < 12 || utf8.RuneCountInString(password) > 256 {
+		return fmt.Errorf("password must be 12-256 characters")
 	}
 	return nil
 }
