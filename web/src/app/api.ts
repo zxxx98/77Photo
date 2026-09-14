@@ -37,6 +37,7 @@ export interface Photo {
   captured_at: string;
   captured_at_source: string;
   source_revision?: string;
+  is_live_photo?: boolean;
 }
 
 export interface PhotoPage {
@@ -116,6 +117,7 @@ export interface ApiClient {
   getFolder(id: string): Promise<Folder>;
   createFolder(name: string, parentId?: string | null): Promise<Folder>;
   uploadPhoto(file: File, folderId: string, onProgress?: (progress: UploadProgress) => void, signal?: AbortSignal): Promise<Photo>;
+  uploadLivePhotoMotion(photoId: string, file: File, onProgress?: (progress: UploadProgress) => void, signal?: AbortSignal): Promise<void>;
   renamePhoto(id: string, name: string, conflict?: 'reject' | 'rename'): Promise<Photo>;
   movePhoto(id: string, folderId: string, conflict?: 'reject' | 'rename'): Promise<Photo>;
   deletePhoto(id: string): Promise<void>;
@@ -157,6 +159,32 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     return response.json() as Promise<T>;
   }
 
+  function uploadLiveMotion(photoId: string, file: File, onProgress?: (progress: UploadProgress) => void, signal?: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `/api/v1/live-photos/${encodeURIComponent(photoId)}`);
+      xhr.withCredentials = true;
+      if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+      xhr.upload.onprogress = (event) => onProgress?.({ loaded: event.loaded, total: event.total });
+      xhr.onerror = () => reject(new ApiError(0, 'NETWORK_ERROR', 'Network request failed'));
+      xhr.onabort = () => reject(new ApiError(0, 'ABORTED', 'Upload cancelled'));
+      signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+          return;
+        }
+        let payload: { error?: { code?: string; message?: string; request_id?: string } } = {};
+        try { payload = JSON.parse(xhr.responseText) as typeof payload; } catch { /* handled below */ }
+        const error = payload.error ?? {};
+        reject(new ApiError(xhr.status, error.code ?? 'REQUEST_FAILED', error.message ?? 'Live Photo upload failed', error.request_id ?? ''));
+      };
+      const form = new FormData();
+      form.set('file', file, file.name);
+      xhr.send(form);
+    });
+  }
+
   return {
     setupStatus: () => request<{ required: boolean }>('/api/v1/setup/status') as Promise<{ required: boolean }>,
     setupAdmin: (username, password) => request<AuthResponse>('/api/v1/setup/admin', { method: 'POST', body: JSON.stringify({ username, password }) }) as Promise<AuthResponse>,
@@ -164,13 +192,22 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     me: () => request<User>('/api/v1/auth/me') as Promise<User>,
     logout: async () => { await request('/api/v1/auth/logout', { method: 'POST' }); },
     setCsrfToken: (token) => { csrfToken = token; },
-    listPhotos: (params = {}) => {
+    listPhotos: async (params = {}) => {
       const query = new URLSearchParams();
       if (params.folderId) query.set('folder_id', params.folderId);
       if (params.cursor) query.set('cursor', params.cursor);
       if (params.limit) query.set('limit', String(params.limit));
       const suffix = query.toString();
-      return request<PhotoPage>(`/api/v1/photos${suffix ? `?${suffix}` : ''}`) as Promise<PhotoPage>;
+      const page = await request<PhotoPage>(`/api/v1/photos${suffix ? `?${suffix}` : ''}`) as PhotoPage;
+      if (page.items.length === 0) return page;
+      try {
+        const ids = page.items.map((photo) => photo.id).join(',');
+        const status = await request<{ live_photo_ids: string[] }>(`/api/v1/live-photos/status?ids=${encodeURIComponent(ids)}`);
+        const liveIds = new Set(status?.live_photo_ids ?? []);
+        return { ...page, items: page.items.map((photo) => ({ ...photo, is_live_photo: liveIds.has(photo.id) })) };
+      } catch {
+        return page;
+      }
     },
     listFolders: (parentId) => {
       const suffix = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : '';
@@ -179,20 +216,20 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     getFolder: (id) => request<Folder>(`/api/v1/folders/${encodeURIComponent(id)}`) as Promise<Folder>,
     createFolder: (name, parentId = null) => request<Folder>('/api/v1/folders', { method: 'POST', body: JSON.stringify({ name, parent_id: parentId }) }) as Promise<Folder>,
     uploadPhoto: (file, folderId, onProgress, signal) => new Promise<Photo>((resolve, reject) => {
-      const request = new XMLHttpRequest();
-      request.open('POST', '/api/v1/photos/upload');
-      request.withCredentials = true;
-      if (csrfToken) request.setRequestHeader('X-CSRF-Token', csrfToken);
-      request.upload.onprogress = (event) => onProgress?.({ loaded: event.loaded, total: event.total });
-      request.onerror = () => reject(new ApiError(0, 'NETWORK_ERROR', 'Network request failed'));
-      request.onabort = () => reject(new ApiError(0, 'ABORTED', 'Upload cancelled'));
-      signal?.addEventListener('abort', () => request.abort(), { once: true });
-      request.onload = () => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/v1/photos/upload');
+      xhr.withCredentials = true;
+      if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+      xhr.upload.onprogress = (event) => onProgress?.({ loaded: event.loaded, total: event.total });
+      xhr.onerror = () => reject(new ApiError(0, 'NETWORK_ERROR', 'Network request failed'));
+      xhr.onabort = () => reject(new ApiError(0, 'ABORTED', 'Upload cancelled'));
+      signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+      xhr.onload = () => {
         let payload: { error?: { code?: string; message?: string; request_id?: string } } & Partial<Photo> = {};
-        try { payload = JSON.parse(request.responseText) as typeof payload; } catch { /* handled below */ }
-        if (request.status < 200 || request.status >= 300) {
+        try { payload = JSON.parse(xhr.responseText) as typeof payload; } catch { /* handled below */ }
+        if (xhr.status < 200 || xhr.status >= 300) {
           const error = payload.error ?? {};
-          reject(new ApiError(request.status, error.code ?? 'REQUEST_FAILED', error.message ?? 'Upload failed', error.request_id ?? ''));
+          reject(new ApiError(xhr.status, error.code ?? 'REQUEST_FAILED', error.message ?? 'Upload failed', error.request_id ?? ''));
           return;
         }
         resolve(payload as Photo);
@@ -200,11 +237,15 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
       const form = new FormData();
       form.set('folder_id', folderId);
       form.set('file', file, file.name);
-      request.send(form);
+      xhr.send(form);
     }),
+    uploadLivePhotoMotion: (photoId, file, onProgress, signal) => uploadLiveMotion(photoId, file, onProgress, signal),
     renamePhoto: (id, name, conflict = 'reject') => request<Photo>(`/api/v1/photos/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name, conflict }) }) as Promise<Photo>,
     movePhoto: (id, folderId, conflict = 'reject') => request<Photo>(`/api/v1/photos/${encodeURIComponent(id)}/move`, { method: 'POST', body: JSON.stringify({ target_folder_id: folderId, conflict }) }) as Promise<Photo>,
-    deletePhoto: async (id) => { await request(`/api/v1/photos/${encodeURIComponent(id)}?confirm=true`, { method: 'DELETE' }); },
+    deletePhoto: async (id) => {
+      await request(`/api/v1/live-photos/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      await request(`/api/v1/photos/${encodeURIComponent(id)}?confirm=true`, { method: 'DELETE' });
+    },
     listShares: () => request<{ items: Share[] }>('/api/v1/shares') as Promise<{ items: Share[] }>,
     createShare: (input) => request<Share>('/api/v1/shares', { method: 'POST', body: JSON.stringify(input) }) as Promise<Share>,
     revokeShare: async (id) => { await request(`/api/v1/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }); },
