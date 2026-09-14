@@ -74,7 +74,7 @@ func TestLivePhotoMotionRejectsInvalidMedia(t *testing.T) {
 }
 
 func TestLivePhotoMotionUsesUploadSizeLimit(t *testing.T) {
-	fixture := newUploadFixture(t, 16)
+	fixture := newUploadFixture(t, 1024)
 	ctx := context.Background()
 	photo, err := fixture.service.Upload(ctx, fixture.principal, UploadInput{
 		FolderID: fixture.folderID, Filename: "IMG_0003.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(jpegBytes(t, 1, 1)),
@@ -82,8 +82,9 @@ func TestLivePhotoMotionUsesUploadSizeLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	motion := append(quickTimeBytes(), bytes.Repeat([]byte{0}, 2048)...)
 	if err := fixture.service.AttachLiveVideo(ctx, fixture.principal, photo.ID, LiveVideoInput{
-		Filename: "IMG_0003.mov", DeclaredMIME: "video/quicktime", Body: bytes.NewReader(quickTimeBytes()),
+		Filename: "IMG_0003.mov", DeclaredMIME: "video/quicktime", Body: bytes.NewReader(motion),
 	}); !errors.Is(err, ErrUploadTooLarge) {
 		t.Fatalf("AttachLiveVideo(oversize) error = %v, want ErrUploadTooLarge", err)
 	}
