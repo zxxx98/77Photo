@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -25,13 +27,34 @@ func TestMobileLoginReturnsTokensWithoutBrowserSessionMaterial(t *testing.T) {
 		t.Fatalf("login = %d", login.StatusCode)
 	}
 	assertNoMobileBrowserMaterial(t, login)
+	payload, err := io.ReadAll(login.Body)
+	login.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var body MobileSessionResponse
-	decodeJSON(t, login, &body)
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatal(err)
+	}
 	if body.AccessToken == "" || body.RefreshToken == "" || body.User.ID == "" {
 		t.Fatalf("mobile response = %+v", body)
 	}
 	if body.Device.Name != "Pixel 9" || body.Device.Platform != "android" || body.Device.AppVersion != "1.0.0" {
 		t.Fatalf("mobile device = %+v", body.Device)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(payload, &wire); err != nil {
+		t.Fatal(err)
+	}
+	device, ok := wire["device"].(map[string]any)
+	if !ok {
+		t.Fatalf("mobile device wire value = %#v", wire["device"])
+	}
+	if _, ok := device["user_id"]; !ok {
+		t.Fatalf("mobile device wire fields = %#v, want user_id", device)
+	}
+	if _, ok := device["UserID"]; ok {
+		t.Fatalf("mobile device wire fields = %#v, contains Go field name", device)
 	}
 	if got := countMobileHTTPRows(t, service, "sessions"); got != before {
 		t.Fatalf("browser sessions after mobile login = %d, want %d", got, before)

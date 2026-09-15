@@ -22,9 +22,14 @@ type MobileDeviceInput struct {
 }
 
 type MobileDevice struct {
-	ID, UserID, Name, Platform, AppVersion string
-	CreatedAt, LastSeenAt                  time.Time
-	RevokedAt                              *time.Time
+	ID         string     `json:"id"`
+	UserID     string     `json:"user_id"`
+	Name       string     `json:"name"`
+	Platform   string     `json:"platform"`
+	AppVersion string     `json:"app_version"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastSeenAt time.Time  `json:"last_seen_at"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
 
 type MobileSession struct {
