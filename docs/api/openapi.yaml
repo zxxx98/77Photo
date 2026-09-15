@@ -516,7 +516,7 @@ paths:
                   message: cursor expired; restart pagination without cursor
                   request_id: req_01JABC
 
-  /api/v1/photos/shared/{folderId}:
+  /api/v1/photos/shared/{folderId}/:
     get:
       tags: [photos]
       summary: List photos in a shared folder subtree
