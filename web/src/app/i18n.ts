@@ -215,6 +215,15 @@ const english = {
   'settings.rescanFiles': 'Rescan files',
   'settings.scanQueued': 'Scan queued…',
   'settings.scanFailed': 'Scan could not be started.',
+  'settings.scanRunning': 'Scanning…',
+  'settings.scanCompleted': 'Scan complete',
+  'settings.scanRunFailed': 'Scan failed.',
+  'settings.scanPollFailed': 'Unable to read scan progress. Retrying…',
+  'settings.scanScanned': '{count} scanned',
+  'settings.scanAdded': '{count} added',
+  'settings.scanUpdated': '{count} updated',
+  'settings.scanMissing': '{count} missing',
+  'settings.scanErrors': '{count} failed',
 } as const;
 
 export type TranslationKey = keyof typeof english;
@@ -424,6 +433,15 @@ const chinese: Record<TranslationKey, string> = {
   'settings.rescanFiles': '重新扫描文件',
   'settings.scanQueued': '扫描已排队…',
   'settings.scanFailed': '无法开始扫描。',
+  'settings.scanRunning': '正在扫描…',
+  'settings.scanCompleted': '扫描完成',
+  'settings.scanRunFailed': '扫描失败。',
+  'settings.scanPollFailed': '无法读取扫描进度，正在重试…',
+  'settings.scanScanned': '已扫描 {count}',
+  'settings.scanAdded': '新增 {count}',
+  'settings.scanUpdated': '已更新 {count}',
+  'settings.scanMissing': '缺失 {count}',
+  'settings.scanErrors': '失败 {count}',
 };
 
 const translations: Record<Locale, Record<TranslationKey, string>> = { en: english, zh: chinese };
