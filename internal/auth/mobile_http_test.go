@@ -263,6 +263,31 @@ func TestMobileLoginFailureIsUniform(t *testing.T) {
 	}
 }
 
+func TestMobileLoginDatabaseFailureIsInternalAndNotCredentialFailure(t *testing.T) {
+	service, server, _ := newMobileHTTPTestServer(t)
+	if err := service.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	response := doJSON(t, &http.Client{}, server.URL+"/api/v1/mobile/auth/login", http.MethodPost,
+		`{"username":"admin","password":"correct horse battery staple","device_name":"Pixel 9","platform":"android","app_version":"1.0.0"}`, "")
+	if response.StatusCode != http.StatusInternalServerError {
+		response.Body.Close()
+		t.Fatalf("closed database login = %d, want 500", response.StatusCode)
+	}
+	var body map[string]any
+	decodeJSON(t, response, &body)
+	if body["error"].(map[string]any)["code"] != "INTERNAL_ERROR" {
+		t.Fatalf("closed database error = %#v", body)
+	}
+	service.limiter.mu.Lock()
+	attempt := service.limiter.entries["admin"]
+	service.limiter.mu.Unlock()
+	if attempt.count != 0 {
+		t.Fatalf("closed database failure count = %d, want 0", attempt.count)
+	}
+}
+
 func newMobileHTTPTestServer(t *testing.T) (*Service, *httptest.Server, Account) {
 	t.Helper()
 	db, err := dbstore.Open(context.Background(), filepath.Join(t.TempDir(), "77photo.db"))

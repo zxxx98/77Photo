@@ -136,6 +136,9 @@ func (s *Service) AuthenticateAccount(ctx context.Context, username, password st
 	err := s.db.QueryRowContext(ctx, `SELECT id, username, password_hash, role, is_active, deleted_at, created_at, updated_at
 FROM users WHERE username = ? COLLATE NOCASE`, strings.TrimSpace(username)).Scan(&account.ID, &account.Username, &hash, &account.Role, &active, &deletedAt, &created, &updated)
 	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return Account{}, fmt.Errorf("load account for authentication: %w", err)
+		}
 		s.limiter.failure(username)
 		return Account{}, ErrInvalidCredentials
 	}

@@ -179,13 +179,18 @@ WHERE t.token_hash=? AND t.token_type='access' AND t.revoked_at IS NULL`, hashTo
 }
 
 func (s *Service) RefreshMobileSession(ctx context.Context, refreshToken string) (MobileSession, error) {
+	session, _, err := s.refreshMobileSessionWithAccount(ctx, refreshToken)
+	return session, err
+}
+
+func (s *Service) refreshMobileSessionWithAccount(ctx context.Context, refreshToken string) (MobileSession, Account, error) {
 	if strings.TrimSpace(refreshToken) == "" {
-		return MobileSession{}, ErrUnauthorized
+		return MobileSession{}, Account{}, ErrUnauthorized
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return MobileSession{}, fmt.Errorf("begin mobile session refresh: %w", err)
+		return MobileSession{}, Account{}, fmt.Errorf("begin mobile session refresh: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -196,46 +201,57 @@ func (s *Service) RefreshMobileSession(ctx context.Context, refreshToken string)
 	var deviceRevokedAt sql.NullString
 	var active int
 	var deletedAt sql.NullString
+	var account Account
+	var accountCreatedAt, accountUpdatedAt string
 	if err := tx.QueryRowContext(ctx, `SELECT t.id, t.device_id, t.family_id, t.expires_at, t.rotated_at, t.revoked_at,
 d.user_id, d.name, d.platform, d.app_version, d.created_at, d.last_seen_at, d.revoked_at,
-u.is_active, u.deleted_at
+u.id, u.username, u.role, u.is_active, u.deleted_at, u.created_at, u.updated_at
 FROM mobile_tokens t
 JOIN mobile_devices d ON d.id=t.device_id
 JOIN users u ON u.id=d.user_id
 WHERE t.token_hash=? AND t.token_type='refresh'`, hashToken(refreshToken)).Scan(
 		&tokenID, &deviceID, &familyID, &expiresAt, &rotatedAt, &revokedAt,
 		&device.UserID, &device.Name, &device.Platform, &device.AppVersion, &deviceCreatedAt, &deviceLastSeenAt, &deviceRevokedAt,
-		&active, &deletedAt,
+		&account.ID, &account.Username, &account.Role, &active, &deletedAt, &accountCreatedAt, &accountUpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return MobileSession{}, ErrUnauthorized
+			return MobileSession{}, Account{}, ErrUnauthorized
 		}
-		return MobileSession{}, fmt.Errorf("load mobile refresh token: %w", err)
+		return MobileSession{}, Account{}, fmt.Errorf("load mobile refresh token: %w", err)
 	}
 	device.ID = deviceID
 	if rotatedAt.Valid {
 		if err := revokeMobileFamilyTx(ctx, tx, familyID, time.Now().UTC()); err != nil {
-			return MobileSession{}, err
+			return MobileSession{}, Account{}, err
 		}
 		if err := tx.Commit(); err != nil {
-			return MobileSession{}, fmt.Errorf("commit mobile refresh reuse revocation: %w", err)
+			return MobileSession{}, Account{}, fmt.Errorf("commit mobile refresh reuse revocation: %w", err)
 		}
-		return MobileSession{}, ErrRefreshReuse
+		return MobileSession{}, Account{}, ErrRefreshReuse
 	}
 	if revokedAt.Valid || deviceRevokedAt.Valid || active != 1 || deletedAt.Valid {
-		return MobileSession{}, ErrUnauthorized
+		return MobileSession{}, Account{}, ErrUnauthorized
+	}
+	account.IsActive = true
+	account.CreatedAt, err = parseTime(accountCreatedAt)
+	if err != nil {
+		return MobileSession{}, Account{}, fmt.Errorf("parse mobile account creation time: %w", err)
+	}
+	account.UpdatedAt, err = parseTime(accountUpdatedAt)
+	if err != nil {
+		return MobileSession{}, Account{}, fmt.Errorf("parse mobile account update time: %w", err)
 	}
 	expires, err := parseTime(expiresAt)
 	if err != nil || !expires.After(time.Now().UTC()) {
-		return MobileSession{}, ErrUnauthorized
+		return MobileSession{}, Account{}, ErrUnauthorized
 	}
 	createdAt, err := parseTime(deviceCreatedAt)
 	if err != nil {
-		return MobileSession{}, ErrUnauthorized
+		return MobileSession{}, Account{}, ErrUnauthorized
 	}
 	lastSeenAt, err := parseTime(deviceLastSeenAt)
 	if err != nil {
-		return MobileSession{}, ErrUnauthorized
+		return MobileSession{}, Account{}, ErrUnauthorized
 	}
 	device.CreatedAt = createdAt
 	device.LastSeenAt = lastSeenAt
@@ -243,42 +259,42 @@ WHERE t.token_hash=? AND t.token_type='refresh'`, hashToken(refreshToken)).Scan(
 	now := time.Now().UTC()
 	result, err := tx.ExecContext(ctx, "UPDATE mobile_tokens SET rotated_at=? WHERE id=? AND rotated_at IS NULL AND revoked_at IS NULL", formatTime(now), tokenID)
 	if err != nil {
-		return MobileSession{}, fmt.Errorf("rotate mobile refresh token: %w", err)
+		return MobileSession{}, Account{}, fmt.Errorf("rotate mobile refresh token: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return MobileSession{}, fmt.Errorf("check rotated mobile refresh token: %w", err)
+		return MobileSession{}, Account{}, fmt.Errorf("check rotated mobile refresh token: %w", err)
 	}
 	if affected != 1 {
 		var currentRotatedAt, currentRevokedAt sql.NullString
 		if err := tx.QueryRowContext(ctx, "SELECT rotated_at, revoked_at FROM mobile_tokens WHERE id=?", tokenID).Scan(&currentRotatedAt, &currentRevokedAt); err != nil {
-			return MobileSession{}, fmt.Errorf("reload rotated mobile refresh token: %w", err)
+			return MobileSession{}, Account{}, fmt.Errorf("reload rotated mobile refresh token: %w", err)
 		}
 		if currentRotatedAt.Valid {
 			if err := revokeMobileFamilyTx(ctx, tx, familyID, now); err != nil {
-				return MobileSession{}, err
+				return MobileSession{}, Account{}, err
 			}
 			if err := tx.Commit(); err != nil {
-				return MobileSession{}, fmt.Errorf("commit concurrent mobile refresh reuse revocation: %w", err)
+				return MobileSession{}, Account{}, fmt.Errorf("commit concurrent mobile refresh reuse revocation: %w", err)
 			}
-			return MobileSession{}, ErrRefreshReuse
+			return MobileSession{}, Account{}, ErrRefreshReuse
 		}
-		return MobileSession{}, ErrUnauthorized
+		return MobileSession{}, Account{}, ErrUnauthorized
 	}
 
 	if _, err := tx.ExecContext(ctx, "UPDATE mobile_tokens SET revoked_at=? WHERE family_id=? AND token_type='access' AND revoked_at IS NULL", formatTime(now), familyID); err != nil {
-		return MobileSession{}, fmt.Errorf("revoke previous mobile access tokens: %w", err)
+		return MobileSession{}, Account{}, fmt.Errorf("revoke previous mobile access tokens: %w", err)
 	}
 	result, err = tx.ExecContext(ctx, "UPDATE mobile_devices SET last_seen_at=? WHERE id=? AND revoked_at IS NULL", formatTime(now), deviceID)
 	if err != nil {
-		return MobileSession{}, fmt.Errorf("update refreshed mobile device activity: %w", err)
+		return MobileSession{}, Account{}, fmt.Errorf("update refreshed mobile device activity: %w", err)
 	}
 	affected, err = result.RowsAffected()
 	if err != nil {
-		return MobileSession{}, fmt.Errorf("check refreshed mobile device activity: %w", err)
+		return MobileSession{}, Account{}, fmt.Errorf("check refreshed mobile device activity: %w", err)
 	}
 	if affected != 1 {
-		return MobileSession{}, ErrUnauthorized
+		return MobileSession{}, Account{}, ErrUnauthorized
 	}
 
 	accessToken := randomToken()
@@ -287,14 +303,14 @@ WHERE t.token_hash=? AND t.token_type='refresh'`, hashToken(refreshToken)).Scan(
 	refreshExpiresAt := now.Add(mobileRefreshTTL)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO mobile_tokens (id, device_id, family_id, token_type, token_hash, expires_at, created_at)
 VALUES (?, ?, ?, 'access', ?, ?, ?)`, newID(), deviceID, familyID, hashToken(accessToken), formatTime(accessExpiresAt), formatTime(now)); err != nil {
-		return MobileSession{}, fmt.Errorf("create rotated mobile access token: %w", err)
+		return MobileSession{}, Account{}, fmt.Errorf("create rotated mobile access token: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO mobile_tokens (id, device_id, family_id, token_type, token_hash, expires_at, created_at)
 VALUES (?, ?, ?, 'refresh', ?, ?, ?)`, newID(), deviceID, familyID, hashToken(newRefreshToken), formatTime(refreshExpiresAt), formatTime(now)); err != nil {
-		return MobileSession{}, fmt.Errorf("create rotated mobile refresh token: %w", err)
+		return MobileSession{}, Account{}, fmt.Errorf("create rotated mobile refresh token: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return MobileSession{}, fmt.Errorf("commit mobile session refresh: %w", err)
+		return MobileSession{}, Account{}, fmt.Errorf("commit mobile session refresh: %w", err)
 	}
 
 	device.LastSeenAt = now
@@ -304,7 +320,7 @@ VALUES (?, ?, ?, 'refresh', ?, ?, ?)`, newID(), deviceID, familyID, hashToken(ne
 		RefreshToken:          newRefreshToken,
 		AccessTokenExpiresAt:  accessExpiresAt,
 		RefreshTokenExpiresAt: refreshExpiresAt,
-	}, nil
+	}, account, nil
 }
 
 func (s *Service) ListMobileDevices(ctx context.Context, userID string) ([]MobileDevice, error) {

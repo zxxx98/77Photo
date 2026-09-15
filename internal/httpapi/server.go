@@ -141,6 +141,7 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 		if id == "" {
 			id = newRequestID()
 		}
+		r.Header.Set("X-Request-ID", id)
 		ctx := context.WithValue(r.Context(), requestIDKey, id)
 		w.Header().Set("X-Request-ID", id)
 		next.ServeHTTP(w, r.WithContext(ctx))

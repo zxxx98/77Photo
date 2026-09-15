@@ -22,31 +22,31 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/api/v1/setup/status":
 		if r.Method != http.MethodGet {
-			methodNotAllowed(w, http.MethodGet)
+			methodNotAllowed(w, r, http.MethodGet)
 			return
 		}
 		h.setupStatus(w, r)
 	case r.URL.Path == "/api/v1/setup/admin":
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
+			methodNotAllowed(w, r, http.MethodPost)
 			return
 		}
 		h.setup(w, r)
 	case r.URL.Path == "/api/v1/auth/login":
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
+			methodNotAllowed(w, r, http.MethodPost)
 			return
 		}
 		h.login(w, r)
 	case r.URL.Path == "/api/v1/auth/logout":
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
+			methodNotAllowed(w, r, http.MethodPost)
 			return
 		}
 		h.logout(w, r)
 	case r.URL.Path == "/api/v1/auth/me":
 		if r.Method != http.MethodGet {
-			methodNotAllowed(w, http.MethodGet)
+			methodNotAllowed(w, r, http.MethodGet)
 			return
 		}
 		h.me(w, r)
@@ -221,7 +221,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func methodNotAllowed(w http.ResponseWriter, allowed string) {
+func methodNotAllowed(w http.ResponseWriter, r *http.Request, allowed string) {
 	w.Header().Set("Allow", allowed)
-	writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": map[string]any{"code": "INVALID_REQUEST", "message": "method not allowed", "request_id": "request-id-missing"}})
+	writeAuthError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
 }

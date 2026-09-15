@@ -1,10 +1,7 @@
 package auth
 
 import (
-	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -38,25 +35,25 @@ func (h *MobileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == mobileLoginPath:
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
+			methodNotAllowed(w, r, http.MethodPost)
 			return
 		}
 		h.login(w, r)
 	case r.URL.Path == mobileRefreshPath:
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
+			methodNotAllowed(w, r, http.MethodPost)
 			return
 		}
 		h.refresh(w, r)
 	case r.URL.Path == mobileLogoutPath:
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
+			methodNotAllowed(w, r, http.MethodPost)
 			return
 		}
 		h.logout(w, r)
 	case r.URL.Path == mobileDevicesPath || r.URL.Path == mobileDevicesPath+"/":
 		if r.Method != http.MethodGet {
-			methodNotAllowed(w, http.MethodGet)
+			methodNotAllowed(w, r, http.MethodGet)
 			return
 		}
 		h.listDevices(w, r)
@@ -67,7 +64,7 @@ func (h *MobileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Method != http.MethodDelete {
-			methodNotAllowed(w, http.MethodDelete)
+			methodNotAllowed(w, r, http.MethodDelete)
 			return
 		}
 		h.deleteDevice(w, r, deviceID)
@@ -109,12 +106,7 @@ func (h *MobileHTTPHandler) refresh(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
-	session, err := h.service.RefreshMobileSession(r.Context(), input.RefreshToken)
-	if err != nil {
-		h.writeServiceError(w, r, err)
-		return
-	}
-	account, err := h.service.mobileAccount(r.Context(), session.Device.UserID)
+	session, account, err := h.service.refreshMobileSessionWithAccount(r.Context(), input.RefreshToken)
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
@@ -205,32 +197,4 @@ func writeMobileSession(w http.ResponseWriter, session MobileSession, account Ac
 		Device:                session.Device,
 		User:                  account,
 	})
-}
-
-func (s *Service) mobileAccount(ctx context.Context, userID string) (Account, error) {
-	var account Account
-	var active int
-	var deletedAt sql.NullString
-	var created, updated string
-	err := s.db.QueryRowContext(ctx, `SELECT id, username, role, is_active, deleted_at, created_at, updated_at
-FROM users WHERE id=?`, userID).Scan(&account.ID, &account.Username, &account.Role, &active, &deletedAt, &created, &updated)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Account{}, ErrUnauthorized
-		}
-		return Account{}, fmt.Errorf("load mobile account: %w", err)
-	}
-	if active != 1 || deletedAt.Valid {
-		return Account{}, ErrUnauthorized
-	}
-	account.IsActive = true
-	account.CreatedAt, err = parseTime(created)
-	if err != nil {
-		return Account{}, fmt.Errorf("parse mobile account creation time: %w", err)
-	}
-	account.UpdatedAt, err = parseTime(updated)
-	if err != nil {
-		return Account{}, fmt.Errorf("parse mobile account update time: %w", err)
-	}
-	return account, nil
 }
