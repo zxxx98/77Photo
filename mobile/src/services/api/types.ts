@@ -61,6 +61,8 @@ export type PhotoPage = {
   next_cursor: string | null;
 };
 
+export type ThumbnailSize = 256 | 512 | 1280;
+
 export type Folder = {
   id: string;
   owner_id: string;
@@ -71,6 +73,26 @@ export type Folder = {
   photo_count: number;
   child_folder_count: number;
   [key: string]: unknown;
+};
+
+export type FolderPage = {
+  items: Folder[];
+};
+
+export type ShareLink = {
+  id: string;
+  resource_type: 'photo' | 'folder';
+  resource_id: string;
+  url: string;
+  expires_at: string | null;
+  password_protected: boolean;
+};
+
+export type CreateShareLinkInput = {
+  resourceType: ShareLink['resource_type'];
+  resourceId: string;
+  duration: '1_day' | '7_days' | 'forever';
+  password?: string;
 };
 
 export type ErrorPayload = {

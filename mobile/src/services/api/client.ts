@@ -1,12 +1,17 @@
 import type { StoredCredentials } from '../../native/NativeCredentials';
 import type { CredentialsStore } from '../credentials';
 import type {
+  CreateShareLinkInput,
   ErrorPayload,
   Folder,
+  FolderPage,
   HealthResponse,
   MobileLoginInput,
   MobileSessionResponse,
+  Photo,
   PhotoPage,
+  ShareLink,
+  ThumbnailSize,
   User,
 } from './types';
 
@@ -49,6 +54,7 @@ export type ListPhotosOptions = {
   folderId?: string;
   cursor?: string;
   limit?: number;
+  signal?: AbortSignal;
 };
 
 export type ApiClientOptions = {
@@ -56,9 +62,40 @@ export type ApiClientOptions = {
   serverId?: string;
   transport?: ApiTransport;
   credentials: CredentialsStore;
+  userId?: string;
+  queryClient?: {
+    removeQueries: (filters?: { predicate?: (query: { queryKey: readonly unknown[] }) => boolean }) => unknown;
+  };
+  onSessionCleared?: () => void | Promise<void>;
 };
 
 export type ApiClient = ReturnType<typeof createApiClient>;
+
+export type AuthenticatedImageContextListener = () => void;
+const authenticatedImageContextListeners = new Set<AuthenticatedImageContextListener>();
+
+export function subscribeAuthenticatedImageContext(listener: AuthenticatedImageContextListener): () => void {
+  authenticatedImageContextListeners.add(listener);
+  return () => authenticatedImageContextListeners.delete(listener);
+}
+
+export function clearAuthenticatedImageContext(): void {
+  for (const listener of authenticatedImageContextListeners) listener();
+}
+
+export function clearSessionQueries(
+  queryClient: ApiClientOptions['queryClient'] | undefined,
+  serverId: string,
+  userId?: string,
+): void {
+  queryClient?.removeQueries({
+    predicate: ({ queryKey }) => {
+      const isScopedFeature = queryKey[0] === 'photos' || queryKey[0] === 'folders';
+      return isScopedFeature && queryKey[1] === serverId && (userId === undefined || queryKey[2] === userId);
+    },
+  });
+  clearAuthenticatedImageContext();
+}
 
 const MOBILE_LOGIN_PATH = '/api/v1/mobile/auth/login';
 const MOBILE_REFRESH_PATH = '/api/v1/mobile/auth/refresh';
@@ -239,6 +276,16 @@ export function createApiClient(options: ApiClientOptions) {
     return session;
   };
 
+  const clearSession = async (serverId = activeServerId, userId = options.userId): Promise<void> => {
+    if (serverId === activeServerId) loadedCredentials = null;
+    try {
+      await options.credentials.clear(serverId);
+    } finally {
+      clearSessionQueries(options.queryClient, serverId, userId);
+      await options.onSessionCleared?.();
+    }
+  };
+
   const refreshSingleFlight = (): Promise<MobileSessionResponse> => {
     if (!refreshPromise) {
       refreshPromise = performRefresh()
@@ -291,9 +338,16 @@ export function createApiClient(options: ApiClientOptions) {
     refresh,
     me: () => requestJSON<User>('/api/v1/auth/me'),
     logout: async (): Promise<void> => {
-      await requestJSON<void>('/api/v1/mobile/auth/logout', { method: 'POST' });
-      loadedCredentials = null;
-      await options.credentials.clear(activeServerId);
+      try {
+        await requestJSON<void>('/api/v1/mobile/auth/logout', { method: 'POST' });
+      } finally {
+        await clearSession();
+      }
+    },
+    clearSession,
+    getAuthHeaders: async (): Promise<Record<string, string>> => {
+      const stored = await getCredentials();
+      return stored?.accessToken ? { Authorization: `Bearer ${stored.accessToken}` } : {};
     },
     listPhotos: (query: ListPhotosOptions = {}): Promise<PhotoPage> => {
       const params = new URLSearchParams();
@@ -301,11 +355,28 @@ export function createApiClient(options: ApiClientOptions) {
       if (query.cursor) params.set('cursor', query.cursor);
       if (query.limit !== undefined) params.set('limit', String(query.limit));
       const suffix = params.toString();
-      return requestJSON<PhotoPage>(`/api/v1/photos${suffix ? `?${suffix}` : ''}`);
+      return requestJSON<PhotoPage>(`/api/v1/photos${suffix ? `?${suffix}` : ''}`, { signal: query.signal });
     },
-    listFolders: (parentId?: string): Promise<{ items: Folder[] }> => {
+    listFolders: (parentId?: string): Promise<FolderPage> => {
       const suffix = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : '';
-      return requestJSON<{ items: Folder[] }>(`/api/v1/folders${suffix}`);
+      return requestJSON<FolderPage>(`/api/v1/folders${suffix}`);
     },
+    getFolder: (id: string): Promise<Folder> => requestJSON<Folder>(`/api/v1/folders/${encodeURIComponent(id)}`),
+    getPhoto: (id: string): Promise<Photo> => requestJSON<Photo>(`/api/v1/photos/${encodeURIComponent(id)}`),
+    thumbnailURL: (id: string, size: ThumbnailSize): string =>
+      `${joinURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/thumbnail?size=${size}`)}`,
+    previewURL: (id: string): string => joinURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/preview`),
+    originalURL: (id: string): string => joinURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/original`),
+    createShareLink: (input: CreateShareLinkInput): Promise<ShareLink> => requestJSON<ShareLink>('/api/v1/share-links', {
+      method: 'POST',
+      body: {
+        resource_type: input.resourceType,
+        resource_id: input.resourceId,
+        duration: input.duration,
+        ...(input.password ? { password: input.password } : {}),
+      },
+    }),
+    deletePhoto: (id: string): Promise<void> =>
+      requestJSON<void>(`/api/v1/photos/${encodeURIComponent(id)}?confirm=true`, { method: 'DELETE' }),
   };
 }
