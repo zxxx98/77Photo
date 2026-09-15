@@ -79,22 +79,30 @@ func TestCreatePhotoLinkRequiresCSRFAndReturnsPublicURL(t *testing.T) {
 		t.Fatalf("without CSRF status = %d, want 403: %s", withoutCSRF.Code, withoutCSRF.Body.String())
 	}
 
-	request = httptest.NewRequest(http.MethodPost, "/api/v1/share-links", body)
-	request.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: fixture.session.Token})
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/share-links", bytes.NewBufferString(body.String()))
+	request.Header.Set("Authorization", "Bearer "+createShareLinkBearer(t, fixture))
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set(auth.CSRFHeaderName(), fixture.session.CSRFToken)
-	withCSRF := httptest.NewRecorder()
-	fixture.handler.ServeHTTP(withCSRF, request)
-	if withCSRF.Code != http.StatusCreated {
-		t.Fatalf("with CSRF status = %d, want 201: %s", withCSRF.Code, withCSRF.Body.String())
+	withBearer := httptest.NewRecorder()
+	fixture.handler.ServeHTTP(withBearer, request)
+	if withBearer.Code != http.StatusCreated {
+		t.Fatalf("with bearer status = %d, want 201: %s", withBearer.Code, withBearer.Body.String())
 	}
 	var link Link
-	if err := json.NewDecoder(withCSRF.Body).Decode(&link); err != nil {
+	if err := json.NewDecoder(withBearer.Body).Decode(&link); err != nil {
 		t.Fatal(err)
 	}
 	if link.ResourceType != ResourcePhoto || link.URL == "" || len(link.Token) != 0 || !bytes.HasPrefix([]byte(link.URL), []byte("/#/share/")) {
 		t.Fatalf("link = %+v", link)
 	}
+}
+
+func createShareLinkBearer(t *testing.T, fixture shareLinkHTTPFixtureData) string {
+	t.Helper()
+	mobile, err := fixture.auth.CreateMobileSession(context.Background(), fixture.owner.ID, auth.MobileDeviceInput{Name: "Pixel", Platform: "android", AppVersion: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mobile.AccessToken
 }
 
 func TestCreateFolderLinkRejectsInvalidDuration(t *testing.T) {

@@ -54,11 +54,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
-	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
+	account := authenticated.Account
 	items, err := h.service.List(r.Context(), principal(account))
 	if err != nil {
 		h.writeServiceError(w, r, err)
@@ -68,15 +69,16 @@ func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) create(w http.ResponseWriter, r *http.Request) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	var input struct {
 		Username string   `json:"username"`
 		Password string   `json:"password"`
@@ -94,15 +96,16 @@ func (h *HTTPHandler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) update(w http.ResponseWriter, r *http.Request, id string) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	var input UpdateInput
 	if !decodeBody(w, r, &input) {
 		return
@@ -116,15 +119,16 @@ func (h *HTTPHandler) update(w http.ResponseWriter, r *http.Request, id string) 
 }
 
 func (h *HTTPHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	var input DeleteInput
 	if r.Body != nil {
 		if err := decodeOptionalBody(w, r, &input); err != nil {

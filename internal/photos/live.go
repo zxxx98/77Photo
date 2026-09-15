@@ -218,12 +218,12 @@ func (h *LiveHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *LiveHTTPHandler) authenticate(r *http.Request) (acl.Principal, *auth.Session, error) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+func (h *LiveHTTPHandler) authenticate(r *http.Request) (acl.Principal, auth.RequestAuth, error) {
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
-		return acl.Principal{}, nil, err
+		return acl.Principal{}, auth.RequestAuth{}, err
 	}
-	return principal(account), &session, nil
+	return principal(authenticated.Account), authenticated, nil
 }
 
 func (h *LiveHTTPHandler) status(w http.ResponseWriter, r *http.Request) {
@@ -276,12 +276,12 @@ func (h *LiveHTTPHandler) get(w http.ResponseWriter, r *http.Request, photoID st
 }
 
 func (h *LiveHTTPHandler) attach(w http.ResponseWriter, r *http.Request, photoID string) {
-	principalValue, session, err := h.authenticate(r)
+	principalValue, authenticated, err := h.authenticate(r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if session == nil || h.authService.ValidateCSRF(*session, r.Header.Get(auth.CSRFHeaderName())) != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
@@ -323,12 +323,12 @@ func (h *LiveHTTPHandler) attach(w http.ResponseWriter, r *http.Request, photoID
 }
 
 func (h *LiveHTTPHandler) remove(w http.ResponseWriter, r *http.Request, photoID string) {
-	principalValue, session, err := h.authenticate(r)
+	principalValue, authenticated, err := h.authenticate(r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if session == nil || h.authService.ValidateCSRF(*session, r.Header.Get(auth.CSRFHeaderName())) != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}

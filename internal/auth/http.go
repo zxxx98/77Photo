@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -97,17 +96,16 @@ func (h *HTTPHandler) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) logout(w http.ResponseWriter, r *http.Request) {
-	account, session, token, err := h.authenticate(r)
-	_ = account
+	authenticated, err := h.service.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeAuthError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.service.ValidateCSRF(session, r.Header.Get(CSRFHeaderName())); err != nil {
+	if err := h.service.AuthorizeWrite(r, authenticated); err != nil {
 		writeAuthError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
-	if err := h.service.Revoke(r.Context(), token); err != nil {
+	if err := h.service.Revoke(r.Context(), authenticated.Credential); err != nil {
 		writeAuthError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "could not revoke session", nil)
 		return
 	}
@@ -116,28 +114,24 @@ func (h *HTTPHandler) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) me(w http.ResponseWriter, r *http.Request) {
-	account, session, _, err := h.authenticate(r)
+	authenticated, err := h.service.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeAuthError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	csrfToken := CSRFTokenFromRequest(r)
-	if h.service.ValidateCSRF(session, csrfToken) != nil {
-		csrfToken, err = h.service.RotateCSRF(r.Context(), session.ID)
-		if err != nil {
-			writeAuthError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "could not refresh csrf token", nil)
-			return
+	if authenticated.Method == AuthMethodCookie {
+		csrfToken := CSRFTokenFromRequest(r)
+		if h.service.ValidateCSRF(authenticated.Session, csrfToken) != nil {
+			csrfToken, err = h.service.RotateCSRF(r.Context(), authenticated.Session.ID)
+			if err != nil {
+				writeAuthError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "could not refresh csrf token", nil)
+				return
+			}
+			SetCSRFTokenCookie(w, csrfToken, authenticated.Session.ExpiresAt, h.secureCookie)
 		}
-		SetCSRFTokenCookie(w, csrfToken, session.ExpiresAt, h.secureCookie)
+		w.Header().Set(CSRFHeaderName(), csrfToken)
 	}
-	w.Header().Set(CSRFHeaderName(), csrfToken)
-	writeJSON(w, http.StatusOK, account)
-}
-
-func (h *HTTPHandler) authenticate(r *http.Request) (Account, Session, string, error) {
-	token := SessionTokenFromRequest(r)
-	account, session, err := h.service.Current(r.Context(), token)
-	return account, session, token, err
+	writeJSON(w, http.StatusOK, authenticated.Account)
 }
 
 func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
@@ -172,12 +166,6 @@ func CSRFTokenFromRequest(r *http.Request) string {
 		return ""
 	}
 	return cookie.Value
-}
-
-func (s *Service) AuthenticateRequest(ctx context.Context, r *http.Request) (Account, Session, string, error) {
-	token := SessionTokenFromRequest(r)
-	account, session, err := s.Current(ctx, token)
-	return account, session, token, err
 }
 
 func writeAuthSession(w http.ResponseWriter, status int, account Account, session Session, secure bool) {

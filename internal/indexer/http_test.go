@@ -24,19 +24,21 @@ func TestHTTPRescanRequiresAdminAndReturnsJob(t *testing.T) {
 	}
 	defer db.Close()
 	authService := auth.NewService(db, time.Hour, false)
-	admin, session, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = admin
+	mobile, err := authService.CreateMobileSession(ctx, admin.ID, auth.MobileDeviceInput{Name: "Pixel", Platform: "android", AppVersion: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler := NewHTTPHandler(NewService(db, store, photos.NewService(db, store, 1<<20)), authService)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/rescan", strings.NewReader("{}"))
-	req.Header.Set(auth.CSRFHeaderName(), session.CSRFToken)
-	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
+	req.Header.Set("Authorization", "Bearer "+mobile.AccessToken)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusAccepted {

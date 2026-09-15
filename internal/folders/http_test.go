@@ -27,6 +27,10 @@ func TestHTTPFolderListCreateAndDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mobile, err := authService.CreateMobileSession(ctx, admin.ID, auth.MobileDeviceInput{Name: "Pixel", Platform: "android", AppVersion: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
 	if err != nil {
 		t.Fatal(err)
@@ -41,10 +45,17 @@ func TestHTTPFolderListCreateAndDetails(t *testing.T) {
 		t.Fatalf("list status = %d, want 200: %s", listRes.Code, listRes.Body.String())
 	}
 
+	bearerListReq := httptest.NewRequest(http.MethodGet, "/api/v1/folders", nil)
+	bearerListReq.Header.Set("Authorization", "Bearer "+mobile.AccessToken)
+	bearerListRes := httptest.NewRecorder()
+	handler.ServeHTTP(bearerListRes, bearerListReq)
+	if bearerListRes.Code != http.StatusOK {
+		t.Fatalf("bearer list status = %d, want 200: %s", bearerListRes.Code, bearerListRes.Body.String())
+	}
+
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/folders", strings.NewReader(`{"name":"2026"}`))
 	createReq.Header.Set("Content-Type", "application/json")
-	createReq.Header.Set(auth.CSRFHeaderName(), session.CSRFToken)
-	createReq.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
+	createReq.Header.Set("Authorization", "Bearer "+mobile.AccessToken)
 	createRes := httptest.NewRecorder()
 	handler.ServeHTTP(createRes, createReq)
 	if createRes.Code != http.StatusCreated {

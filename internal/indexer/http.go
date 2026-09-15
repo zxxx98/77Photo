@@ -37,15 +37,16 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) start(w http.ResponseWriter, r *http.Request) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid")
 		return
 	}
+	account := authenticated.Account
 	job, err := h.service.Start(r.Context(), acl.Principal{UserID: account.ID, Role: account.Role})
 	if err != nil {
 		h.writeServiceError(w, r, err)
@@ -55,11 +56,12 @@ func (h *HTTPHandler) start(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request, id string) {
-	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
 		return
 	}
+	account := authenticated.Account
 	job, err := h.service.Get(r.Context(), acl.Principal{UserID: account.ID, Role: account.Role}, id)
 	if err != nil {
 		h.writeServiceError(w, r, err)
