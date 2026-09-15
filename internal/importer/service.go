@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,9 +214,6 @@ func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove,
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
 			s.increment(job, func(c *Counts) { c.Skipped++ })
 			return nil
 		}
@@ -240,6 +239,11 @@ func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove,
 			s.increment(job, func(c *Counts) { c.Skipped++ })
 			return nil
 		}
+		s.increment(job, func(c *Counts) { c.Scanned++ })
+		if !isImportableMedia(path) {
+			s.increment(job, func(c *Counts) { c.Skipped++ })
+			return nil
+		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil || rel == "." {
 			s.increment(job, func(c *Counts) { c.Failed++ })
@@ -252,13 +256,27 @@ func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove,
 		}
 		destination := filepath.Join("users", userID, "Imported", rel)
 		moves = append(moves, fileMove{source: filepath.ToSlash(sourceRelative), destination: filepath.ToSlash(destination)})
-		s.increment(job, func(c *Counts) { c.Scanned++ })
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return moves, nil
+}
+
+func isImportableMedia(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	head := make([]byte, 512)
+	n, err := io.ReadFull(file, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return false
+	}
+	mimeType := http.DetectContentType(head[:n])
+	return mimeType == "image/jpeg" || mimeType == "image/png" || mimeType == "video/mp4" || mimeType == "video/webm"
 }
 
 func (s *Service) rescan(ctx context.Context, principal acl.Principal) error {
