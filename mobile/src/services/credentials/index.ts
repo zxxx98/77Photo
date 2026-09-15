@@ -4,8 +4,20 @@ export type CredentialsStore = Pick<Spec, 'get' | 'set' | 'clear'>;
 
 export type { StoredCredentials };
 
-export const credentialsStore: CredentialsStore = NativeCredentials;
+const unavailableCredentials: CredentialsStore = {
+  get: async () => {
+    throw new Error('NativeCredentials is unavailable');
+  },
+  set: async () => {
+    throw new Error('NativeCredentials is unavailable');
+  },
+  clear: async () => {
+    throw new Error('NativeCredentials is unavailable');
+  },
+};
 
-export function createCredentialsStore(nativeModule: CredentialsStore = NativeCredentials): CredentialsStore {
+export const credentialsStore: CredentialsStore = NativeCredentials ?? unavailableCredentials;
+
+export function createCredentialsStore(nativeModule: CredentialsStore = credentialsStore): CredentialsStore {
   return nativeModule;
 }

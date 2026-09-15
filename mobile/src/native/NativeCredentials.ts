@@ -16,4 +16,4 @@ export interface Spec extends TurboModule {
   clear(serverId: string): Promise<void>;
 }
 
-export default TurboModuleRegistry.getEnforcing<Spec>('NativeCredentials');
+export default TurboModuleRegistry.get<Spec>('NativeCredentials');
