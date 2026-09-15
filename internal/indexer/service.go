@@ -230,16 +230,16 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 			return walkErr
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT owner_id, storage_path FROM photos WHERE deleted_at IS NULL AND scan_status='indexed'")
+
+	// SQLite is intentionally configured with a single pooled connection. Do
+	// not hold a query cursor open while calling MarkMissing, which performs a
+	// write through the same *sql.DB and would otherwise wait forever for the
+	// connection currently owned by rows.
+	indexedPaths, err := s.loadIndexedPhotoPaths(ctx)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var owner, path string
-		if err := rows.Scan(&owner, &path); err != nil {
-			return err
-		}
+	for _, path := range indexedPaths {
 		root := managedRoot(filepath.ToSlash(path))
 		if root == "" || !walkedRoots[root] {
 			continue
@@ -253,7 +253,7 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 			}
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 func (s *Service) loadFolders(ctx context.Context) (map[string]folderRecord, error) {
@@ -274,6 +274,26 @@ func (s *Service) loadFolders(ctx context.Context) (map[string]folderRecord, err
 		return nil, err
 	}
 	return folders, nil
+}
+
+func (s *Service) loadIndexedPhotoPaths(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT storage_path FROM photos WHERE deleted_at IS NULL AND scan_status='indexed'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	paths := make([]string, 0)
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return paths, nil
 }
 
 func (s *Service) scanRoots(ctx context.Context, folders map[string]folderRecord) ([]scanRoot, error) {
