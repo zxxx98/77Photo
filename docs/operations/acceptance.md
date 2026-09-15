@@ -9,7 +9,6 @@
 | C：手机首屏缩略图、连续分页、预览和主动下载原图 | ☐ | `npm run build` + 浏览器记录 |
 | D：NanoPi R5S 空闲、浏览、缩略图和 rescan 负载 | ☐ | `docs/operations/performance.md` 设备记录 |
 | E：停止服务后原图可直接读取，删除缓存后重启可重建 | ☐ | `docs/operations/backup-restore.md` 手工记录 |
-| amd64 容器启动 | ☐ | `docker buildx build --platform linux/amd64 --load .` |
 | arm64 容器启动或实机验收 | ☐ | 设备型号、镜像摘要和 `/healthz` |
 | 375/768/1440 px 响应式与键盘焦点 | ☐ | 浏览器截图或 e2e 记录 |
 | 1 万/10 万索引性能 | ☐ | `artifacts/performance/*.json` 与 `/usr/bin/time -v` |
@@ -27,7 +26,7 @@
 | 检查 | 结果 | 证据或限制 |
 | --- | --- | --- |
 | Go 单元/集成测试、`go vet`、竞态测试 | 已完成 | `go test ./...`、`go test -race ./internal/... ./tests/integration`、`go vet ./...` |
-| CGO-free 测试与 amd64/arm64 构建 | 已完成 | `CGO_ENABLED=0 go test ./...`；两个 `GOOS=linux` 交叉构建均返回 0 |
+| CGO-free 测试与 ARM64 构建 | 已完成 | `CGO_ENABLED=0 go test ./...`；`GOOS=linux GOARCH=arm64` 交叉构建返回 0 |
 | Web 测试、类型检查、生产构建 | 已完成 | `npm test -- --run`（8 tests）、`npm run typecheck`、`npm run build` |
 | 权限矩阵集成测试 | 已完成 | `TestSecurityPermissionMatrixAcrossResources` 通过 |
 | 1 万/10 万索引基准 | 已完成 | ARM64 Oracle Neoverse-N1 主机；结果详见 `docs/operations/performance.md` |

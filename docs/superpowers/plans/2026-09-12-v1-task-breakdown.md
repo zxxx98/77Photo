@@ -6,7 +6,7 @@
 
 **架构：** 单个 Go 服务提供 REST API、托管 Web 静态资源并运行有限队列的缩略图 worker。SQLite 保存索引、权限与元数据；原图保存在普通文件系统，缓存独立且可重建。
 
-**技术栈：** Go、SQLite、React、TypeScript、Vite、PWA；图像缩放优先评估 libvips；单容器 Docker Compose 与 linux-amd64/linux-arm64 发布。
+**技术栈：** Go、SQLite、React、TypeScript、Vite、PWA；图像缩放优先评估 libvips；单容器 Docker Compose 与 linux-arm64 发布。
 
 ## 1. 依据与使用方式
 
@@ -133,16 +133,16 @@
 
 验收：刷新保留有效登录状态；键盘可完成登录；导航不展示 V2 空入口。
 
-### T06 构建与双架构 CI
+### T06 构建与 ARM64 CI
 
 交付：`Dockerfile`、`compose.yaml`、`.github/workflows/ci.yml`、`internal/webassets/`。
 
 - [x] 构建 Web 并由 Go 嵌入静态资源，支持前端路由直接刷新。
-- [x] 配置 Go 测试、前端类型检查与构建，建立 amd64/arm64 构建矩阵。
+- [x] 配置 Go 测试、前端类型检查与构建，建立 ARM64 构建验证。
 - [x] 验证 SQLite driver 与图片库的目标平台依赖，记录独立二进制是否需要系统动态库。
 - [x] 提供单应用容器和数据库、照片、缓存独立持久化配置。
 
-验收：两个架构均完成构建与启动冒烟；后续引入图像依赖时继续验证此矩阵。
+验收：ARM64 完成构建与启动冒烟；后续引入图像依赖时继续验证 ARM64 构建。
 
 ### T07 安全存储与文件夹
 
@@ -336,7 +336,7 @@
 | 照片移动/重命名/删除 | T09、T13 |
 | 家庭共享与 read/write | T15、T19 |
 | 设置、管理员页、响应式、PWA | T05、T12–T14、T17、T18 |
-| Docker、ARM64/AMD64、健康检查、日志 | T02、T06、T21 |
+| Docker、ARM64、健康检查、日志 | T02、T06、T21 |
 | 路径安全、故障恢复、低资源、大图库 | T07–T11、T16、T19、T20 |
 | 原图可读、缓存可重建、备份恢复 | T10、T16、T21 |
 
