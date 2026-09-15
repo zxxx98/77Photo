@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -71,6 +73,158 @@ func TestMobileSessionUsesFixedAccessAndRefreshExpiries(t *testing.T) {
 	}
 }
 
+func TestExpiredPersistedMobileAccessTokenIsUnauthorized(t *testing.T) {
+	service, account := newMobileAuthService(t)
+	session, err := service.CreateMobileSession(context.Background(), account.ID, MobileDeviceInput{Name: "Pixel 9", Platform: "android", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.db.ExecContext(context.Background(), `UPDATE mobile_tokens SET expires_at=? WHERE token_type='access' AND token_hash=?`, formatTime(time.Now().UTC().Add(-time.Minute)), hashToken(session.AccessToken)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CurrentBearer(context.Background(), session.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expired persisted access error = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestExpiredPersistedMobileRefreshTokenIsUnauthorized(t *testing.T) {
+	service, account := newMobileAuthService(t)
+	session, err := service.CreateMobileSession(context.Background(), account.ID, MobileDeviceInput{Name: "Pixel 9", Platform: "android", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.db.ExecContext(context.Background(), `UPDATE mobile_tokens SET expires_at=? WHERE token_type='refresh' AND token_hash=?`, formatTime(time.Now().UTC().Add(-time.Minute)), hashToken(session.RefreshToken)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RefreshMobileSession(context.Background(), session.RefreshToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expired persisted refresh error = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestCurrentBearerRejectsInactiveMobileAccount(t *testing.T) {
+	service, account := newMobileAuthService(t)
+	session, err := service.CreateMobileSession(context.Background(), account.ID, MobileDeviceInput{Name: "Pixel 9", Platform: "android", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.db.ExecContext(context.Background(), "UPDATE users SET is_active=0 WHERE id=?", account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CurrentBearer(context.Background(), session.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("inactive account bearer error = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestCurrentBearerRejectsDeletedMobileAccount(t *testing.T) {
+	service, account := newMobileAuthService(t)
+	session, err := service.CreateMobileSession(context.Background(), account.ID, MobileDeviceInput{Name: "Pixel 9", Platform: "android", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletedAt := time.Now().UTC()
+	if _, err := service.db.ExecContext(context.Background(), "UPDATE users SET deleted_at=? WHERE id=?", formatTime(deletedAt), account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CurrentBearer(context.Background(), session.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("deleted account bearer error = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestRevokeMobileSessionsForUserTxRevokesOnlyTargetUser(t *testing.T) {
+	service, account := newMobileAuthService(t)
+	other := createMobileTestAccount(t, service, "mobile-other")
+	owned, err := service.CreateMobileSession(context.Background(), account.ID, MobileDeviceInput{Name: "Owner phone", Platform: "android", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSession, err := service.CreateMobileSession(context.Background(), other.ID, MobileDeviceInput{Name: "Other phone", Platform: "ios", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := service.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RevokeMobileSessionsForUserTx(context.Background(), tx, account.ID); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.CurrentBearer(context.Background(), owned.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("revoked access error = %v, want ErrUnauthorized", err)
+	}
+	if _, err := service.RefreshMobileSession(context.Background(), owned.RefreshToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("revoked refresh error = %v, want ErrUnauthorized", err)
+	}
+	if _, err := service.CurrentBearer(context.Background(), otherSession.AccessToken); err != nil {
+		t.Fatalf("other user access error = %v, want nil", err)
+	}
+	if _, err := service.RefreshMobileSession(context.Background(), otherSession.RefreshToken); err != nil {
+		t.Fatalf("other user refresh error = %v, want nil", err)
+	}
+}
+
+func TestConcurrentMobileRefreshAllowsOneRotationAndRevokesFamilyOnReuse(t *testing.T) {
+	service, account := newMobileAuthService(t)
+	first, err := service.CreateMobileSession(context.Background(), account.ID, MobileDeviceInput{Name: "Pixel 9", Platform: "android", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	ready := make(chan struct{}, 2)
+	type refreshResult struct {
+		session MobileSession
+		err     error
+	}
+	results := make(chan refreshResult, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ready <- struct{}{}
+			<-start
+			rotated, err := service.RefreshMobileSession(context.Background(), first.RefreshToken)
+			results <- refreshResult{session: rotated, err: err}
+		}()
+	}
+	<-ready
+	<-ready
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var winner MobileSession
+	var loserErr error
+	winners := 0
+	for result := range results {
+		if result.err == nil {
+			winner = result.session
+			winners++
+			continue
+		}
+		loserErr = result.err
+	}
+	if winners != 1 {
+		t.Fatalf("successful concurrent refreshes = %d, want 1", winners)
+	}
+	if !errors.Is(loserErr, ErrRefreshReuse) && !errors.Is(loserErr, ErrUnauthorized) {
+		t.Fatalf("losing concurrent refresh error = %v, want ErrRefreshReuse or ErrUnauthorized", loserErr)
+	}
+
+	if _, err := service.RefreshMobileSession(context.Background(), first.RefreshToken); !errors.Is(err, ErrRefreshReuse) {
+		t.Fatalf("serialized reused refresh error = %v, want ErrRefreshReuse", err)
+	}
+	if _, err := service.CurrentBearer(context.Background(), winner.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("concurrent refresh family access error = %v, want ErrUnauthorized", err)
+	}
+}
+
 func TestMobileSessionStoresOnlyTokenHashes(t *testing.T) {
 	service, account := newMobileAuthService(t)
 	session, err := service.CreateMobileSession(context.Background(), account.ID, MobileDeviceInput{
@@ -93,7 +247,7 @@ func TestMobileSessionStoresOnlyTokenHashes(t *testing.T) {
 		if stored == session.AccessToken || stored == session.RefreshToken {
 			t.Fatalf("stored token %q equals a raw token", stored)
 		}
-		if stored == "" || stored[:len("sha256:")] != "sha256:" {
+		if !strings.HasPrefix(stored, "sha256:") {
 			t.Fatalf("stored token = %q, want a token hash", stored)
 		}
 		seen++
