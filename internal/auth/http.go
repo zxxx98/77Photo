@@ -105,6 +105,18 @@ func (h *HTTPHandler) logout(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	if authenticated.Method == AuthMethodBearer {
+		if err := h.service.RevokeMobileDevice(r.Context(), authenticated.Account.ID, authenticated.DeviceID); err != nil {
+			if errors.Is(err, ErrUnauthorized) {
+				writeAuthError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+				return
+			}
+			writeAuthError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "could not revoke mobile device", nil)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if err := h.service.Revoke(r.Context(), authenticated.Credential); err != nil {
 		writeAuthError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "could not revoke session", nil)
 		return

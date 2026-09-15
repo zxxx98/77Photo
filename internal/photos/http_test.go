@@ -196,7 +196,7 @@ func TestHTTPListAndOriginalRangeUsePhotoACL(t *testing.T) {
 	rangeReq.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
 	rangeRes := httptest.NewRecorder()
 	handler.ServeHTTP(rangeRes, rangeReq)
-	if rangeRes.Code != http.StatusPartialContent || rangeRes.Header().Get("Content-Range") == "" || rangeRes.Header().Get("Vary") != "Cookie" || len(rangeRes.Body.Bytes()) != 5 {
+	if rangeRes.Code != http.StatusPartialContent || rangeRes.Header().Get("Content-Range") == "" || rangeRes.Header().Get("Vary") != "Cookie, Authorization" || len(rangeRes.Body.Bytes()) != 5 {
 		t.Fatalf("range response = %d headers=%v len=%d", rangeRes.Code, rangeRes.Header(), len(rangeRes.Body.Bytes()))
 	}
 }

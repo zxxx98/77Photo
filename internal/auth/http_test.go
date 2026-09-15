@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -75,6 +76,36 @@ func TestHTTPSetupLoginMeAndLogout(t *testing.T) {
 		t.Fatalf("me after logout status = %d, want 401", meAfter.StatusCode)
 	}
 	_ = meAfter.Body.Close()
+}
+
+func TestHTTPBearerLogoutRevokesMobileDeviceWithoutBrowserCookie(t *testing.T) {
+	service, account := newMobileAuthService(t)
+	mobile, err := service.CreateMobileSession(context.Background(), account.ID, MobileDeviceInput{Name: "Pixel", Platform: "android", AppVersion: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewHTTPHandler(service, false))
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+mobile.AccessToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("bearer logout status = %d, want 204", resp.StatusCode)
+	}
+	if resp.Header.Get("Set-Cookie") != "" {
+		t.Fatalf("bearer logout emitted browser cookie: %q", resp.Header.Get("Set-Cookie"))
+	}
+	if _, err := service.CurrentBearer(context.Background(), mobile.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("bearer after logout = %v, want ErrUnauthorized", err)
+	}
 }
 
 func TestHTTPSetupStatusTracksInitialization(t *testing.T) {

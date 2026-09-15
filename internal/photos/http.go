@@ -326,7 +326,7 @@ func (h *HTTPHandler) thumbnail(w http.ResponseWriter, r *http.Request, id strin
 	defer file.Close()
 	w.Header().Set("Content-Type", "image/webp")
 	w.Header().Set("Cache-Control", "private, max-age=60")
-	w.Header().Set("Vary", "Cookie")
+	w.Header().Set("Vary", "Cookie, Authorization")
 	http.ServeContent(w, r, filepath.Base(path), time.Time{}, file)
 }
 
@@ -375,7 +375,7 @@ func (h *HTTPHandler) preview(w http.ResponseWriter, r *http.Request, id string)
 	defer file.Close()
 	w.Header().Set("Content-Type", "image/webp")
 	w.Header().Set("Cache-Control", "private, max-age=60")
-	w.Header().Set("Vary", "Cookie")
+	w.Header().Set("Vary", "Cookie, Authorization")
 	http.ServeContent(w, r, filepath.Base(path), time.Time{}, file)
 }
 
@@ -413,7 +413,7 @@ func (h *HTTPHandler) serveOriginal(w http.ResponseWriter, r *http.Request, phot
 	w.Header().Set("Content-Type", photo.MIMEType)
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": photo.Filename}))
 	w.Header().Set("Cache-Control", cacheControl)
-	w.Header().Set("Vary", "Cookie")
+	w.Header().Set("Vary", "Cookie, Authorization")
 	http.ServeContent(w, r, photo.Filename, photoModTime(photo), file)
 }
 

@@ -271,7 +271,7 @@ func (h *LiveHTTPHandler) get(w http.ResponseWriter, r *http.Request, photoID st
 	w.Header().Set("Content-Type", "video/quicktime")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": motionName}))
 	w.Header().Set("Cache-Control", "private, max-age=60")
-	w.Header().Set("Vary", "Cookie")
+	w.Header().Set("Vary", "Cookie, Authorization")
 	http.ServeContent(w, r, motionName, info.ModTime(), file)
 }
 
