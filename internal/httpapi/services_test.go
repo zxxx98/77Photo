@@ -51,6 +51,29 @@ func TestNewHandlerWithServicesMountsAuthAndUserRoutes(t *testing.T) {
 	}
 }
 
+func TestNewHandlerWithServicesMountsMobileRoutes(t *testing.T) {
+	db, err := dbstore.Open(context.Background(), filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	if _, _, err := authService.SetupAdmin(context.Background(), "admin", "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandlerWithServices(HealthChecks{}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), Services{Auth: authService})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mobile/auth/login", strings.NewReader(`{"username":"admin","password":"correct horse battery staple","device_name":"Pixel 9","platform":"android","app_version":"1.0.0"}`))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"access_token"`) {
+		t.Fatalf("mobile login = %d/%q", res.Code, res.Body.String())
+	}
+	if res.Header().Get("Set-Cookie") != "" || res.Header().Get(auth.CSRFHeaderName()) != "" {
+		t.Fatalf("mobile route emitted browser session material: %v", res.Header())
+	}
+}
+
 func TestNewHandlerWithServicesMountsPublicShareRoutes(t *testing.T) {
 	db, err := dbstore.Open(context.Background(), filepath.Join(t.TempDir(), "77photo.db"))
 	if err != nil {
