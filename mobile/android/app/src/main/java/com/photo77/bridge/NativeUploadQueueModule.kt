@@ -13,6 +13,8 @@ import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.module.model.ReactModuleInfo
 import com.facebook.react.module.model.ReactModuleInfoProvider
 import com.facebook.react.BaseReactPackage
+import android.content.Intent
+import android.os.Build
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.turbomodule.core.interfaces.TurboModule
 import com.photo77.upload.db.UploadDatabase
@@ -30,6 +32,38 @@ class NativeUploadQueueModule(
   private val database by lazy { UploadDatabase.getInstance(reactApplicationContext) }
 
   override fun getName(): String = NAME
+
+  @ReactMethod
+  fun start(serverId: String, baseURL: String, deviceId: String, concurrency: Int, allowMobile: Boolean, promise: Promise) {
+    execute(promise) {
+      val safeServerId = requireIdentifier(serverId, "serverId")
+      val safeBaseURL = baseURL.trim().takeIf { it.isNotEmpty() && it.length <= 2_048 }
+        ?: throw IllegalArgumentException("baseURL is invalid")
+      val safeDeviceId = requireIdentifier(deviceId, "deviceId")
+      val intent = Intent(reactApplicationContext, com.photo77.upload.UploadForegroundService::class.java).apply {
+        action = com.photo77.upload.UploadForegroundService.ACTION_START
+        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_SERVER_ID, safeServerId)
+        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_BASE_URL, safeBaseURL)
+        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_DEVICE_ID, safeDeviceId)
+        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_CONCURRENCY, concurrency.coerceIn(1, 4))
+        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_ALLOW_MOBILE, allowMobile)
+      }
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        reactApplicationContext.startForegroundService(intent)
+      } else {
+        reactApplicationContext.startService(intent)
+      }
+      com.photo77.upload.UploadRecoveryWorker.schedule(
+        context = reactApplicationContext,
+        serverId = safeServerId,
+        baseUrl = safeBaseURL,
+        deviceId = safeDeviceId,
+        concurrency = concurrency,
+        allowMobile = allowMobile,
+      )
+      null
+    }
+  }
 
   @ReactMethod
   fun enqueue(serverId: String, deviceId: String, folderId: String, items: ReadableArray, promise: Promise) {

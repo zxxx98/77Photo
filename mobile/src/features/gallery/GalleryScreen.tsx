@@ -61,7 +61,7 @@ export function GalleryScreen({
 
   useEffect(() => {
     if (!(query.error instanceof CursorExpiredError)) return;
-    void queryClient.resetQueries({ queryKey: photoKeys.list(serverId, userId, folderId), exact: true });
+    queryClient.resetQueries({ queryKey: photoKeys.list(serverId, userId, folderId), exact: true }).catch(() => undefined);
   }, [folderId, query.error, queryClient, serverId, userId]);
 
   const photos = useMemo(() => appendPhotoPages(query.data?.pages ?? []), [query.data?.pages]);
@@ -101,7 +101,7 @@ export function GalleryScreen({
     return (
       <View style={styles.center}>
         <Message>{t('gallery.error', '照片加载失败')}</Message>
-        <PrimaryButton label={t('common.retry', '重试')} onPress={() => { void query.refetch(); }} />
+        <PrimaryButton label={t('common.retry', '重试')} onPress={() => { query.refetch().catch(() => undefined); }} />
       </View>
     );
   }
@@ -121,15 +121,15 @@ export function GalleryScreen({
         }}
         numColumns={3}
         onEndReached={() => {
-          if (query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
+          if (query.hasNextPage && !query.isFetchingNextPage) query.fetchNextPage().catch(() => undefined);
         }}
         onEndReachedThreshold={0.5}
-        onRefresh={() => { void query.refetch(); }}
+        onRefresh={() => { query.refetch().catch(() => undefined); }}
         refreshing={query.isRefetching && !query.isFetchingNextPage}
         refreshControl={
           <RefreshControl
             refreshing={query.isRefetching && !query.isFetchingNextPage}
-            onRefresh={() => { void query.refetch(); }}
+            onRefresh={() => { query.refetch().catch(() => undefined); }}
             tintColor={colors.accent}
           />
         }

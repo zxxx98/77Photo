@@ -54,6 +54,10 @@ jobs:
       - run: npm ci
       - run: npm test -- --runInBand
       - run: npm run typecheck
+      - run: npm run lint
+      - name: Kotlin unit tests
+        working-directory: mobile/android
+        run: ./gradlew testDebugUnitTest
       - run: npm run android:assemble
 
   container:

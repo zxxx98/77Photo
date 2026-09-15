@@ -1,0 +1,123 @@
+package com.photo77.upload
+
+import com.photo77.upload.db.UploadTaskEntity
+import com.photo77.upload.db.UploadTaskState
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class UploadSchedulerTest {
+  @Test
+  fun activeUploadsNeverExceedConfiguredConcurrency() {
+    val source = FakeTaskSource(tasks("server-a", 8))
+    val active = AtomicInteger(0)
+    val maximum = AtomicInteger(0)
+    val started = CountDownLatch(2)
+    val release = CountDownLatch(1)
+    val scheduler = UploadScheduler(
+      source = source,
+      uploader = UploadTaskUploader { task, _ ->
+        val current = active.incrementAndGet()
+        maximum.updateAndGet { old -> maxOf(old, current) }
+        started.countDown()
+        release.await(5, TimeUnit.SECONDS)
+        active.decrementAndGet()
+        UploadResult.success()
+      },
+      sleepMillis = 1,
+    )
+
+    val run = scheduler.start("server-a", "worker-1", 2)
+    assertTrue(started.await(5, TimeUnit.SECONDS))
+    assertEquals(2, maximum.get())
+    release.countDown()
+    run.await(5, TimeUnit.SECONDS)
+    assertEquals(2, maximum.get())
+  }
+
+  @Test
+  fun loweringConcurrencyDoesNotCancelExistingTransfers() {
+    val source = FakeTaskSource(tasks("server-a", 6))
+    val active = AtomicInteger(0)
+    val maximum = AtomicInteger(0)
+    val firstFour = CountDownLatch(4)
+    val release = CountDownLatch(1)
+    val scheduler = UploadScheduler(
+      source = source,
+      uploader = UploadTaskUploader { _, _ ->
+        val current = active.incrementAndGet()
+        maximum.updateAndGet { old -> maxOf(old, current) }
+        firstFour.countDown()
+        release.await(5, TimeUnit.SECONDS)
+        active.decrementAndGet()
+        UploadResult.success()
+      },
+      sleepMillis = 1,
+    )
+
+    val run = scheduler.start("server-a", "worker-1", 4)
+    assertTrue(firstFour.await(5, TimeUnit.SECONDS))
+    scheduler.setConcurrency(1)
+    release.countDown()
+    run.await(5, TimeUnit.SECONDS)
+    assertEquals(4, maximum.get())
+    assertEquals(6, source.tasks.count { it.state == UploadTaskState.SUCCEEDED })
+  }
+
+  private fun tasks(serverId: String, count: Int): List<UploadTaskEntity> = (1..count).map { index ->
+    UploadTaskEntity(
+      id = "task-$index",
+      batchId = "batch-1",
+      contentUri = "content://media/$index",
+      displayName = "photo-$index.jpg",
+      mimeType = "image/jpeg",
+      sizeBytes = 100,
+      serverId = serverId,
+      userId = "user-1",
+      deviceId = "device-1",
+      sessionId = null,
+      folderId = "folder-1",
+      state = UploadTaskState.QUEUED,
+      sentBytes = 0,
+      attempts = 0,
+      lastErrorCode = null,
+      lastErrorMessage = null,
+      createdAtEpochMs = index.toLong(),
+      startedAtEpochMs = null,
+      completedAtEpochMs = null,
+      nextRetryAtEpochMs = null,
+      leaseOwner = null,
+      leaseUntilEpochMs = null,
+    )
+  }
+
+  private class FakeTaskSource(initial: List<UploadTaskEntity>) : UploadTaskSource {
+    val tasks = Collections.synchronizedList(initial.toMutableList())
+
+    override fun recoverExpiredLeases(now: Long) = Unit
+
+    override fun acquireQueued(serverId: String, owner: String, limit: Int, now: Long, leaseUntil: Long): List<UploadTaskEntity> {
+      synchronized(tasks) {
+        val selected = tasks.filter { it.serverId == serverId && it.state == UploadTaskState.QUEUED }.take(limit)
+        selected.forEach { task ->
+          val index = tasks.indexOfFirst { it.id == task.id }
+          tasks[index] = task.copy(state = UploadTaskState.UPLOADING, leaseOwner = owner, leaseUntilEpochMs = leaseUntil)
+        }
+        return selected.map { it.copy(state = UploadTaskState.UPLOADING, leaseOwner = owner, leaseUntilEpochMs = leaseUntil) }
+      }
+    }
+
+    override fun updateState(task: UploadTaskEntity, nextState: String, now: Long, errorCode: String?, errorMessage: String?, nextRetryAt: Long?) {
+      synchronized(tasks) {
+        val index = tasks.indexOfFirst { it.id == task.id }
+        tasks[index] = tasks[index].copy(state = nextState, lastErrorCode = errorCode, lastErrorMessage = errorMessage, nextRetryAtEpochMs = nextRetryAt)
+      }
+    }
+
+    override fun hasRunnable(serverId: String, now: Long): Boolean = tasks.any { it.serverId == serverId && it.state == UploadTaskState.QUEUED }
+  }
+}

@@ -321,3 +321,5 @@ export function createConnectionStore(options: ConnectionStoreOptions = {}) {
 }
 
 export const connectionStore = createConnectionStore();
+
+export type ConnectionStore = ReturnType<typeof createConnectionStore>;

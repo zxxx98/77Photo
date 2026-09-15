@@ -9,4 +9,4 @@ export interface Spec extends TurboModule {
   pick(): Promise<readonly PickedMedia[]>;
 }
 
-export default TurboModuleRegistry.getEnforcing<Spec>('NativePhotoPicker');
+export default TurboModuleRegistry.get<Spec>('NativePhotoPicker');

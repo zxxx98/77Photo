@@ -3,5 +3,6 @@ module.exports = {
   moduleNameMapper: {
     '^@react-native-async-storage/async-storage$': '<rootDir>/__mocks__/async-storage.js',
   },
-  transformIgnorePatterns: ['node_modules/(?!(@react-navigation|react-native|@react-native)/)'],
+  setupFilesAfterEnv: ['<rootDir>/node_modules/react-native-gesture-handler/jestSetup.js'],
+  transformIgnorePatterns: ['node_modules/(?!(@react-navigation|react-native|@react-native|@shopify/flash-list|react-native-gesture-handler|react-native-video)/)'],
 };

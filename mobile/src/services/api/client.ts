@@ -10,6 +10,7 @@ import type {
   MobileSessionResponse,
   Photo,
   PhotoPage,
+  RescanJob,
   ShareLink,
   ThumbnailSize,
   User,
@@ -378,5 +379,11 @@ export function createApiClient(options: ApiClientOptions) {
     }),
     deletePhoto: (id: string): Promise<void> =>
       requestJSON<void>(`/api/v1/photos/${encodeURIComponent(id)}?confirm=true`, { method: 'DELETE' }),
+    startRescan: (): Promise<RescanJob> => requestJSON<RescanJob>('/api/v1/admin/rescan', {
+      method: 'POST',
+      body: {},
+    }),
+    getRescan: (id: string): Promise<RescanJob> =>
+      requestJSON<RescanJob>(`/api/v1/admin/rescan/${encodeURIComponent(id)}`),
   };
 }

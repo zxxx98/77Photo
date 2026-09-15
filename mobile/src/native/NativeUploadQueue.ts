@@ -46,6 +46,13 @@ export type UploadQueueSnapshot = {
 };
 
 export interface Spec extends TurboModule {
+  start(
+    serverId: string,
+    baseURL: string,
+    deviceId: string,
+    concurrency: number,
+    allowMobile: boolean,
+  ): Promise<void>;
   enqueue(
     serverId: string,
     deviceId: string,
@@ -59,4 +66,4 @@ export interface Spec extends TurboModule {
   cancel(taskIds: readonly string[]): Promise<void>;
 }
 
-export default TurboModuleRegistry.getEnforcing<Spec>('NativeUploadQueue');
+export default TurboModuleRegistry.get<Spec>('NativeUploadQueue');

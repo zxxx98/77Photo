@@ -43,6 +43,23 @@ export type HealthResponse = {
   request_id: string;
 };
 
+export type RescanStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export type RescanJob = {
+  id: string;
+  status: RescanStatus;
+  started_at: string;
+  finished_at?: string | null;
+  counts: {
+    scanned: number;
+    added: number;
+    updated: number;
+    missing: number;
+    failed: number;
+  };
+  error?: string | null;
+};
+
 export type Photo = {
   id: string;
   owner_id: string;

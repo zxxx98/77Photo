@@ -25,7 +25,6 @@ jest.mock('@shopify/flash-list', () => {
 });
 
 jest.mock('react-native-gesture-handler', () => {
-  const ReactNative = require('react-native');
   return {
     PinchGestureHandler: ({ children }: { children: React.ReactNode }) => children,
     State: { ACTIVE: 4 },

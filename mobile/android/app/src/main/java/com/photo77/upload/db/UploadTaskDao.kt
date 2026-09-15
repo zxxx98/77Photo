@@ -84,6 +84,75 @@ abstract class UploadTaskDao {
   ): Int
 
   @Query(
+    """
+    UPDATE upload_tasks
+    SET state = :nextState, last_error_code = :errorCode, last_error_message = :errorMessage,
+        next_retry_at_epoch_ms = :nextRetryAt,
+        completed_at_epoch_ms = CASE WHEN :nextState IN ('succeeded', 'canceled') THEN :now ELSE completed_at_epoch_ms END,
+        lease_owner = CASE WHEN :nextState IN ('succeeded', 'failed', 'paused', 'canceled', 'queued') THEN NULL ELSE lease_owner END,
+        lease_until_epoch_ms = CASE WHEN :nextState IN ('succeeded', 'failed', 'paused', 'canceled', 'queued') THEN NULL ELSE lease_until_epoch_ms END
+    WHERE id = :id AND state = :expectedState
+    """,
+  )
+  abstract fun updateStateWithRetry(
+    id: String,
+    expectedState: String,
+    nextState: String,
+    now: Long,
+    errorCode: String?,
+    errorMessage: String?,
+    nextRetryAt: Long?,
+  ): Int
+
+  @Query(
+    """
+    UPDATE upload_tasks
+    SET attempts = attempts + 1
+    WHERE id = :id AND state = 'uploading' AND lease_owner = :owner
+    """,
+  )
+  abstract fun recordAttempt(id: String, owner: String): Int
+
+  @Query(
+    """
+    UPDATE upload_tasks
+    SET sent_bytes = CASE WHEN :sentBytes > sent_bytes THEN :sentBytes ELSE sent_bytes END
+    WHERE id = :id AND state = 'uploading' AND lease_owner = :owner
+    """,
+  )
+  abstract fun updateProgress(id: String, owner: String, sentBytes: Long): Int
+
+  @Query(
+    """
+    UPDATE upload_tasks
+    SET state = 'paused', last_error_code = 'AUTH_REQUIRED', last_error_message = 'authentication is required',
+        lease_owner = NULL, lease_until_epoch_ms = NULL
+    WHERE server_id = :serverId AND device_id = :deviceId AND state IN ('queued', 'uploading')
+    """,
+  )
+  abstract fun pauseForAuthentication(serverId: String, deviceId: String): Int
+
+  @Query(
+    """
+    UPDATE upload_tasks
+    SET state = 'queued', lease_owner = NULL, lease_until_epoch_ms = NULL
+    WHERE state = 'uploading' AND lease_owner = :owner
+    """,
+  )
+  abstract fun releaseLeases(owner: String): Int
+
+  @Query(
+    """
+    SELECT EXISTS(
+      SELECT 1 FROM upload_tasks
+      WHERE server_id = :serverId AND state = 'queued'
+        AND (next_retry_at_epoch_ms IS NULL OR next_retry_at_epoch_ms <= :now)
+    )
+    """,
+  )
+  abstract fun hasRunnable(serverId: String, now: Long): Boolean
+
+  @Query(
     "UPDATE upload_tasks SET state = 'paused', lease_owner = NULL, lease_until_epoch_ms = NULL WHERE server_id = :serverId AND state = 'uploading'",
   )
   abstract fun pauseUploading(serverId: String): Int

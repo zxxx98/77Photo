@@ -124,11 +124,11 @@ export function MediaViewerScreen({
           text: t('viewer.delete', '永久删除'),
           style: 'destructive',
           onPress: () => {
-            void api.deletePhoto(selectedPhoto.id).then(() => {
+            api.deletePhoto(selectedPhoto.id).then(() => {
               onDeleted?.(selectedPhoto.id);
               setDetailsVisible(false);
               onClose?.();
-            });
+            }).catch(() => undefined);
           },
         },
       ],
@@ -136,7 +136,7 @@ export function MediaViewerScreen({
   };
 
   const openOriginal = (photo = selectedPhoto) => {
-    if (photo) void Linking.openURL(api.originalURL(photo.id));
+    if (photo) Linking.openURL(api.originalURL(photo.id)).catch(() => undefined);
   };
 
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -195,7 +195,7 @@ export function MediaViewerScreen({
       <View style={styles.toolbar}>
         <PrimaryButton label={t('viewer.details', '详情')} onPress={() => setDetailsVisible(true)} />
         <PrimaryButton label={t('viewer.download', '下载原文件')} onPress={openOriginal} />
-        <PrimaryButton label={t('viewer.share', '分享')} onPress={() => { void shareSelected(); }} />
+        <PrimaryButton label={t('viewer.share', '分享')} onPress={() => { shareSelected().catch(() => undefined); }} />
       </View>
       <Modal visible={detailsVisible} transparent animationType="slide" onRequestClose={() => setDetailsVisible(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setDetailsVisible(false)}>
@@ -204,7 +204,7 @@ export function MediaViewerScreen({
               photo={selectedPhoto}
               onClose={() => setDetailsVisible(false)}
               onDownload={openOriginal}
-              onShare={() => { void shareSelected(); }}
+              onShare={() => { shareSelected().catch(() => undefined); }}
               onDelete={deleteSelected}
             />
           </View>

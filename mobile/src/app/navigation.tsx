@@ -13,6 +13,9 @@ import { LoginScreen } from '../features/auth/LoginScreen';
 import { FolderBrowserScreen } from '../features/folders/FolderBrowserScreen';
 import { GalleryScreen } from '../features/gallery/GalleryScreen';
 import { MediaViewerScreen } from '../features/viewer/MediaViewerScreen';
+import { UploadScreen } from '../features/upload/UploadScreen';
+import { SettingsScreen } from '../features/settings/SettingsScreen';
+import { LanRangesScreen } from '../features/settings/LanRangesScreen';
 import { createApiClient } from '../services/api/client';
 import type { Photo, User } from '../services/api/types';
 import { credentialsStore } from '../services/credentials';
@@ -43,13 +46,10 @@ function LoadingScreen() {
   return <Screen><Text>{t('app.loading')}</Text></Screen>;
 }
 
-function PlaceholderScreen({ title }: { title: string }) {
-  return <Screen><Text style={styles.placeholderTitle}>{title}</Text></Screen>;
-}
-
 type AuthenticatedRouteProps = {
   server: ServerConfig;
   user: User;
+  onSessionChanged?: () => void;
 };
 
 function AuthenticatedApi({ server, user }: AuthenticatedRouteProps) {
@@ -134,20 +134,57 @@ function GalleryTab({ server, user }: AuthenticatedRouteProps) {
   );
 }
 
-function MainTabNavigator({ server, user }: AuthenticatedRouteProps) {
-  const { t } = useTranslation();
+function MainTabNavigator({ server, user, onSessionChanged }: AuthenticatedRouteProps) {
   return (
     <MainTabs.Navigator screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.accent }}>
       <MainTabs.Screen name="Gallery">
         {() => <GalleryTab server={server} user={user} />}
       </MainTabs.Screen>
       <MainTabs.Screen name="Upload">
-        {() => <PlaceholderScreen title={t('tabs.upload')} />}
+        {() => <UploadTab server={server} user={user} />}
       </MainTabs.Screen>
       <MainTabs.Screen name="Settings">
-        {() => <PlaceholderScreen title={t('tabs.settings')} />}
+        {() => <SettingsTab server={server} user={user} onSessionChanged={onSessionChanged} />}
       </MainTabs.Screen>
     </MainTabs.Navigator>
+  );
+}
+
+function SettingsTab({ server, user, onSessionChanged }: AuthenticatedRouteProps) {
+  const api = AuthenticatedApi({ server, user });
+  const queryClient = useQueryClient();
+  const [lanRangesOpen, setLanRangesOpen] = useState(false);
+  if (lanRangesOpen) {
+    return <LanRangesScreen store={connectionStore} onDone={() => setLanRangesOpen(false)} />;
+  }
+  return (
+    <SettingsScreen
+      store={connectionStore}
+      server={server}
+      user={user}
+      api={api}
+      queryClient={queryClient}
+      onOpenLanRanges={() => setLanRangesOpen(true)}
+      onLogout={async () => {
+        await api.logout();
+        onSessionChanged?.();
+      }}
+    />
+  );
+}
+
+function UploadTab({ server, user }: AuthenticatedRouteProps) {
+  const api = AuthenticatedApi({ server, user });
+  const concurrency = connectionStore((state) => state.uploadConcurrency);
+  const cellularUploadEnabled = connectionStore((state) => state.cellularUploadEnabled);
+  return (
+    <UploadScreen
+      api={api}
+      server={server}
+      user={user}
+      concurrency={concurrency}
+      cellularUploadEnabled={cellularUploadEnabled}
+    />
   );
 }
 
@@ -190,7 +227,6 @@ function LoginRoute({ server, reload }: { server: ServerConfig; reload: () => vo
 }
 
 export function RootNavigator() {
-  const { t } = useTranslation();
   const { state, reload } = useBoot();
   return (
     <NavigationContainer>
@@ -206,7 +242,7 @@ export function RootNavigator() {
         ) : null}
         {state.status === 'authenticated' ? (
           <RootStack.Screen name="Main">
-            {() => <MainTabNavigator server={state.server} user={state.user} />}
+            {() => <MainTabNavigator server={state.server} user={state.user} onSessionChanged={reload} />}
           </RootStack.Screen>
         ) : null}
         {state.status === 'authenticated' ? (
@@ -220,7 +256,6 @@ export function RootNavigator() {
 }
 
 const styles = StyleSheet.create({
-  placeholderTitle: { color: colors.ink, fontSize: 28, fontWeight: '800' },
   galleryRoot: { flex: 1, backgroundColor: colors.background },
   gallerySwitcher: {
     flexDirection: 'row',

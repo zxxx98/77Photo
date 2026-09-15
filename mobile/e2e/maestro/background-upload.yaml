@@ -1,0 +1,19 @@
+appId: com.photo77
+---
+- launchApp:
+- tapOn: "上传"
+- tapOn: "选择照片或视频"
+- tapOn: "选择目标文件夹"
+- tapOn: "开始上传"
+- pressKey: HOME
+- swipe:
+    start: 50%, 0%
+    end: 50%, 80%
+- assertVisible: "Uploading"
+- tapOn: "Pause"
+- tapOn: "Resume"
+- pressKey: BACK
+- tapOn: "上传"
+- extendedWaitUntil:
+    visible: "已完成"
+    timeout: 30000

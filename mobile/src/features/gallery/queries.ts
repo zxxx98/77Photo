@@ -1,4 +1,4 @@
-import { useInfiniteQuery, type QueryFunctionContext } from '@tanstack/react-query';
+import type { QueryFunctionContext } from '@tanstack/react-query';
 
 import {
   ApiError,
@@ -91,7 +91,8 @@ export async function fetchPhotoPage(
     if (!options.cursor || !(error instanceof ApiError) || error.code !== 'CURSOR_EXPIRED') {
       throw error;
     }
-    const { cursor: _expiredCursor, ...firstPageOptions } = options;
+    const firstPageOptions = { ...options };
+    delete firstPageOptions.cursor;
     return api.listPhotos(firstPageOptions);
   }
 }

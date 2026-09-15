@@ -13,6 +13,10 @@
 | arm64 容器启动或实机验收 | ☐ | 设备型号、镜像摘要和 `/healthz` |
 | 375/768/1440 px 响应式与键盘焦点 | ☐ | 浏览器截图或 e2e 记录 |
 | 1 万/10 万索引性能 | ☐ | `artifacts/performance/*.json` 与 `/usr/bin/time -v` |
+| Android 12 登录、图库、查看器 | ☐ | `cd mobile && maestro test e2e/maestro/login-gallery.yaml` |
+| Android 12+ Photo Picker 后台上传与通知动作 | ☐ | `cd mobile && maestro test e2e/maestro/background-upload.yaml` |
+| Android LAN HTTP 警告与公网 HTTP 阻断 | ☐ | `cd mobile && maestro test e2e/maestro/lan-http.yaml` |
+| Android 13+ 通知拒绝、电池优化和前台服务超时 | ☐ | 真机/模拟器记录；通知权限拒绝时确认页面提示，恢复后确认队列不丢失 |
 
 发布阻断项包括：任何越权响应、原图丢失或覆盖、备份无法恢复、数据库完整性检查失败、镜像无法启动、或未标记的实机性能缺口。
 
@@ -29,3 +33,4 @@
 | 1 万/10 万索引基准 | 已完成 | ARM64 Oracle Neoverse-N1 主机；结果详见 `docs/operations/performance.md` |
 | Docker 镜像/Compose 启动与备份恢复 | 未完成 | 当前 Docker daemon socket 返回 permission denied |
 | 浏览器视口、键盘焦点与 NanoPi R5S 负载 | 未完成 | 当前环境没有目标浏览器记录或 NanoPi R5S 实机 |
+| Android 12/13/当前稳定版设备矩阵 | 未完成 | 当前环境没有 Android 模拟器、通知栏或目标真机；发布前按 Android 客户端文档执行 |
