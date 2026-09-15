@@ -105,5 +105,98 @@ func TestDeleteRetainsPhotosOwnerAsTombstoneAndRevokesSessions(t *testing.T) {
 	}
 }
 
+func TestDisableUserRevokesOnlyThatUsersMobileSession(t *testing.T) {
+	service, authService, admin := newUserService(t)
+	ctx := context.Background()
+	target, err := service.Create(ctx, admin, CreateInput{Username: "alice", Password: "alice's secure password", Role: acl.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := service.Create(ctx, admin, CreateInput{Username: "bob", Password: "bob's secure password", Role: acl.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mobile, err := authService.CreateMobileSession(ctx, target.ID, auth.MobileDeviceInput{Name: "Alice phone", Platform: "android", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherMobile, err := authService.CreateMobileSession(ctx, other.ID, auth.MobileDeviceInput{Name: "Bob phone", Platform: "ios", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.Update(ctx, admin, target.ID, UpdateInput{IsActive: boolPtr(false)}); err != nil {
+		t.Fatalf("Update(disable) error = %v", err)
+	}
+	if _, err := authService.CurrentBearer(ctx, mobile.AccessToken); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("CurrentBearer(disabled user) error = %v, want ErrUnauthorized", err)
+	}
+	if _, err := authService.CurrentBearer(ctx, otherMobile.AccessToken); err != nil {
+		t.Fatalf("CurrentBearer(other user) error = %v, want nil", err)
+	}
+}
+
+func TestDeleteUserRevokesOnlyThatUsersMobileSession(t *testing.T) {
+	service, authService, admin := newUserService(t)
+	ctx := context.Background()
+	target, err := service.Create(ctx, admin, CreateInput{Username: "alice", Password: "alice's secure password", Role: acl.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := service.Create(ctx, admin, CreateInput{Username: "bob", Password: "bob's secure password", Role: acl.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mobile, err := authService.CreateMobileSession(ctx, target.ID, auth.MobileDeviceInput{Name: "Alice phone", Platform: "android", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherMobile, err := authService.CreateMobileSession(ctx, other.ID, auth.MobileDeviceInput{Name: "Bob phone", Platform: "ios", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.Delete(ctx, admin, target.ID, DeleteInput{}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if _, err := authService.CurrentBearer(ctx, mobile.AccessToken); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("CurrentBearer(deleted user) error = %v, want ErrUnauthorized", err)
+	}
+	if _, err := authService.CurrentBearer(ctx, otherMobile.AccessToken); err != nil {
+		t.Fatalf("CurrentBearer(other user) error = %v, want nil", err)
+	}
+}
+
+func TestChangePasswordRevokesOnlyThatUsersMobileSession(t *testing.T) {
+	service, authService, admin := newUserService(t)
+	ctx := context.Background()
+	target, err := service.Create(ctx, admin, CreateInput{Username: "alice", Password: "alice's secure password", Role: acl.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := service.Create(ctx, admin, CreateInput{Username: "bob", Password: "bob's secure password", Role: acl.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mobile, err := authService.CreateMobileSession(ctx, target.ID, auth.MobileDeviceInput{Name: "Alice phone", Platform: "android", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherMobile, err := authService.CreateMobileSession(ctx, other.ID, auth.MobileDeviceInput{Name: "Bob phone", Platform: "ios", AppVersion: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.Update(ctx, admin, target.ID, UpdateInput{Password: stringPtr("alice's new secure password")}); err != nil {
+		t.Fatalf("Update(password) error = %v", err)
+	}
+	if _, err := authService.CurrentBearer(ctx, mobile.AccessToken); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("CurrentBearer(password-changed user) error = %v, want ErrUnauthorized", err)
+	}
+	if _, err := authService.CurrentBearer(ctx, otherMobile.AccessToken); err != nil {
+		t.Fatalf("CurrentBearer(other user) error = %v, want nil", err)
+	}
+}
+
 func boolPtr(value bool) *bool       { return &value }
 func stringPtr(value string) *string { return &value }

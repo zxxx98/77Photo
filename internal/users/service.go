@@ -183,6 +183,11 @@ func (s *Service) Update(ctx context.Context, principal acl.Principal, id string
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return auth.Account{}, ErrUserNotFound
 	}
+	if input.Password != nil || (input.IsActive != nil && !*input.IsActive) {
+		if err := s.auth.RevokeMobileSessionsForUserTx(ctx, tx, id); err != nil {
+			return auth.Account{}, fmt.Errorf("revoke user mobile sessions: %w", err)
+		}
+	}
 	if input.IsActive != nil && !*input.IsActive {
 		if _, err := tx.ExecContext(ctx, "UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", formatTime(time.Now().UTC()), id); err != nil {
 			return auth.Account{}, fmt.Errorf("revoke disabled user sessions: %w", err)
@@ -234,6 +239,11 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 		if err := tx.QueryRowContext(ctx, "SELECT is_active FROM users WHERE id=? AND deleted_at IS NULL", input.TransferToUserID).Scan(&targetActive); err != nil || targetActive != 1 {
 			return ErrTransferInvalid
 		}
+	}
+	if err := s.auth.RevokeMobileSessionsForUserTx(ctx, tx, id); err != nil {
+		return fmt.Errorf("revoke deleted user mobile sessions: %w", err)
+	}
+	if input.PhotoAction == "transfer" {
 		// T09 moves the corresponding filesystem roots atomically. Ownership is
 		// changed here so the index never grants the deleted user access again.
 		if _, err := tx.ExecContext(ctx, "UPDATE folders SET owner_id=?, updated_at=? WHERE owner_id=?", input.TransferToUserID, now, id); err != nil {

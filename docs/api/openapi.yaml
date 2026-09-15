@@ -6,7 +6,11 @@ info:
     V1 REST API for the filesystem-first 77Photo family photo service.
     All application endpoints use JSON unless stated otherwise. Timestamps are
     RFC 3339 UTC strings. The API never accepts a server filesystem path from a
-    client; resources are addressed by opaque IDs.
+    client; resources are addressed by opaque IDs. Authenticated application
+    endpoints accept either cookieAuth or bearerAuth. Cookie-authenticated
+    writes require X-CSRF-Token; Bearer clients must not send browser CSRF
+    tokens. Mobile login and refresh return tokens in JSON and never set
+    browser cookies.
 servers:
   - url: /
     description: Same-origin deployment
@@ -14,6 +18,7 @@ tags:
   - name: health
   - name: setup
   - name: auth
+  - name: mobile
   - name: users
   - name: folders
   - name: photos
@@ -139,7 +144,7 @@ paths:
       tags: [auth]
       summary: Revoke the current session
       operationId: logout
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       responses:
@@ -152,7 +157,7 @@ paths:
       tags: [auth]
       summary: Return the current account
       operationId: me
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       responses:
         '200':
           description: Current user
@@ -164,12 +169,113 @@ paths:
               schema: { $ref: '#/components/schemas/User' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /api/v1/mobile/auth/login:
+    post:
+      tags: [mobile]
+      summary: Start a mobile token session
+      description: |
+        Authenticates a mobile client and registers the supplied device. The
+        response contains opaque access and refresh tokens. This endpoint never
+        sets browser cookies; mobile clients should store tokens in platform
+        secure storage.
+      operationId: mobileLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MobileLoginRequest' }
+      responses:
+        '200':
+          description: Mobile tokens and the registered device
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MobileSessionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422':
+          description: Credentials or device fields do not satisfy policy
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '429':
+          description: Login rate limit exceeded
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/mobile/auth/refresh:
+    post:
+      tags: [mobile]
+      summary: Rotate mobile access and refresh tokens
+      description: |
+        Rotates a refresh-token family and returns replacement tokens. This
+        endpoint never sets browser cookies; mobile clients should replace the
+        stored token pair atomically.
+      operationId: mobileRefresh
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MobileRefreshRequest' }
+      responses:
+        '200':
+          description: Rotated mobile tokens and the registered device
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MobileSessionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/mobile/auth/logout:
+    post:
+      tags: [mobile]
+      summary: Revoke the current mobile device
+      description: Revokes the current device and its mobile token family. Bearer clients must not send browser CSRF tokens.
+      operationId: mobileLogout
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Mobile device and its tokens revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/mobile/devices:
+    get:
+      tags: [mobile]
+      summary: List the current user's mobile devices
+      description: Returns devices registered to the account identified by the Bearer token, including revoked devices.
+      operationId: listMobileDevices
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Registered mobile devices
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/MobileDevice' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/mobile/devices/{id}:
+    parameters:
+      - $ref: '#/components/parameters/MobileDeviceID'
+    delete:
+      tags: [mobile]
+      summary: Revoke a mobile device
+      description: Revokes the selected device and all of its mobile tokens. Bearer clients must not send browser CSRF tokens.
+      operationId: revokeMobileDevice
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Mobile device and its tokens revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/users:
     get:
       tags: [users]
       summary: List users
       operationId: listUsers
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       responses:
         '200':
           description: Users without password hashes or session secrets
@@ -188,7 +294,7 @@ paths:
       tags: [users]
       summary: Create a user
       operationId: createUser
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       requestBody:
@@ -215,7 +321,7 @@ paths:
       tags: [users]
       summary: Update username, role, password or active state
       operationId: updateUser
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       requestBody:
@@ -237,7 +343,7 @@ paths:
       tags: [users]
       summary: Delete a user while retaining or transferring their photos
       operationId: deleteUser
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       requestBody:
@@ -262,7 +368,7 @@ paths:
       tags: [folders]
       summary: List folders visible to the current user
       operationId: listFolders
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/ParentFolderID'
       responses:
@@ -282,7 +388,7 @@ paths:
       tags: [folders]
       summary: Create a folder
       operationId: createFolder
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       requestBody:
@@ -307,7 +413,7 @@ paths:
       tags: [folders]
       summary: Get folder details
       operationId: getFolder
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       responses:
         '200':
           description: Folder details and visible child counts
@@ -319,7 +425,7 @@ paths:
       tags: [folders]
       summary: Rename a folder
       operationId: renameFolder
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       requestBody:
@@ -338,7 +444,7 @@ paths:
       tags: [folders]
       summary: Permanently delete an empty folder
       operationId: deleteFolder
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       responses:
@@ -361,7 +467,7 @@ paths:
       tags: [folders]
       summary: Move a folder within an authorized tree
       operationId: moveFolder
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/FolderID'
         - $ref: '#/components/parameters/CSRFHeader'
@@ -383,7 +489,7 @@ paths:
       tags: [photos]
       summary: List photos with stable cursor pagination
       operationId: listPhotos
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/FolderFilter'
         - $ref: '#/components/parameters/FromFilter'
@@ -410,12 +516,12 @@ paths:
                   message: cursor expired; restart pagination without cursor
                   request_id: req_01JABC
 
-  /api/v1/photos/shared/{folderId}/:
+  /api/v1/photos/shared/{folderId}:
     get:
       tags: [photos]
       summary: List photos in a shared folder subtree
       operationId: listSharedPhotos
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/SharedFolderID'
         - $ref: '#/components/parameters/Cursor'
@@ -438,7 +544,7 @@ paths:
         the body to a temporary file, validates content, fsyncs and atomically
         renames it before creating the index row.
       operationId: uploadPhoto
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       requestBody:
@@ -491,7 +597,7 @@ paths:
       tags: [photos]
       summary: Get photo metadata
       operationId: getPhoto
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       responses:
         '200':
           description: Photo metadata; no media bytes are included
@@ -503,7 +609,7 @@ paths:
       tags: [photos]
       summary: Rename a photo
       operationId: renamePhoto
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       requestBody:
@@ -520,7 +626,7 @@ paths:
       tags: [photos]
       summary: Permanently delete a photo after explicit confirmation
       operationId: deletePhoto
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
         - name: confirm
@@ -542,7 +648,7 @@ paths:
       tags: [photos]
       summary: Move a photo to another authorized folder
       operationId: movePhoto
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/PhotoID'
         - $ref: '#/components/parameters/CSRFHeader'
@@ -562,7 +668,7 @@ paths:
       tags: [photos]
       summary: Read or queue a WebP thumbnail
       operationId: getThumbnail
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/PhotoID'
         - name: size
@@ -588,7 +694,7 @@ paths:
       tags: [photos]
       summary: Read the 1280px preview or an original video stream
       operationId: getPreview
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/PhotoID'
       responses:
@@ -619,7 +725,7 @@ paths:
       tags: [photos]
       summary: Download the original file
       operationId: getOriginal
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/PhotoID'
         - name: Range
@@ -657,7 +763,7 @@ paths:
         in plaintext by the server. A password is optional. Duration is one of
         1_day, 7_days, or forever.
       operationId: createShareLink
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       requestBody:
@@ -764,7 +870,7 @@ paths:
       tags: [shares]
       summary: Legacy member ACL shares (no longer shown in the Web UI)
       operationId: listShares
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       responses:
         '200':
           description: Share records without secrets
@@ -782,7 +888,7 @@ paths:
       tags: [shares]
       summary: Legacy member ACL share (no longer shown in the Web UI)
       operationId: createShare
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       requestBody:
@@ -803,7 +909,7 @@ paths:
       tags: [shares]
       summary: Revoke a legacy member ACL share
       operationId: revokeShare
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - name: id
           in: path
@@ -821,7 +927,7 @@ paths:
       tags: [admin]
       summary: Start a filesystem rescan
       operationId: startRescan
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/CSRFHeader'
       responses:
@@ -839,7 +945,7 @@ paths:
       tags: [admin]
       summary: Get rescan progress and result
       operationId: getRescan
-      security: [{ sessionCookie: [] }]
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - name: jobId
           in: path
@@ -855,11 +961,16 @@ paths:
 
 components:
   securitySchemes:
-    sessionCookie:
+    cookieAuth:
       type: apiKey
       in: cookie
       name: 77photo_session
       description: HttpOnly server-side session cookie; never store in localStorage.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Opaque short-lived mobile access token. Store it only in platform secure storage.
   headers:
     SessionCookie:
       schema: { type: string }
@@ -877,8 +988,14 @@ components:
     CSRFHeader:
       name: X-CSRF-Token
       in: header
-      required: true
+      required: false
       schema: { type: string, minLength: 16 }
+      description: Required for cookieAuth writes; Bearer clients must not send browser CSRF tokens.
+    MobileDeviceID:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ID' }
     UserID:
       name: id
       in: path
@@ -960,10 +1077,10 @@ components:
       description: Caller has no read permission for this resource
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
     CSRFForbidden:
-      description: Missing or invalid CSRF token
+      description: Missing or invalid CSRF token on a cookie-authenticated write; Bearer requests do not use browser CSRF tokens.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
     AdminOrCSRFForbidden:
-      description: Caller is not an administrator or CSRF token is invalid
+      description: Caller is not an administrator, or a cookie-authenticated write has a missing or invalid CSRF token. Bearer requests do not use browser CSRF tokens.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
     ShareManageForbidden:
       description: Caller does not own the folder and is not an administrator
@@ -1023,6 +1140,48 @@ components:
       properties:
         username: { type: string, minLength: 1, maxLength: 64 }
         password: { type: string, minLength: 1, maxLength: 256, format: password }
+    MobileLoginRequest:
+      type: object
+      required: [username, password, device_name, platform, app_version]
+      additionalProperties: false
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 12, maxLength: 256, format: password }
+        device_name: { type: string, minLength: 1, maxLength: 128 }
+        platform: { type: string, enum: [android, ios] }
+        app_version: { type: string, minLength: 1, maxLength: 64 }
+    MobileRefreshRequest:
+      type: object
+      required: [refresh_token]
+      additionalProperties: false
+      properties:
+        refresh_token: { type: string, minLength: 1 }
+    MobileSessionResponse:
+      type: object
+      required: [access_token, access_token_expires_at, refresh_token, refresh_token_expires_at, device, user]
+      properties:
+        access_token: { type: string }
+        access_token_expires_at: { type: string, format: date-time }
+        refresh_token: { type: string }
+        refresh_token_expires_at: { type: string, format: date-time }
+        device: { $ref: '#/components/schemas/MobileDevice' }
+        user: { $ref: '#/components/schemas/User' }
+    MobileDevice:
+      type: object
+      required: [id, user_id, name, platform, app_version, created_at, last_seen_at]
+      properties:
+        id: { $ref: '#/components/schemas/ID' }
+        user_id: { $ref: '#/components/schemas/ID' }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        platform: { type: string, enum: [android, ios] }
+        app_version: { type: string, minLength: 1, maxLength: 64 }
+        created_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        revoked_at:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: 'null'
     AuthResponse:
       type: object
       required: [user, csrf_token]
