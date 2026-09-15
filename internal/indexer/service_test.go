@@ -137,6 +137,75 @@ func TestRescanDiscoversFilesystemFolders(t *testing.T) {
 	}
 }
 
+func TestRescanMarksMissingWithoutDeadlock(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := folders.NewService(db, store).Create(ctx, principal, folders.CreateInput{Name: "imports"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.ResolvePath(filepath.Join(folder.StoragePath, "missing.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jpeg.Encode(file, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	photoService := photos.NewService(db, store, 1<<20)
+	service := NewService(db, store, photoService)
+	job, err := service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	job, err = service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+
+	finished, err := service.Get(ctx, principal, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Counts.Missing != 1 {
+		t.Fatalf("missing count = %d, want 1", finished.Counts.Missing)
+	}
+	var status string
+	if err := db.QueryRowContext(ctx, "SELECT scan_status FROM photos WHERE storage_path=?", filepath.ToSlash(filepath.Join(folder.StoragePath, "missing.jpg"))).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "missing" {
+		t.Fatalf("scan status = %q, want missing", status)
+	}
+}
+
 func TestRescanDiscoversManagedSharedRoot(t *testing.T) {
 	ctx := context.Background()
 	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
