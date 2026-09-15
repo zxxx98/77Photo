@@ -2,8 +2,10 @@ services:
   77photo:
     image: ghcr.io/zxxx98/77photo:latest
     restart: unless-stopped
+    # The bind-mounted host directories may be owned by root.
+    user: "0:0"
     ports:
-      - "8080:8080"
+      - "20001:8080"
     environment:
       PHOTO_DATA_DIR: /data/photos
       PHOTO_CACHE_DIR: /data/cache
@@ -12,7 +14,9 @@ services:
       PHOTO_THUMBNAIL_WORKERS: "1"
       PHOTO_MAX_UPLOAD_SIZE: "10737418240"
       PHOTO_SESSION_TTL: 720h
-      PHOTO_COOKIE_SECURE: "true"
+      # This compose file is exposed directly over HTTP on port 20001. Set
+      # this to "true" only when an HTTPS reverse proxy fronts the service.
+      PHOTO_COOKIE_SECURE: "false"
     volumes:
       # Original photos and videos: HDD
       - /mnt/disk2/data/77Photo:/data/photos
