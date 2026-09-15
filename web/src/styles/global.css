@@ -229,6 +229,13 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
 .upload-row-copy small { margin-top: 4px; color: var(--slate-soft); font-size: 11px; }
 .progress-track { height: 3px; margin-top: 7px; overflow: hidden; border-radius: 3px; background: var(--slate-faint); }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--sage); transition: width .2s ease; }
+.scan-progress { display: grid; gap: 10px; margin: 22px 0 0; }
+.scan-progress-heading { display: flex; align-items: center; justify-content: space-between; color: var(--slate-soft); font-size: 12px; }
+.scan-progress-track { margin-top: 0; }
+.scan-progress-track.is-active span { width: 34%; animation: scan-progress 1.4s ease-in-out infinite; }
+.scan-progress-track span.is-complete { width: 100%; }
+.scan-progress-counts { display: flex; flex-wrap: wrap; gap: 7px 16px; color: var(--slate-soft); font-size: 11px; }
+@keyframes scan-progress { 0% { transform: translateX(-125%); } 50% { transform: translateX(115%); } 100% { transform: translateX(290%); } }
 .success-icon { color: #6f9a87; }
 .error-icon { color: #a96c6c; }
 .share-dialog-scrim { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(35, 43, 53, .48); }
