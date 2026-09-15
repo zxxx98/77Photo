@@ -37,15 +37,16 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) start(w http.ResponseWriter, r *http.Request) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid")
 		return
 	}
+	account := authenticated.Account
 	job, err := h.service.Start(r.Context(), acl.Principal{UserID: account.ID, Role: account.Role})
 	if err != nil {
 		h.writeServiceError(w, r, err)
@@ -55,11 +56,12 @@ func (h *HTTPHandler) start(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request, id string) {
-	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
 		return
 	}
+	account := authenticated.Account
 	job, err := h.service.Get(r.Context(), acl.Principal{UserID: account.ID, Role: account.Role}, id)
 	if err != nil {
 		h.writeServiceError(w, r, err)
@@ -73,7 +75,12 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 	case errors.Is(err, ErrForbidden):
 		writeError(w, r, http.StatusForbidden, "ADMIN_REQUIRED", "administrator access is required")
 	case errors.Is(err, ErrConflict):
-		writeError(w, r, http.StatusConflict, "RESCAN_IN_PROGRESS", "another rescan is already queued or running")
+		var conflict *ConflictError
+		var details map[string]any
+		if errors.As(err, &conflict) && conflict.JobID != "" {
+			details = map[string]any{"job_id": conflict.JobID}
+		}
+		writeErrorWithDetails(w, r, http.StatusConflict, "RESCAN_IN_PROGRESS", "another rescan is already queued or running", details)
 	case errors.Is(err, ErrNotFound):
 		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "rescan job not found")
 	default:
@@ -82,11 +89,19 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	writeErrorWithDetails(w, r, status, code, message, nil)
+}
+
+func writeErrorWithDetails(w http.ResponseWriter, r *http.Request, status int, code, message string, details map[string]any) {
 	requestID := r.Header.Get("X-Request-ID")
 	if requestID == "" {
 		requestID = "request-id-missing"
 	}
-	writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": requestID}})
+	errorPayload := map[string]any{"code": code, "message": message, "request_id": requestID}
+	if details != nil {
+		errorPayload["details"] = details
+	}
+	writeJSON(w, status, map[string]any{"error": errorPayload})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

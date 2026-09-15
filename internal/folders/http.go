@@ -70,11 +70,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
-	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
+	account := authenticated.Account
 	var parentID *string
 	if value := strings.TrimSpace(r.URL.Query().Get("parent_id")); value != "" {
 		parentID = &value
@@ -88,15 +89,16 @@ func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) create(w http.ResponseWriter, r *http.Request) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	var input CreateInput
 	if !decodeBody(w, r, &input) {
 		return
@@ -110,11 +112,12 @@ func (h *HTTPHandler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request, id string) {
-	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
+	account := authenticated.Account
 	folder, err := h.service.Get(r.Context(), principal(account), id)
 	if err != nil {
 		h.writeServiceError(w, r, err)
@@ -124,15 +127,16 @@ func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (h *HTTPHandler) rename(w http.ResponseWriter, r *http.Request, id string) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	var input RenameInput
 	if !decodeBody(w, r, &input) {
 		return
@@ -146,15 +150,16 @@ func (h *HTTPHandler) rename(w http.ResponseWriter, r *http.Request, id string) 
 }
 
 func (h *HTTPHandler) move(w http.ResponseWriter, r *http.Request, id string) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	var input struct {
 		TargetFolderID string `json:"target_folder_id"`
 		Conflict       string `json:"conflict"`
@@ -174,15 +179,16 @@ func (h *HTTPHandler) move(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (h *HTTPHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	if err := h.service.Delete(r.Context(), principal(account), id); err != nil {
 		h.writeServiceError(w, r, err)
 		return

@@ -60,18 +60,12 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		healthz(w, r, checks)
 	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if services.Static != nil && !strings.HasPrefix(r.URL.Path, "/api/") {
-			services.Static.ServeHTTP(w, r)
-			return
-		}
-		WriteError(w, http.StatusNotFound, "NOT_FOUND", "route not found", RequestID(r.Context()), nil)
-	})
 	if services.Auth != nil {
 		authHandler := auth.NewHTTPHandler(services.Auth, services.SecureCookies)
 		mux.Handle("/api/v1/setup/status", authHandler)
 		mux.Handle("/api/v1/setup/admin", authHandler)
 		mux.Handle("/api/v1/auth/", authHandler)
+		mux.Handle("/api/v1/mobile/", auth.NewMobileHTTPHandler(services.Auth))
 	}
 	if services.Auth != nil && services.Users != nil {
 		userHandler := users.NewHTTPHandler(services.Users, services.Auth)
@@ -103,6 +97,13 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 		mux.Handle("/api/v1/photos/", photoHandler)
 		mux.Handle("/api/v1/live-photos/", photos.NewLiveHTTPHandler(services.Photos, services.Auth))
 	}
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if services.Static != nil && !strings.HasPrefix(r.URL.Path, "/api/") {
+			services.Static.ServeHTTP(w, r)
+			return
+		}
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "route not found", RequestID(r.Context()), nil)
+	})
 	return requestIDMiddleware(loggingMiddleware(mux, logger))
 }
 
@@ -140,6 +141,7 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 		if id == "" {
 			id = newRequestID()
 		}
+		r.Header.Set("X-Request-ID", id)
 		ctx := context.WithValue(r.Context(), requestIDKey, id)
 		w.Header().Set("X-Request-ID", id)
 		next.ServeHTTP(w, r.WithContext(ctx))

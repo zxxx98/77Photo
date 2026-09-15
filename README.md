@@ -35,3 +35,20 @@ go run ./tests/performance -count 100000 -pages 20
 ```
 
 安全矩阵、故障演练和发布清单分别见 [security.md](docs/operations/security.md)、[performance.md](docs/operations/performance.md) 和 [acceptance.md](docs/operations/acceptance.md)。
+
+## Android 客户端
+
+Android 客户端支持 Android 12+，使用系统 Photo Picker 和加密的设备令牌；上传队列由 Room、前台 data-sync 服务和 WorkManager 共同维护。客户端配置、HTTPS/IP 证书要求、内网 HTTP 风险、通知权限、电池限制、故障恢复和设备撤销说明见 [Android 客户端运维文档](docs/operations/android-client.md)。
+
+本地检查：
+
+```bash
+cd mobile
+npm ci
+npm test -- --runInBand
+npm run typecheck
+npm run lint
+ANDROID_HOME=/home/ubuntu/Android/Sdk npm run android:assemble
+```
+
+生产 Android release 只应由 CI 使用受保护的 upload keystore 构建；不要把 keystore、密码或签名属性提交到仓库。

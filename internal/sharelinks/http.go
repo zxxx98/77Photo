@@ -69,15 +69,16 @@ func (h *HTTPHandler) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	var input CreateInput
 	if !decodeBody(w, r, &input) {
 		return

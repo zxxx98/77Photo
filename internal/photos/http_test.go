@@ -31,7 +31,11 @@ func TestHTTPMultipartUploadStreamsAndReturnsPhoto(t *testing.T) {
 	}
 	defer db.Close()
 	authService := auth.NewService(db, time.Hour, false)
-	admin, session, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mobile, err := authService.CreateMobileSession(ctx, admin.ID, auth.MobileDeviceInput{Name: "Pixel", Platform: "android", AppVersion: "1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,8 +51,7 @@ func TestHTTPMultipartUploadStreamsAndReturnsPhoto(t *testing.T) {
 	body, contentType := multipartUpload(t, folder.ID, "photo.jpg", jpegTestBytes(t))
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/photos/upload", body)
 	req.Header.Set("Content-Type", contentType)
-	req.Header.Set(auth.CSRFHeaderName(), session.CSRFToken)
-	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
+	req.Header.Set("Authorization", "Bearer "+mobile.AccessToken)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusCreated {
@@ -193,7 +196,7 @@ func TestHTTPListAndOriginalRangeUsePhotoACL(t *testing.T) {
 	rangeReq.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
 	rangeRes := httptest.NewRecorder()
 	handler.ServeHTTP(rangeRes, rangeReq)
-	if rangeRes.Code != http.StatusPartialContent || rangeRes.Header().Get("Content-Range") == "" || rangeRes.Header().Get("Vary") != "Cookie" || len(rangeRes.Body.Bytes()) != 5 {
+	if rangeRes.Code != http.StatusPartialContent || rangeRes.Header().Get("Content-Range") == "" || rangeRes.Header().Get("Vary") != "Cookie, Authorization" || len(rangeRes.Body.Bytes()) != 5 {
 		t.Fatalf("range response = %d headers=%v len=%d", rangeRes.Code, rangeRes.Header(), len(rangeRes.Body.Bytes()))
 	}
 }

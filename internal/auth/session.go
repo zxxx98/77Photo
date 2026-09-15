@@ -113,8 +113,20 @@ VALUES (?, ?, ?, ?, 1, ?, ?)`, account.ID, account.Username, hash, account.Role,
 }
 
 func (s *Service) Authenticate(ctx context.Context, username, password string) (Account, Session, error) {
+	account, err := s.AuthenticateAccount(ctx, username, password)
+	if err != nil {
+		return Account{}, Session{}, err
+	}
+	session, err := s.createSession(ctx, account.ID)
+	if err != nil {
+		return Account{}, Session{}, err
+	}
+	return account, session, nil
+}
+
+func (s *Service) AuthenticateAccount(ctx context.Context, username, password string) (Account, error) {
 	if !s.limiter.allow(username) {
-		return Account{}, Session{}, ErrRateLimited
+		return Account{}, ErrRateLimited
 	}
 	var account Account
 	var hash string
@@ -124,13 +136,16 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 	err := s.db.QueryRowContext(ctx, `SELECT id, username, password_hash, role, is_active, deleted_at, created_at, updated_at
 FROM users WHERE username = ? COLLATE NOCASE`, strings.TrimSpace(username)).Scan(&account.ID, &account.Username, &hash, &account.Role, &active, &deletedAt, &created, &updated)
 	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return Account{}, fmt.Errorf("load account for authentication: %w", err)
+		}
 		s.limiter.failure(username)
-		return Account{}, Session{}, ErrInvalidCredentials
+		return Account{}, ErrInvalidCredentials
 	}
 	ok, verifyErr := VerifyPassword(hash, password)
 	if verifyErr != nil || !ok || active == 0 || deletedAt.Valid {
 		s.limiter.failure(username)
-		return Account{}, Session{}, ErrInvalidCredentials
+		return Account{}, ErrInvalidCredentials
 	}
 	account.IsActive = true
 	account.CreatedAt, _ = parseTime(created)
@@ -140,11 +155,7 @@ FROM users WHERE username = ? COLLATE NOCASE`, strings.TrimSpace(username)).Scan
 		account.DeletedAt = &deleted
 	}
 	s.limiter.success(username)
-	session, err := s.createSession(ctx, account.ID)
-	if err != nil {
-		return Account{}, Session{}, err
-	}
-	return account, session, nil
+	return account, nil
 }
 
 func (s *Service) Current(ctx context.Context, token string) (Account, Session, error) {

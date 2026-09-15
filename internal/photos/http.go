@@ -133,11 +133,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
-	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
+	account := authenticated.Account
 	filter := ListFilter{Cursor: r.URL.Query().Get("cursor")}
 	if value := strings.TrimSpace(r.URL.Query().Get("folder_id")); value != "" {
 		filter.FolderID = &value
@@ -175,11 +176,12 @@ func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) listShared(w http.ResponseWriter, r *http.Request, folderID string) {
-	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
+	account := authenticated.Account
 	filter := ListFilter{Cursor: r.URL.Query().Get("cursor")}
 	filter.FolderID = &folderID
 	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
@@ -199,15 +201,16 @@ func (h *HTTPHandler) listShared(w http.ResponseWriter, r *http.Request, folderI
 }
 
 func (h *HTTPHandler) upload(w http.ResponseWriter, r *http.Request) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	reader, err := r.MultipartReader()
 	if err != nil {
 		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "multipart body is invalid", nil)
@@ -263,11 +266,12 @@ func (h *HTTPHandler) upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request, id string) {
-	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
+	account := authenticated.Account
 	photo, err := h.service.Get(r.Context(), principal(account), id)
 	if err != nil {
 		h.writeServiceError(w, r, err)
@@ -277,11 +281,12 @@ func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (h *HTTPHandler) thumbnail(w http.ResponseWriter, r *http.Request, id string) {
-	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
+	account := authenticated.Account
 	if h.thumbnails == nil {
 		writeError(w, r, http.StatusServiceUnavailable, "THUMBNAIL_UNAVAILABLE", "thumbnail service is unavailable", nil)
 		return
@@ -321,16 +326,17 @@ func (h *HTTPHandler) thumbnail(w http.ResponseWriter, r *http.Request, id strin
 	defer file.Close()
 	w.Header().Set("Content-Type", "image/webp")
 	w.Header().Set("Cache-Control", "private, max-age=60")
-	w.Header().Set("Vary", "Cookie")
+	w.Header().Set("Vary", "Cookie, Authorization")
 	http.ServeContent(w, r, filepath.Base(path), time.Time{}, file)
 }
 
 func (h *HTTPHandler) preview(w http.ResponseWriter, r *http.Request, id string) {
-	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
+	account := authenticated.Account
 	photo, err := h.service.Get(r.Context(), principal(account), id)
 	if err != nil {
 		h.writeServiceError(w, r, err)
@@ -369,16 +375,17 @@ func (h *HTTPHandler) preview(w http.ResponseWriter, r *http.Request, id string)
 	defer file.Close()
 	w.Header().Set("Content-Type", "image/webp")
 	w.Header().Set("Cache-Control", "private, max-age=60")
-	w.Header().Set("Vary", "Cookie")
+	w.Header().Set("Vary", "Cookie, Authorization")
 	http.ServeContent(w, r, filepath.Base(path), time.Time{}, file)
 }
 
 func (h *HTTPHandler) original(w http.ResponseWriter, r *http.Request, id string) {
-	account, _, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
+	account := authenticated.Account
 	photo, err := h.service.Get(r.Context(), principal(account), id)
 	if err != nil {
 		h.writeServiceError(w, r, err)
@@ -406,7 +413,7 @@ func (h *HTTPHandler) serveOriginal(w http.ResponseWriter, r *http.Request, phot
 	w.Header().Set("Content-Type", photo.MIMEType)
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": photo.Filename}))
 	w.Header().Set("Cache-Control", cacheControl)
-	w.Header().Set("Vary", "Cookie")
+	w.Header().Set("Vary", "Cookie, Authorization")
 	http.ServeContent(w, r, photo.Filename, photoModTime(photo), file)
 }
 
@@ -418,15 +425,16 @@ func photoModTime(photo Photo) time.Time {
 }
 
 func (h *HTTPHandler) rename(w http.ResponseWriter, r *http.Request, id string) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	var input RenameInput
 	if !decodeBody(w, r, &input) {
 		return
@@ -440,15 +448,16 @@ func (h *HTTPHandler) rename(w http.ResponseWriter, r *http.Request, id string) 
 }
 
 func (h *HTTPHandler) move(w http.ResponseWriter, r *http.Request, id string) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	var input struct {
 		TargetFolderID string           `json:"target_folder_id"`
 		Conflict       ConflictStrategy `json:"conflict"`
@@ -468,15 +477,16 @@ func (h *HTTPHandler) move(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (h *HTTPHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
-	account, session, _, err := h.authService.AuthenticateRequest(r.Context(), r)
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 		return
 	}
-	if err := h.authService.ValidateCSRF(session, r.Header.Get(auth.CSRFHeaderName())); err != nil {
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	account := authenticated.Account
 	confirmed, err := strconv.ParseBool(r.URL.Query().Get("confirm"))
 	if err != nil {
 		confirmed = false

@@ -15,7 +15,7 @@
 - 手机、平板与桌面 Web 自适应
 - 文件夹与照片的只读公开链接
 
-项目优先面向 NanoPi R5S、树莓派、小型 ARM64 NAS、低配 x86 家庭服务器等设备。
+项目优先面向 NanoPi R5S、树莓派、小型 ARM64 NAS 和低配家庭服务器等设备。
 
 核心原则：
 
@@ -886,7 +886,6 @@ V1 不需要全局自动去重。
 
 发布：
 
-- linux-amd64
 - linux-arm64
 
 Go 二进制内嵌 Web 静态资源。
@@ -1021,7 +1020,6 @@ V1 完成标准：
 
 - [ ] Docker image
 - [ ] linux-arm64 build
-- [ ] linux-amd64 build
 - [ ] health check
 - [ ] 基础日志
 - [ ] 手动 rescan

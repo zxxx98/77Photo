@@ -24,19 +24,21 @@ func TestHTTPRescanRequiresAdminAndReturnsJob(t *testing.T) {
 	}
 	defer db.Close()
 	authService := auth.NewService(db, time.Hour, false)
-	admin, session, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = admin
+	mobile, err := authService.CreateMobileSession(ctx, admin.ID, auth.MobileDeviceInput{Name: "Pixel", Platform: "android", AppVersion: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler := NewHTTPHandler(NewService(db, store, photos.NewService(db, store, 1<<20)), authService)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/rescan", strings.NewReader("{}"))
-	req.Header.Set(auth.CSRFHeaderName(), session.CSRFToken)
-	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
+	req.Header.Set("Authorization", "Bearer "+mobile.AccessToken)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusAccepted {
@@ -45,5 +47,24 @@ func TestHTTPRescanRequiresAdminAndReturnsJob(t *testing.T) {
 	var job Job
 	if err := json.NewDecoder(res.Body).Decode(&job); err != nil || job.ID == "" {
 		t.Fatalf("job = %+v err=%v", job, err)
+	}
+}
+
+func TestHTTPRescanConflictIncludesExistingJobID(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/rescan", nil)
+	response := httptest.NewRecorder()
+
+	(&HTTPHandler{}).writeServiceError(response, request, &ConflictError{JobID: "job-1"})
+
+	var payload struct {
+		Error struct {
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.Error.Details["job_id"]; got != "job-1" {
+		t.Fatalf("job_id = %#v, want job-1", got)
 	}
 }

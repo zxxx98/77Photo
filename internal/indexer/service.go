@@ -33,6 +33,14 @@ var (
 	ErrNotFound  = errors.New("rescan job not found")
 )
 
+type ConflictError struct {
+	JobID string
+}
+
+func (e *ConflictError) Error() string { return ErrConflict.Error() }
+
+func (e *ConflictError) Unwrap() error { return ErrConflict }
+
 type Counts struct {
 	Scanned int `json:"scanned"`
 	Added   int `json:"added"`
@@ -86,8 +94,9 @@ func (s *Service) Start(ctx context.Context, principal acl.Principal) (Job, erro
 	}
 	s.mu.Lock()
 	if s.job != nil && (s.job.Status == StatusQueued || s.job.Status == StatusRunning) {
+		jobID := s.job.ID
 		s.mu.Unlock()
-		return Job{}, ErrConflict
+		return Job{}, &ConflictError{JobID: jobID}
 	}
 	now := time.Now().UTC()
 	job := &Job{ID: newJobID(), Status: StatusQueued, StartedAt: now}

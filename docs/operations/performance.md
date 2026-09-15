@@ -2,7 +2,7 @@
 
 `tests/performance` 提供可重复的索引查询基准。它生成固定时间分布、单用户单文件夹的 SQLite 索引，不创建图片文件，因此结果表示数据库与游标分页成本；缩略图解码应单独测量。
 
-在 x86 或 ARM64 主机上运行建议数据集：
+在 ARM64 主机上运行建议数据集：
 
 ```bash
 mkdir -p artifacts/performance

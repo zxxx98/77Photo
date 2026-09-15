@@ -1,0 +1,21 @@
+appId: com.photo77
+---
+- launchApp:
+    clearState: true
+- tapOn: "服务器地址"
+- inputText: "http://192.168.1.10:8080"
+- tapOn: "显示名称"
+- inputText: "家庭图库"
+- tapOn: "添加服务器"
+- extendedWaitUntil:
+    visible: "内网未加密"
+    timeout: 10000
+- tapOn: "确认在内网使用未加密 HTTP"
+- launchApp:
+    clearState: true
+- tapOn: "服务器地址"
+- inputText: "http://8.8.8.8"
+- tapOn: "显示名称"
+- inputText: "公网地址"
+- tapOn: "添加服务器"
+- assertVisible: "请输入有效且允许的服务器地址"

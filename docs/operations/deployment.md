@@ -28,6 +28,6 @@ photos.example.test {
 | `PHOTO_SESSION_TTL` | `720h` | Session 有效期 |
 | `PHOTO_COOKIE_SECURE` | `true`（容器） | HTTPS 环境保持 true；本地 HTTP 开发可设 false |
 
-发布镜像由 `.github/workflows/release.yml` 在 `vMAJOR.MINOR.PATCH` 标签上构建并推送 `linux/amd64` 与 `linux/arm64` 多架构镜像，同时上传带嵌入 Web 资源的 CGO-free 二进制。二进制运行时需要能写入配置的照片、缓存和数据库目录；不依赖 libvips 或系统图像库。
+发布镜像由 `.github/workflows/release.yml` 在 `vMAJOR.MINOR.PATCH` 标签上构建并推送 `linux/arm64` 镜像，同时上传带嵌入 Web 资源的 CGO-free ARM64 二进制。二进制运行时需要能写入配置的照片、缓存和数据库目录；不依赖 libvips 或系统图像库。
 
 升级时先备份原图和数据库，执行 `docker compose pull && docker compose up -d`，再检查 `/healthz` 和管理员 rescan。不要在升级过程中复用旧的缓存目录作为数据库卷。
