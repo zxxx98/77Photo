@@ -195,6 +195,18 @@ describe('gallery query helpers', () => {
 });
 
 describe('GalleryScreen', () => {
+  it('passes the loaded photo set when opening a viewer so adjacent media can be swiped', async () => {
+    const api = createClient({ listPhotos: jest.fn(async () => page([photo('a'), photo('b')])) });
+    const onPhotoPress = jest.fn();
+    await renderWithQuery(
+      <GalleryScreen api={api} serverId="server-1" userId="user-1" onPhotoPress={onPhotoPress} />,
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'a.jpg' })).toBeTruthy());
+    await fireEvent.press(screen.getByRole('button', { name: 'a.jpg' }));
+    expect(onPhotoPress).toHaveBeenCalledWith(photo('a'), [photo('a'), photo('b')]);
+  });
+
   it('renders cached photos before making a network request', async () => {
     const api = createClient();
     const queryClient = new QueryClient(testQueryOptions);

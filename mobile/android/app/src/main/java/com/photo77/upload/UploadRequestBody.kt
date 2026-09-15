@@ -2,7 +2,9 @@ package com.photo77.upload
 
 import android.content.ContentResolver
 import android.net.Uri
+import java.io.FileNotFoundException
 import java.io.IOException
+import java.io.InputStream
 import okhttp3.MediaType
 import okhttp3.RequestBody
 import okio.BufferedSink
@@ -16,14 +18,15 @@ class UploadRequestBody(
   private val onProgress: ((sentBytes: Long, totalBytes: Long?) -> Unit)? = null,
   private val progressIntervalMillis: Long = DEFAULT_PROGRESS_INTERVAL_MILLIS,
   private val nowMillis: () -> Long = { System.currentTimeMillis() },
+  private val openStream: (Uri) -> InputStream? = { resolver.openInputStream(it) },
 ) : RequestBody() {
   override fun contentType(): MediaType? = mediaType
 
   override fun contentLength(): Long = length?.takeIf { it >= 0L } ?: -1L
 
   override fun writeTo(sink: BufferedSink) {
-    val input = resolver.openInputStream(uri)
-      ?: throw IOException("media URI could not be opened")
+    val input = openStream(uri)
+      ?: throw FileNotFoundException("media URI could not be opened")
     input.use { stream ->
       val buffer = ByteArray(BUFFER_SIZE)
       var sent = 0L

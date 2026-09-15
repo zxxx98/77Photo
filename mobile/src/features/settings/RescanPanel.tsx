@@ -54,7 +54,17 @@ export function RescanPanel({ api }: RescanPanelProps) {
       setJob(await api.startRescan());
     } catch (caught) {
       if (caught instanceof ApiError && caught.code === 'RESCAN_IN_PROGRESS') {
-        setError(t('settings.rescanInProgress', '已有扫描正在进行，请稍后刷新状态。'));
+        const existingJobId = caught.details?.job_id;
+        if (typeof existingJobId === 'string' && existingJobId.trim()) {
+          try {
+            setJob(await api.getRescan(existingJobId));
+            setError(null);
+          } catch (refreshError) {
+            setError(refreshError instanceof Error ? refreshError.message : t('settings.rescanRefreshError', '扫描状态暂时不可用'));
+          }
+        } else {
+          setError(t('settings.rescanInProgress', '已有扫描正在进行，请稍后刷新状态。'));
+        }
       } else {
         setError(caught instanceof Error ? caught.message : t('settings.rescanStartError', '扫描无法开始'));
       }

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppState, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, AppState, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { colors, spacing } from '../../components/theme';
@@ -25,6 +25,7 @@ export type UploadScreenProps = {
   notificationPermission?: () => Promise<boolean>;
   concurrency?: 1 | 2 | 3 | 4;
   cellularUploadEnabled?: boolean;
+  lanCIDRs?: readonly string[];
   onUploadStarted?: () => void | Promise<void>;
 };
 
@@ -47,6 +48,21 @@ function nativeNotificationPermission(): Promise<boolean> {
   return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
 }
 
+function taskStateLabel(task: UploadTask, t: (key: string, fallback: string) => string): string {
+  if (task.state === 'succeeded' && task.lastErrorCode === 'DUPLICATE_PHOTO') {
+    return t('upload.skipped', '已跳过');
+  }
+  switch (task.state) {
+    case 'queued': return t('upload.queued', '排队中');
+    case 'uploading': return t('upload.uploading', '进行中');
+    case 'paused': return t('upload.paused', '已暂停');
+    case 'succeeded': return t('upload.succeeded', '已完成');
+    case 'failed': return t('upload.failed', '失败');
+    case 'canceled': return t('upload.canceled', '已取消');
+    default: return task.state;
+  }
+}
+
 async function requestNativeNotificationPermission(): Promise<boolean> {
   if (Platform.OS !== 'android' || Platform.Version < 33) return true;
   try {
@@ -67,6 +83,7 @@ export function UploadScreen({
   notificationPermission,
   concurrency = 2,
   cellularUploadEnabled = false,
+  lanCIDRs = [],
   onUploadStarted,
 }: UploadScreenProps) {
   const { t } = useTranslation();
@@ -169,7 +186,7 @@ export function UploadScreen({
     try {
       await ensureNotificationPermission();
       await queue.enqueue(server.id, deviceId, folderId, selected);
-      await queue.start?.(server.id, server.baseURL, deviceId, concurrency, cellularUploadEnabled);
+      await queue.start?.(server.id, server.baseURL, deviceId, concurrency, cellularUploadEnabled, lanCIDRs);
       setSelected([]);
       setFolderId(null);
       setFolderName(null);
@@ -189,14 +206,31 @@ export function UploadScreen({
 
   const resume = async () => {
     await queue.resume(server.id);
-    await queue.start?.(server.id, server.baseURL, deviceId, concurrency, cellularUploadEnabled);
+    await queue.start?.(server.id, server.baseURL, deviceId, concurrency, cellularUploadEnabled, lanCIDRs);
     await refresh();
   };
 
   const retryFailed = async () => {
     await queue.retryFailed(server.id);
-    await queue.start?.(server.id, server.baseURL, deviceId, concurrency, cellularUploadEnabled);
+    await queue.start?.(server.id, server.baseURL, deviceId, concurrency, cellularUploadEnabled, lanCIDRs);
     await refresh();
+  };
+
+  const cancelTask = (task: UploadTask) => {
+    Alert.alert(
+      t('upload.cancelTitle', '移除上传任务？'),
+      t('upload.cancelMessage', '该任务尚未完成，确认后会从本机队列移除。'),
+      [
+        { text: t('common.cancel', '取消'), style: 'cancel' },
+        {
+          text: t('upload.remove', '移除'),
+          style: 'destructive',
+          onPress: () => {
+            queue.cancel([task.id]).then(() => refresh()).catch(() => undefined);
+          },
+        },
+      ],
+    );
   };
 
   const percent = useMemo(() => (
@@ -254,6 +288,28 @@ export function UploadScreen({
         <Text style={styles.meta}>{snapshot.uploading} {t('upload.uploading', '进行中')} · {snapshot.queued} {t('upload.queued', '排队中')} · {snapshot.succeeded} {t('upload.succeeded', '已完成')}</Text>
       </View>
 
+      {snapshot.tasks.length > 0 ? (
+        <View accessibilityLabel={t('upload.taskList', '上传任务')} style={styles.taskList}>
+          {snapshot.tasks.map((task) => {
+            const canCancel = task.state === 'queued' || task.state === 'paused' || task.state === 'failed';
+            return (
+              <View key={task.id} style={styles.taskRow}>
+                <View style={styles.taskCopy}>
+                  <Text style={styles.taskName} numberOfLines={1}>{task.displayName}</Text>
+                  <Text style={styles.meta}>{taskStateLabel(task, t)}</Text>
+                </View>
+                {canCancel ? (
+                  <PrimaryButton
+                    label={`${t('upload.cancel', '取消')} ${task.displayName}`}
+                    onPress={() => cancelTask(task)}
+                  />
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+
       {snapshot.failed > 0 ? (
         <View style={styles.failureBlock}>
           <Text style={styles.failureText}>{t('upload.failedCount', `有 ${snapshot.failed} 项失败`, { count: snapshot.failed })}</Text>
@@ -285,4 +341,8 @@ const styles = StyleSheet.create({
   meta: { color: colors.muted, fontSize: 13 },
   failureBlock: { gap: spacing.sm },
   failureText: { color: colors.error, fontSize: 15, fontWeight: '700' },
+  taskList: { gap: spacing.xs },
+  taskRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.sm, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  taskCopy: { flex: 1, gap: 2 },
+  taskName: { color: colors.ink, fontSize: 15, fontWeight: '700' },
 });

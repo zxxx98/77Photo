@@ -1,4 +1,5 @@
 import React from 'react';
+import { Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -119,7 +120,7 @@ describe('UploadScreen', () => {
     await waitFor(() => expect(rendered.queue.enqueue).toHaveBeenCalledWith(
       'server-1', 'user-1', 'folder-1', [pickerItem],
     ));
-    expect(rendered.queue.start).toHaveBeenCalledWith('server-1', 'https://photo.test', 'user-1', 2, false);
+    expect(rendered.queue.start).toHaveBeenCalledWith('server-1', 'https://photo.test', 'user-1', 2, false, []);
   });
 
   it('offers retry for failed tasks without exposing a file path', async () => {
@@ -139,5 +140,37 @@ describe('UploadScreen', () => {
       fireEvent.press(rendered.getByRole('button', { name: '重试失败项' }));
     });
     await waitFor(() => expect(rendered.queue.retryFailed).toHaveBeenCalledWith('server-1'));
+  });
+
+  it('shows task rows and confirms before canceling an unfinished task', async () => {
+    const snapshot = { ...emptySnapshot, queued: 1, tasks: [{
+      id: 'task-1', batchId: 'batch-1', contentUri: 'content://private/path', displayName: 'secret.jpg',
+      mimeType: 'image/jpeg', size: 100, serverId: 'server-1', userId: 'user-1', deviceId: 'device-1',
+      sessionId: null, folderId: 'folder-1', state: 'queued' as const, sentBytes: 0, attempts: 0,
+      lastErrorCode: null, lastErrorMessage: null, createdAtEpochMs: 1,
+      startedAtEpochMs: null, completedAtEpochMs: null, nextRetryAtEpochMs: null,
+      leaseOwner: null, leaseUntilEpochMs: null,
+    }] };
+    const rendered = await renderScreen({ queue: { snapshot: jest.fn(async () => snapshot) } });
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+
+    await waitFor(() => expect(rendered.getByText('secret.jpg')).toBeTruthy());
+    expect(rendered.getByText('排队中')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(rendered.getByRole('button', { name: '取消 secret.jpg' }));
+    });
+
+    expect(alert).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.arrayContaining([expect.objectContaining({ style: 'destructive' })]),
+    );
+    const buttons = alert.mock.calls[0]?.[2];
+    const destructive = buttons?.find((button) => button.style === 'destructive');
+    await act(async () => {
+      destructive?.onPress?.();
+    });
+    await waitFor(() => expect(rendered.queue.cancel).toHaveBeenCalledWith(['task-1']));
+    alert.mockRestore();
   });
 });

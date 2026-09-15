@@ -39,6 +39,10 @@ interface UploadTaskSource {
   fun pauseForAuthentication(serverId: String, deviceId: String, now: Long) = Unit
 
   fun releaseLeases(owner: String) = Unit
+
+  fun hasQueued(serverId: String): Boolean = false
+
+  fun hasActiveLease(serverId: String, now: Long): Boolean = false
 }
 
 fun interface UploadTaskUploader {
@@ -140,6 +144,7 @@ class UploadScheduler(
         val now = clock()
         val runnable = source.hasRunnable(serverId, now)
         if (active.isEmpty() && !runnable) return
+        if (active.isEmpty() && source.hasActiveLease(serverId, now)) return
 
         if (networkAvailable()) {
           val available = effectiveConcurrency() - active.size
@@ -158,6 +163,7 @@ class UploadScheduler(
         }
 
         if (active.isEmpty() && !source.hasRunnable(serverId, clock())) return
+        if (active.isEmpty() && !networkAvailable()) return
         if (sleepMillis > 0) Thread.sleep(sleepMillis)
       }
     } catch (_: InterruptedException) {
@@ -189,6 +195,10 @@ class UploadScheduler(
         UploadResult.retryable("UPLOAD_FAILED", error.message)
       }
 
+      // Service destruction, timeout, or an explicit pause must not turn a canceled
+      // transfer into a successful task after its lease has been released.
+      if (stopped.get()) return
+
       if (result.statusCode == 401 || result.errorCode == "AUTH_REQUIRED") {
         if (!authRetried && authRefresher?.refresh(task.serverId, task.deviceId) == true) {
           authRetried = true
@@ -212,7 +222,7 @@ class UploadScheduler(
           recordSuccess()
           return
         }
-        retryPolicy.classify(result.statusCode, result.errorCode) == UploadDisposition.SKIPPED -> {
+        disposition(result) == UploadDisposition.SKIPPED -> {
           source.updateState(
             task,
             UploadTaskState.SUCCEEDED,
@@ -223,7 +233,7 @@ class UploadScheduler(
           )
           return
         }
-        retryPolicy.classify(result.statusCode, result.errorCode) == UploadDisposition.RETRYABLE -> {
+        disposition(result) == UploadDisposition.RETRYABLE -> {
           recordTransientFailure(result)
           val now = clock()
           source.updateState(
@@ -250,6 +260,9 @@ class UploadScheduler(
       }
     }
   }
+
+  private fun disposition(result: UploadResult): UploadDisposition =
+    result.disposition ?: retryPolicy.classify(result.statusCode, result.errorCode)
 
   private fun effectiveConcurrency(): Int = synchronized(stateLock) {
     if (degraded) MIN_CONCURRENCY else configuredConcurrency
@@ -327,4 +340,8 @@ class RoomUploadTaskSource(private val dao: UploadTaskDao) : UploadTaskSource {
   override fun releaseLeases(owner: String) {
     dao.releaseLeases(owner)
   }
+
+  override fun hasQueued(serverId: String): Boolean = dao.hasQueued(serverId)
+
+  override fun hasActiveLease(serverId: String, now: Long): Boolean = dao.hasActiveLease(serverId, now)
 }

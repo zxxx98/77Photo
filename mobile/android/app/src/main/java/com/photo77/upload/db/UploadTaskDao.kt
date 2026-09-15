@@ -152,6 +152,14 @@ abstract class UploadTaskDao {
   )
   abstract fun hasRunnable(serverId: String, now: Long): Boolean
 
+  @Query("SELECT EXISTS(SELECT 1 FROM upload_tasks WHERE server_id = :serverId AND state = 'queued')")
+  abstract fun hasQueued(serverId: String): Boolean
+
+  @Query(
+    "SELECT EXISTS(SELECT 1 FROM upload_tasks WHERE server_id = :serverId AND state = 'uploading' AND lease_until_epoch_ms >= :now)",
+  )
+  abstract fun hasActiveLease(serverId: String, now: Long): Boolean
+
   @Query(
     "UPDATE upload_tasks SET state = 'paused', lease_owner = NULL, lease_until_epoch_ms = NULL WHERE server_id = :serverId AND state = 'uploading'",
   )

@@ -24,7 +24,7 @@ export type SettingsScreenProps = {
   queryClient?: QueryCache;
   onOpenLanRanges?: () => void;
   onLogout?: () => void | Promise<void>;
-  onSwitchServer?: () => void;
+  onSwitchServer?: (serverId: string) => void;
 };
 
 function ValueSelector({ value, onChange, label }: { value: number; onChange: (value: number) => void; label: string }) {
@@ -54,6 +54,7 @@ export function SettingsScreen({
 }: SettingsScreenProps) {
   const { t } = useTranslation();
   const settings = useConnectionSnapshot(store);
+  const switchTargets = settings.servers.filter((candidate) => candidate.id !== server.id);
 
   const clearCache = () => {
     queryClient?.removeQueries({
@@ -72,7 +73,22 @@ export function SettingsScreen({
         <Text style={styles.sectionTitle}>{t('settings.account', '账号与服务器')}</Text>
         <Text style={styles.value}>{user.username}</Text>
         <Text style={styles.meta}>{server.displayName} · {server.baseURL}</Text>
-        {onSwitchServer ? <PrimaryButton label={t('settings.switchServer', '切换服务器')} onPress={onSwitchServer} /> : null}
+        {onSwitchServer && switchTargets.length > 0 ? (
+          <View style={styles.switchTargets}>
+            <Text style={styles.label}>{t('settings.switchServer', '切换服务器')}</Text>
+            {switchTargets.map((candidate) => (
+              <Pressable
+                key={candidate.id}
+                accessibilityRole="button"
+                accessibilityLabel={`${t('settings.switchTo', '切换到')} ${candidate.displayName}`}
+                onPress={() => onSwitchServer(candidate.id)}
+                style={styles.actionRow}
+              >
+                <Text style={styles.actionText}>{candidate.displayName}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
         {onLogout ? <PrimaryButton label={t('settings.logout', '退出当前设备')} onPress={() => { Promise.resolve(onLogout()).catch(() => undefined); }} /> : null}
       </View>
       <View style={styles.section}>
@@ -123,4 +139,5 @@ const styles = StyleSheet.create({
   switchRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   actionRow: { minHeight: 48, justifyContent: 'center' },
   actionText: { color: colors.accent, fontWeight: '700' },
+  switchTargets: { gap: spacing.xs },
 });

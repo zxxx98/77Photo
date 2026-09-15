@@ -68,6 +68,44 @@ class UploadSchedulerTest {
     assertEquals(6, source.tasks.count { it.state == UploadTaskState.SUCCEEDED })
   }
 
+  @Test
+  fun preservesPermanentDispositionWithoutRetrying() {
+    val source = FakeTaskSource(tasks("server-a", 1))
+    val scheduler = UploadScheduler(
+      source = source,
+      uploader = UploadTaskUploader { _, _ -> UploadResult.permanent("URI_ACCESS_DENIED") },
+      sleepMillis = 1,
+    )
+
+    scheduler.start("server-a", "worker-1", 1).await(5, TimeUnit.SECONDS)
+
+    assertEquals(UploadTaskState.FAILED, source.tasks.single().state)
+    assertEquals("URI_ACCESS_DENIED", source.tasks.single().lastErrorCode)
+  }
+
+  @Test
+  fun stoppingSchedulerDoesNotCommitAnInFlightUpload() {
+    val source = FakeTaskSource(tasks("server-a", 1))
+    val started = CountDownLatch(1)
+    val release = CountDownLatch(1)
+    val scheduler = UploadScheduler(
+      source = source,
+      uploader = UploadTaskUploader { _, _ ->
+        started.countDown()
+        release.await(5, TimeUnit.SECONDS)
+        UploadResult.success()
+      },
+      sleepMillis = 1,
+    )
+
+    scheduler.start("server-a", "worker-1", 1)
+    assertTrue(started.await(5, TimeUnit.SECONDS))
+    scheduler.stop()
+    release.countDown()
+
+    assertEquals(UploadTaskState.QUEUED, source.tasks.single().state)
+  }
+
   private fun tasks(serverId: String, count: Int): List<UploadTaskEntity> = (1..count).map { index ->
     UploadTaskEntity(
       id = "task-$index",
@@ -119,5 +157,17 @@ class UploadSchedulerTest {
     }
 
     override fun hasRunnable(serverId: String, now: Long): Boolean = tasks.any { it.serverId == serverId && it.state == UploadTaskState.QUEUED }
+
+    override fun releaseLeases(owner: String) {
+      synchronized(tasks) {
+        tasks.replaceAll { task ->
+          if (task.leaseOwner == owner && task.state == UploadTaskState.UPLOADING) {
+            task.copy(state = UploadTaskState.QUEUED, leaseOwner = null, leaseUntilEpochMs = null)
+          } else {
+            task
+          }
+        }
+      }
+    }
   }
 }

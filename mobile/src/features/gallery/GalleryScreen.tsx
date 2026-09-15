@@ -24,7 +24,7 @@ export type GalleryScreenProps = {
   folderId?: string;
   timeZone?: string;
   thumbnailSize?: 256 | 512;
-  onPhotoPress?: (photo: Photo) => void;
+  onPhotoPress?: (photo: Photo, photos: readonly Photo[]) => void;
 };
 
 type GalleryRow =
@@ -87,7 +87,7 @@ export function GalleryScreen({
           accessible
           accessibilityRole="button"
           accessibilityLabel={item.photo.filename}
-          onPress={() => onPhotoPress?.(item.photo)}
+          onPress={() => onPhotoPress?.(item.photo, photos)}
           style={styles.photoHitTarget}
         />
       </View>

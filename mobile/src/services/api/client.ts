@@ -1,4 +1,5 @@
 import type { StoredCredentials } from '../../native/NativeCredentials';
+import NativeDownload from '../../native/NativeDownload';
 import type { CredentialsStore } from '../credentials';
 import type {
   CreateShareLinkInput,
@@ -64,6 +65,7 @@ export type ApiClientOptions = {
   transport?: ApiTransport;
   credentials: CredentialsStore;
   userId?: string;
+  lanCIDRs?: readonly string[];
   queryClient?: {
     removeQueries: (filters?: { predicate?: (query: { queryKey: readonly unknown[] }) => boolean }) => unknown;
   };
@@ -368,6 +370,17 @@ export function createApiClient(options: ApiClientOptions) {
       `${joinURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/thumbnail?size=${size}`)}`,
     previewURL: (id: string): string => joinURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/preview`),
     originalURL: (id: string): string => joinURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/original`),
+    downloadOriginal: async (id: string, fileName: string): Promise<void> => {
+      const stored = await getCredentials();
+      if (!stored?.accessToken) throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
+      if (!NativeDownload) throw new Error('NativeDownload is unavailable');
+      await NativeDownload.download(
+        joinURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/original`),
+        fileName,
+        `Bearer ${stored.accessToken}`,
+        options.lanCIDRs ?? [],
+      );
+    },
     createShareLink: (input: CreateShareLinkInput): Promise<ShareLink> => requestJSON<ShareLink>('/api/v1/share-links', {
       method: 'POST',
       body: {

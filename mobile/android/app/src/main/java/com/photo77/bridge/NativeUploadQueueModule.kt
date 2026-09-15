@@ -34,19 +34,22 @@ class NativeUploadQueueModule(
   override fun getName(): String = NAME
 
   @ReactMethod
-  fun start(serverId: String, baseURL: String, deviceId: String, concurrency: Int, allowMobile: Boolean, promise: Promise) {
+  fun start(serverId: String, baseURL: String, deviceId: String, concurrency: Int, allowMobile: Boolean, lanCIDRs: ReadableArray, promise: Promise) {
     execute(promise) {
       val safeServerId = requireIdentifier(serverId, "serverId")
       val safeBaseURL = baseURL.trim().takeIf { it.isNotEmpty() && it.length <= 2_048 }
         ?: throw IllegalArgumentException("baseURL is invalid")
       val safeDeviceId = requireIdentifier(deviceId, "deviceId")
+      val safeLANCIDRs = readLANCIDRs(lanCIDRs)
+      val normalizedBaseURL = com.photo77.upload.UploadURLPolicy.requireAllowed(safeBaseURL, safeLANCIDRs)
       val intent = Intent(reactApplicationContext, com.photo77.upload.UploadForegroundService::class.java).apply {
         action = com.photo77.upload.UploadForegroundService.ACTION_START
         putExtra(com.photo77.upload.UploadForegroundService.EXTRA_SERVER_ID, safeServerId)
-        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_BASE_URL, safeBaseURL)
+        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_BASE_URL, normalizedBaseURL)
         putExtra(com.photo77.upload.UploadForegroundService.EXTRA_DEVICE_ID, safeDeviceId)
         putExtra(com.photo77.upload.UploadForegroundService.EXTRA_CONCURRENCY, concurrency.coerceIn(1, 4))
         putExtra(com.photo77.upload.UploadForegroundService.EXTRA_ALLOW_MOBILE, allowMobile)
+        putStringArrayListExtra(com.photo77.upload.UploadForegroundService.EXTRA_LAN_CIDRS, ArrayList(safeLANCIDRs))
       }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         reactApplicationContext.startForegroundService(intent)
@@ -56,10 +59,11 @@ class NativeUploadQueueModule(
       com.photo77.upload.UploadRecoveryWorker.schedule(
         context = reactApplicationContext,
         serverId = safeServerId,
-        baseUrl = safeBaseURL,
+        baseUrl = normalizedBaseURL,
         deviceId = safeDeviceId,
         concurrency = concurrency,
         allowMobile = allowMobile,
+        lanCIDRs = safeLANCIDRs,
       )
       null
     }
@@ -122,6 +126,7 @@ class NativeUploadQueueModule(
       val dao = database.uploadTaskDao()
       dao.pauseUploading(safeServerId)
       dao.pauseQueued(safeServerId)
+      com.photo77.upload.UploadForegroundService.pauseActive(safeServerId)
       null
     }
   }
@@ -221,6 +226,12 @@ class NativeUploadQueueModule(
   private fun requireIdentifier(value: String, key: String): String =
     value.trim().takeIf { it.isNotEmpty() && it.length <= 128 } ?: throw IllegalArgumentException("$key is invalid")
 
+  private fun readLANCIDRs(values: ReadableArray): List<String> =
+    (0 until values.size()).map { index ->
+      values.getString(index)?.trim()?.takeIf { it.isNotEmpty() }
+        ?: throw IllegalArgumentException("lanCIDRs contains an invalid range")
+    }.distinct().take(MAX_LAN_CIDRS)
+
   private fun WritableMap.putNullableString(key: String, value: String?) {
     if (value == null) putNull(key) else putString(key, value)
   }
@@ -231,6 +242,7 @@ class NativeUploadQueueModule(
 
   companion object {
     const val NAME = "NativeUploadQueue"
+    private const val MAX_LAN_CIDRS = 128
   }
 }
 

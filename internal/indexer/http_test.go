@@ -49,3 +49,22 @@ func TestHTTPRescanRequiresAdminAndReturnsJob(t *testing.T) {
 		t.Fatalf("job = %+v err=%v", job, err)
 	}
 }
+
+func TestHTTPRescanConflictIncludesExistingJobID(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/rescan", nil)
+	response := httptest.NewRecorder()
+
+	(&HTTPHandler{}).writeServiceError(response, request, &ConflictError{JobID: "job-1"})
+
+	var payload struct {
+		Error struct {
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.Error.Details["job_id"]; got != "job-1" {
+		t.Fatalf("job_id = %#v, want job-1", got)
+	}
+}

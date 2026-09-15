@@ -19,11 +19,13 @@ class UploadActionReceiver : BroadcastReceiver() {
           UploadNotificationFactory.ACTION_PAUSE -> {
             dao.pauseUploading(serverId)
             dao.pauseQueued(serverId)
+            UploadForegroundService.pauseActive(serverId)
           }
           UploadNotificationFactory.ACTION_RESUME -> {
             dao.resumePaused(serverId)
             val baseUrl = intent.getStringExtra(EXTRA_BASE_URL)?.takeIf { it.isNotBlank() }
             val deviceId = intent.getStringExtra(EXTRA_DEVICE_ID)?.takeIf { it.isNotBlank() }
+            val lanCIDRs = intent.getStringArrayListExtra(EXTRA_LAN_CIDRS).orEmpty()
             if (baseUrl != null && deviceId != null) {
               val serviceIntent = UploadForegroundService.startIntent(
                 context = context,
@@ -32,6 +34,7 @@ class UploadActionReceiver : BroadcastReceiver() {
                 deviceId = deviceId,
                 concurrency = intent.getIntExtra(EXTRA_CONCURRENCY, 2),
                 allowMobile = intent.getBooleanExtra(EXTRA_ALLOW_MOBILE, false),
+                lanCIDRs = lanCIDRs,
               )
               if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(serviceIntent)
               else context.startService(serviceIntent)
@@ -50,6 +53,7 @@ class UploadActionReceiver : BroadcastReceiver() {
     const val EXTRA_DEVICE_ID = "device_id"
     const val EXTRA_CONCURRENCY = "concurrency"
     const val EXTRA_ALLOW_MOBILE = "allow_mobile"
+    const val EXTRA_LAN_CIDRS = "lan_cidrs"
     private val executor = Executors.newSingleThreadExecutor { runnable ->
       Thread(runnable, "photo77-upload-notification").apply { isDaemon = true }
     }

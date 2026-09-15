@@ -15,12 +15,14 @@ import com.photo77.upload.db.UploadDatabase
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Owns uploads after an explicit user start/resume action. */
 class UploadForegroundService : Service() {
   private val monitor: ExecutorService = Executors.newSingleThreadExecutor()
   private var scheduler: UploadScheduler? = null
   private var currentServerId: String? = null
+  private val stopping = AtomicBoolean(false)
 
   override fun onCreate() {
     super.onCreate()
@@ -40,24 +42,37 @@ class UploadForegroundService : Service() {
       stopSelfResult(startId)
       return START_NOT_STICKY
     }
+    val lanCIDRs = intent.getStringArrayListExtra(EXTRA_LAN_CIDRS).orEmpty()
+    val normalizedBaseUrl = runCatching { UploadURLPolicy.requireAllowed(baseUrl, lanCIDRs) }.getOrNull()
+    if (normalizedBaseUrl == null) {
+      stopSelfResult(startId)
+      return START_NOT_STICKY
+    }
 
     val existingServerId = currentServerId
     // Promotion happens before opening the database or network connection.
+    stopping.set(false)
     currentServerId = serverId
-    startInForeground()
+    synchronized(activeServices) {
+      existingServerId?.let { if (activeServices[it] === this) activeServices.remove(it) }
+      activeServices[serverId] = this
+    }
+    val allowMobile = intent.getBooleanExtra(EXTRA_ALLOW_MOBILE, false)
+    val concurrency = intent.getIntExtra(EXTRA_CONCURRENCY, DEFAULT_CONCURRENCY)
+    startInForeground(serverId, normalizedBaseUrl, deviceId, allowMobile, lanCIDRs, concurrency)
     if (scheduler != null && existingServerId == serverId) {
-      scheduler?.setConcurrency(intent.getIntExtra(EXTRA_CONCURRENCY, DEFAULT_CONCURRENCY))
+      scheduler?.setConcurrency(concurrency)
       return START_NOT_STICKY
     }
 
     scheduler?.stop()
-    val allowMobile = intent.getBooleanExtra(EXTRA_ALLOW_MOBILE, false)
     val owner = "service-${UUID.randomUUID()}"
     val source = RoomUploadTaskSource(UploadDatabase.getInstance(applicationContext).uploadTaskDao())
     val api = UploadApi(
-      baseUrl = baseUrl,
+      baseUrl = normalizedBaseUrl,
       contentResolver = contentResolver,
       credentials = EncryptedUploadCredentialStore(applicationContext),
+      allowedLANCIDRs = lanCIDRs,
     )
     val nextScheduler = UploadScheduler(
       source = source,
@@ -69,21 +84,26 @@ class UploadForegroundService : Service() {
     val future = nextScheduler.start(
       serverId = serverId,
       owner = owner,
-      concurrency = intent.getIntExtra(EXTRA_CONCURRENCY, DEFAULT_CONCURRENCY),
+      concurrency = concurrency,
     )
-    monitor.submit { watchProgress(serverId, baseUrl, deviceId, allowMobile, future, startId) }
+    monitor.submit { watchProgress(serverId, normalizedBaseUrl, deviceId, allowMobile, lanCIDRs, future, startId) }
     return START_NOT_STICKY
   }
 
   override fun onDestroy() {
+    stopping.set(true)
     scheduler?.stop()
     scheduler = null
+    synchronized(activeServices) {
+      currentServerId?.let { if (activeServices[it] === this) activeServices.remove(it) }
+    }
     monitor.shutdownNow()
     super.onDestroy()
   }
 
   override fun onTimeout(startId: Int) {
     // Android may time-limit data-sync foreground services. Leases return to queued.
+    stopping.set(true)
     scheduler?.stop()
     stopSelf(startId)
   }
@@ -94,17 +114,29 @@ class UploadForegroundService : Service() {
 
   override fun onBind(intent: Intent?): IBinder? = null
 
-  private fun startInForeground() {
+  private fun startInForeground(
+    serverId: String,
+    baseUrl: String,
+    deviceId: String,
+    allowMobile: Boolean,
+    lanCIDRs: List<String>,
+    concurrency: Int,
+  ) {
     val notification = UploadNotificationFactory.progress(
       this,
       UploadNotificationState(
-        serverId = currentServerId ?: "unknown",
+        serverId = serverId,
         sentBytes = 0,
         totalBytes = null,
         completed = 0,
         failed = 0,
         remaining = 0,
         paused = false,
+        baseUrl = baseUrl,
+        deviceId = deviceId,
+        concurrency = concurrency.coerceIn(1, 4),
+        allowMobile = allowMobile,
+        lanCIDRs = lanCIDRs,
       ),
     )
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -119,12 +151,13 @@ class UploadForegroundService : Service() {
     baseUrl: String,
     deviceId: String,
     allowMobile: Boolean,
+    lanCIDRs: List<String>,
     future: java.util.concurrent.Future<*>,
     startId: Int,
   ) {
     val dao = UploadDatabase.getInstance(applicationContext).uploadTaskDao()
     while (!future.isDone && !Thread.currentThread().isInterrupted) {
-      publishProgress(serverId, baseUrl, deviceId, allowMobile, dao.findByServer(serverId))
+      publishProgress(serverId, baseUrl, deviceId, allowMobile, lanCIDRs, dao.findByServer(serverId))
       try {
         Thread.sleep(1_000L)
       } catch (_: InterruptedException) {
@@ -132,7 +165,12 @@ class UploadForegroundService : Service() {
       }
     }
     runCatching { future.get() }
+    if (stopping.get() || Thread.currentThread().isInterrupted) return
     val tasks = dao.findByServer(serverId)
+    if (tasks.any { it.state == com.photo77.upload.db.UploadTaskState.QUEUED || it.state == com.photo77.upload.db.UploadTaskState.UPLOADING }) {
+      stopSelfResult(startId)
+      return
+    }
     val skipped = tasks.count { it.state == com.photo77.upload.db.UploadTaskState.SUCCEEDED && it.lastErrorCode == "DUPLICATE_PHOTO" }
     getSystemService(NotificationManager::class.java).notify(
       NOTIFICATION_ID,
@@ -151,6 +189,7 @@ class UploadForegroundService : Service() {
     baseUrl: String,
     deviceId: String,
     allowMobile: Boolean,
+    lanCIDRs: List<String>,
     tasks: List<com.photo77.upload.db.UploadTaskEntity>,
   ) {
     val totalBytes = tasks.takeIf { it.all { task -> task.sizeBytes != null } }?.sumOf { it.sizeBytes ?: 0L }
@@ -165,6 +204,7 @@ class UploadForegroundService : Service() {
       baseUrl = baseUrl,
       deviceId = deviceId,
       allowMobile = allowMobile,
+      lanCIDRs = lanCIDRs,
     )
     getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, UploadNotificationFactory.progress(this, state))
   }
@@ -185,6 +225,7 @@ class UploadForegroundService : Service() {
     const val EXTRA_DEVICE_ID = "device_id"
     const val EXTRA_CONCURRENCY = "concurrency"
     const val EXTRA_ALLOW_MOBILE = "allow_mobile"
+    const val EXTRA_LAN_CIDRS = "lan_cidrs"
     const val CHANNEL_ID = "77photo_uploads_v1"
     const val NOTIFICATION_ID = 7701
     private const val DEFAULT_CONCURRENCY = 2
@@ -196,6 +237,7 @@ class UploadForegroundService : Service() {
       deviceId: String,
       concurrency: Int = DEFAULT_CONCURRENCY,
       allowMobile: Boolean = false,
+      lanCIDRs: Collection<String> = emptyList(),
     ): Intent = Intent(context, UploadForegroundService::class.java).apply {
       action = ACTION_START
       putExtra(EXTRA_SERVER_ID, serverId)
@@ -203,6 +245,20 @@ class UploadForegroundService : Service() {
       putExtra(EXTRA_DEVICE_ID, deviceId)
       putExtra(EXTRA_CONCURRENCY, concurrency.coerceIn(1, 4))
       putExtra(EXTRA_ALLOW_MOBILE, allowMobile)
+      putStringArrayListExtra(EXTRA_LAN_CIDRS, ArrayList(lanCIDRs.take(MAX_LAN_CIDRS)))
     }
+
+    fun pauseActive(serverId: String): Boolean {
+      val service = synchronized(activeServices) { activeServices[serverId] }
+      if (service == null || service.currentServerId != serverId) return false
+      service.stopping.set(true)
+      service.scheduler?.stop()
+      service.scheduler = null
+      service.stopSelf()
+      return true
+    }
+
+    private const val MAX_LAN_CIDRS = 128
+    private val activeServices = mutableMapOf<String, UploadForegroundService>()
   }
 }

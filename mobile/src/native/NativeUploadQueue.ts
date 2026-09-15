@@ -52,6 +52,7 @@ export interface Spec extends TurboModule {
     deviceId: string,
     concurrency: number,
     allowMobile: boolean,
+    lanCIDRs: readonly string[],
   ): Promise<void>;
   enqueue(
     serverId: string,

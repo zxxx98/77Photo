@@ -27,12 +27,17 @@ class UploadRecoveryWorker(
     val baseUrl = inputData.getString(KEY_BASE_URL)?.takeIf { it.isNotBlank() }
     val deviceId = inputData.getString(KEY_DEVICE_ID)?.takeIf { it.isNotBlank() }
     if (serverId == null || baseUrl == null || deviceId == null) return@withContext Result.failure()
+    val lanCIDRs = inputData.getStringArray(KEY_LAN_CIDRS)?.toList().orEmpty()
+    val normalizedBaseUrl = runCatching { UploadURLPolicy.requireAllowed(baseUrl, lanCIDRs) }.getOrNull()
+      ?: return@withContext Result.failure()
 
     val source = RoomUploadTaskSource(UploadDatabase.getInstance(applicationContext).uploadTaskDao())
+    if (source.hasActiveLease(serverId, System.currentTimeMillis())) return@withContext Result.retry()
     val api = UploadApi(
-      baseUrl = baseUrl,
+      baseUrl = normalizedBaseUrl,
       contentResolver = applicationContext.contentResolver,
       credentials = EncryptedUploadCredentialStore(applicationContext),
+      allowedLANCIDRs = lanCIDRs,
     )
     val allowMobile = inputData.getBoolean(KEY_ALLOW_MOBILE, false)
     val scheduler = UploadScheduler(
@@ -48,7 +53,7 @@ class UploadRecoveryWorker(
     )
     try {
       future.get()
-      Result.success()
+      if (source.hasQueued(serverId) || source.hasActiveLease(serverId, System.currentTimeMillis())) Result.retry() else Result.success()
     } catch (_: InterruptedException) {
       Thread.currentThread().interrupt()
       Result.retry()
@@ -65,6 +70,7 @@ class UploadRecoveryWorker(
     const val KEY_DEVICE_ID = "device_id"
     const val KEY_CONCURRENCY = "concurrency"
     const val KEY_ALLOW_MOBILE = "allow_mobile"
+    const val KEY_LAN_CIDRS = "lan_cidrs"
 
     fun schedule(
       context: Context,
@@ -73,6 +79,7 @@ class UploadRecoveryWorker(
       deviceId: String,
       concurrency: Int = 2,
       allowMobile: Boolean = false,
+      lanCIDRs: Collection<String> = emptyList(),
     ) {
       val input = Data.Builder()
         .putString(KEY_SERVER_ID, serverId)
@@ -80,6 +87,7 @@ class UploadRecoveryWorker(
         .putString(KEY_DEVICE_ID, deviceId)
         .putInt(KEY_CONCURRENCY, concurrency.coerceIn(1, 4))
         .putBoolean(KEY_ALLOW_MOBILE, allowMobile)
+        .putStringArray(KEY_LAN_CIDRS, lanCIDRs.take(MAX_LAN_CIDRS).toTypedArray())
         .build()
       val constraints = Constraints.Builder()
         .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -95,6 +103,8 @@ class UploadRecoveryWorker(
         request,
       )
     }
+
+    private const val MAX_LAN_CIDRS = 128
   }
 
   private fun hasAllowedNetwork(allowMobile: Boolean): Boolean {

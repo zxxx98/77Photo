@@ -16,6 +16,8 @@ import { MediaViewerScreen } from '../features/viewer/MediaViewerScreen';
 import { UploadScreen } from '../features/upload/UploadScreen';
 import { SettingsScreen } from '../features/settings/SettingsScreen';
 import { LanRangesScreen } from '../features/settings/LanRangesScreen';
+import { switchServerWithQueueDecision } from '../features/settings/serverSwitch';
+import { uploadQueue } from '../features/upload/uploadService';
 import { createApiClient } from '../services/api/client';
 import type { Photo, User } from '../services/api/types';
 import { credentialsStore } from '../services/credentials';
@@ -59,6 +61,7 @@ function AuthenticatedApi({ server, user }: AuthenticatedRouteProps) {
       baseURL: server.baseURL,
       serverId: server.id,
       userId: user.id,
+      lanCIDRs: getEnabledLANCIDRs(connectionStore.getState()),
       credentials: credentialsStore,
       queryClient,
     }),
@@ -89,7 +92,10 @@ function GalleryTab({ server, user }: AuthenticatedRouteProps) {
           serverId={server.id}
           userId={user.id}
           folderId={folder.id}
-          onPhotoPress={(photo) => navigation.navigate('Viewer', { photos: [photo], initialIndex: 0 })}
+          onPhotoPress={(photo, photos) => navigation.navigate('Viewer', {
+            photos,
+            initialIndex: Math.max(0, photos.findIndex((item) => item.id === photo.id)),
+          })}
         />
       </View>
     );
@@ -120,7 +126,10 @@ function GalleryTab({ server, user }: AuthenticatedRouteProps) {
           api={api}
           serverId={server.id}
           userId={user.id}
-          onPhotoPress={(photo) => navigation.navigate('Viewer', { photos: [photo], initialIndex: 0 })}
+          onPhotoPress={(photo, photos) => navigation.navigate('Viewer', {
+            photos,
+            initialIndex: Math.max(0, photos.findIndex((item) => item.id === photo.id)),
+          })}
         />
       ) : (
         <FolderBrowserScreen
@@ -151,6 +160,7 @@ function MainTabNavigator({ server, user, onSessionChanged }: AuthenticatedRoute
 }
 
 function SettingsTab({ server, user, onSessionChanged }: AuthenticatedRouteProps) {
+  const { t } = useTranslation();
   const api = AuthenticatedApi({ server, user });
   const queryClient = useQueryClient();
   const [lanRangesOpen, setLanRangesOpen] = useState(false);
@@ -165,6 +175,35 @@ function SettingsTab({ server, user, onSessionChanged }: AuthenticatedRouteProps
       api={api}
       queryClient={queryClient}
       onOpenLanRanges={() => setLanRangesOpen(true)}
+      onSwitchServer={(targetServerId) => {
+        switchServerWithQueueDecision({
+          fromServerId: server.id,
+          targetServerId,
+          queue: uploadQueue,
+          store: connectionStore,
+          labels: {
+            title: t('settings.switchTitle', '切换服务器'),
+            message: t('settings.switchQueueMessage', '当前服务器还有未完成上传，如何处理？'),
+            cancel: t('settings.switchStay', '留在当前服务器'),
+            keep: t('settings.switchKeepQueue', '保留队列'),
+            discard: t('settings.switchDiscardQueue', '取消旧队列'),
+          },
+          onStay: async () => {
+            const credentials = await credentialsStore.get(server.id);
+            if (!credentials?.deviceId) return;
+            await uploadQueue.resume(server.id);
+            await uploadQueue.start?.(
+              server.id,
+              server.baseURL,
+              credentials.deviceId,
+              connectionStore.getState().uploadConcurrency,
+              connectionStore.getState().cellularUploadEnabled,
+              getEnabledLANCIDRs(connectionStore.getState()),
+            );
+          },
+          onSelected: onSessionChanged,
+        }).catch(() => undefined);
+      }}
       onLogout={async () => {
         await api.logout();
         onSessionChanged?.();
@@ -177,6 +216,7 @@ function UploadTab({ server, user }: AuthenticatedRouteProps) {
   const api = AuthenticatedApi({ server, user });
   const concurrency = connectionStore((state) => state.uploadConcurrency);
   const cellularUploadEnabled = connectionStore((state) => state.cellularUploadEnabled);
+  const lanCIDRs = connectionStore((state) => getEnabledLANCIDRs(state));
   return (
     <UploadScreen
       api={api}
@@ -184,6 +224,7 @@ function UploadTab({ server, user }: AuthenticatedRouteProps) {
       user={user}
       concurrency={concurrency}
       cellularUploadEnabled={cellularUploadEnabled}
+      lanCIDRs={lanCIDRs}
     />
   );
 }
@@ -209,7 +250,12 @@ function ViewerRoute({
 
 function LoginRoute({ server, reload }: { server: ServerConfig; reload: () => void }) {
   const api = useMemo(
-    () => createApiClient({ baseURL: server.baseURL, serverId: server.id, credentials: credentialsStore }),
+    () => createApiClient({
+      baseURL: server.baseURL,
+      serverId: server.id,
+      lanCIDRs: getEnabledLANCIDRs(connectionStore.getState()),
+      credentials: credentialsStore,
+    }),
     [server.baseURL, server.id],
   );
   return (

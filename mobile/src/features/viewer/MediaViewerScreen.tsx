@@ -4,7 +4,6 @@ import {
   Animated,
   BackHandler,
   FlatList,
-  Linking,
   Modal,
   Pressable,
   Share,
@@ -27,7 +26,7 @@ import { MediaDetailsSheet } from './MediaDetailsSheet';
 import '../../i18n';
 
 export type MediaViewerScreenProps = {
-  api: Pick<ApiClient, 'previewURL' | 'originalURL' | 'getAuthHeaders' | 'createShareLink' | 'deletePhoto'>;
+  api: Pick<ApiClient, 'previewURL' | 'originalURL' | 'downloadOriginal' | 'getAuthHeaders' | 'createShareLink' | 'deletePhoto'>;
   photos: readonly Photo[];
   initialIndex?: number;
   serverId?: string;
@@ -136,7 +135,7 @@ export function MediaViewerScreen({
   };
 
   const openOriginal = (photo = selectedPhoto) => {
-    if (photo) Linking.openURL(api.originalURL(photo.id)).catch(() => undefined);
+    if (photo) api.downloadOriginal(photo.id, photo.filename).catch(() => undefined);
   };
 
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {

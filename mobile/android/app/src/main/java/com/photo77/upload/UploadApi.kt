@@ -100,8 +100,12 @@ class UploadApi(
   private val contentResolver: ContentResolver,
   private val credentials: UploadCredentialStore,
   private val client: OkHttpClient = OkHttpClient.Builder().build(),
+  allowedLANCIDRs: Collection<String> = emptyList(),
 ) : UploadTaskUploader, UploadAuthRefresher {
+  private val allowedBaseUrl = runCatching { UploadURLPolicy.requireAllowed(baseUrl, allowedLANCIDRs) }.getOrNull()
+
   override fun upload(task: com.photo77.upload.db.UploadTaskEntity, onProgress: (Long, Long?) -> Unit): UploadResult {
+    if (allowedBaseUrl == null) return UploadResult.permanent("SERVER_URL_BLOCKED", "server URL is not allowed")
     val stored = credentials.get(task.serverId, task.deviceId)
       ?: return UploadResult.authRequired()
     val body = UploadRequestBody(
@@ -144,6 +148,7 @@ class UploadApi(
   }
 
   override fun refresh(serverId: String, deviceId: String): Boolean {
+    if (allowedBaseUrl == null) return false
     val current = credentials.get(serverId, deviceId) ?: return false
     val requestBody = JSONObject().put("refresh_token", current.refreshToken)
       .toString().toRequestBody(JSON_MEDIA_TYPE)
@@ -177,7 +182,7 @@ class UploadApi(
     }
   }
 
-  private fun endpoint(path: String): String = "${baseUrl.trimEnd('/')}/${path.trimStart('/')}"
+  private fun endpoint(path: String): String = "${checkNotNull(allowedBaseUrl)}/${path.trimStart('/')}"
 
   private fun okhttp3.Response.toUploadResult(): UploadResult {
     val status = code

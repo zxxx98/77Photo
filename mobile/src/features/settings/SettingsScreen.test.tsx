@@ -44,4 +44,24 @@ describe('settings', () => {
     fireEvent.press(view.getByRole('button', { name: '添加地址范围' }));
     await waitFor(() => expect(view.getByText('不能添加全网范围')).toBeTruthy());
   });
+
+  it('offers stored servers as explicit switch targets', async () => {
+    const store = createConnectionStore({
+      storage: { getItem: async () => null, setItem: async () => undefined },
+      idFactory: (() => {
+        let index = 0;
+        return () => `server-${++index}`;
+      })(),
+    });
+    store.getState().addServer({ baseURL: server.baseURL, displayName: server.displayName });
+    const otherId = store.getState().addServer({ baseURL: 'https://other.test', displayName: '旅行图库' });
+    const onSwitchServer = jest.fn();
+    const view = await renderWith(<SettingsScreen store={store} server={server} user={admin} onSwitchServer={onSwitchServer} />);
+
+    expect(view.getByRole('button', { name: '切换到 旅行图库' })).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(view.getByRole('button', { name: '切换到 旅行图库' }));
+    });
+    expect(onSwitchServer).toHaveBeenCalledWith(otherId);
+  });
 });

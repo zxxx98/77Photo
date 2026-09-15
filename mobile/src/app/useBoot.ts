@@ -52,6 +52,7 @@ export function useBoot(): { state: BootState; reload: () => void } {
     const api = createApiClient({
       baseURL: decision.normalizedURL,
       serverId: server.id,
+      lanCIDRs: getEnabledLANCIDRs(connectionStore.getState()),
       credentials: credentialsStore,
     });
     api

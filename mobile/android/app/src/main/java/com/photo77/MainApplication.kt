@@ -8,6 +8,7 @@ import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.photo77.credentials.NativeCredentialsPackage
 import com.photo77.bridge.NativeUploadQueuePackage
+import com.photo77.bridge.NativeDownloadPackage
 import com.photo77.picker.NativePhotoPickerPackage
 
 class MainApplication : Application(), ReactApplication {
@@ -19,6 +20,7 @@ class MainApplication : Application(), ReactApplication {
         PackageList(this).packages.apply {
           add(NativeCredentialsPackage())
           add(NativeUploadQueuePackage())
+          add(NativeDownloadPackage())
           add(NativePhotoPickerPackage())
         },
     )

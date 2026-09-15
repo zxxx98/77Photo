@@ -20,6 +20,7 @@ data class UploadNotificationState(
   val deviceId: String? = null,
   val concurrency: Int = 2,
   val allowMobile: Boolean = false,
+  val lanCIDRs: List<String> = emptyList(),
 )
 
 object UploadNotificationFactory {
@@ -84,6 +85,7 @@ object UploadNotificationFactory {
       state.deviceId?.let { putExtra(UploadActionReceiver.EXTRA_DEVICE_ID, it) }
       putExtra(UploadActionReceiver.EXTRA_CONCURRENCY, state.concurrency)
       putExtra(UploadActionReceiver.EXTRA_ALLOW_MOBILE, state.allowMobile)
+      putStringArrayListExtra(UploadActionReceiver.EXTRA_LAN_CIDRS, ArrayList(state.lanCIDRs.take(128)))
     }
     val requestCode = (state.serverId.hashCode() * 31 + action.hashCode()) and 0x7fffffff
     return PendingIntent.getBroadcast(
