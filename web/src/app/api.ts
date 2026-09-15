@@ -91,6 +91,25 @@ export interface PublicPhoto {
   height?: number;
 }
 
+export type RescanStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export interface RescanCounts {
+  scanned: number;
+  added: number;
+  updated: number;
+  missing: number;
+  failed: number;
+}
+
+export interface RescanJob {
+  id: string;
+  status: RescanStatus;
+  started_at: string;
+  finished_at?: string;
+  counts: RescanCounts;
+  error?: string;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -133,7 +152,8 @@ export interface ApiClient {
   createUser(input: { username: string; password: string; role: Role }): Promise<User>;
   updateUser(id: string, input: Partial<Pick<User, 'username' | 'role' | 'is_active'>> & { password?: string }): Promise<User>;
   deleteUser(id: string): Promise<void>;
-  startRescan(): Promise<{ id: string; status: string }>;
+  startRescan(): Promise<RescanJob>;
+  getRescan(id: string): Promise<RescanJob>;
 }
 
 type Fetcher = typeof fetch;
@@ -258,6 +278,7 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     createUser: (input) => request<User>('/api/v1/users', { method: 'POST', body: JSON.stringify(input) }) as Promise<User>,
     updateUser: (id, input) => request<User>(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }) as Promise<User>,
     deleteUser: async (id) => { await request(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ photo_action: 'retain' }) }); },
-    startRescan: () => request<{ id: string; status: string }>('/api/v1/admin/rescan', { method: 'POST', body: JSON.stringify({}) }) as Promise<{ id: string; status: string }>,
+    startRescan: () => request<RescanJob>('/api/v1/admin/rescan', { method: 'POST', body: JSON.stringify({}) }) as Promise<RescanJob>,
+    getRescan: (id) => request<RescanJob>(`/api/v1/admin/rescan/${encodeURIComponent(id)}`) as Promise<RescanJob>,
   };
 }

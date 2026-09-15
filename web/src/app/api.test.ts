@@ -67,6 +67,26 @@ describe('API client', () => {
     expect(new Headers(logoutInit.headers).get('X-CSRF-Token')).toBe('restored-csrf');
   });
 
+  it('loads a rescan job status by id', async () => {
+    const job = {
+      id: 'scan_1',
+      status: 'running',
+      started_at: '2026-09-15T01:00:00Z',
+      counts: { scanned: 12, added: 3, updated: 8, missing: 1, failed: 0 },
+    };
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(job), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    const client = createApiClient(fetcher as typeof fetch);
+
+    await expect(client.getRescan('scan_1')).resolves.toEqual(job);
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/v1/admin/rescan/scan_1',
+      expect.objectContaining({ method: 'GET', credentials: 'include' }),
+    );
+  });
+
   it('serializes gallery filters and folder pagination', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
     const client = createApiClient(fetcher as typeof fetch);
