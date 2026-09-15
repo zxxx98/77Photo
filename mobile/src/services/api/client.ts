@@ -1,5 +1,6 @@
 import type { StoredCredentials } from '../../native/NativeCredentials';
 import NativeDownload from '../../native/NativeDownload';
+import { assertRedirectAllowed, evaluateServerURL } from '../connection/policy';
 import type { CredentialsStore } from '../credentials';
 import type {
   CreateShareLinkInput,
@@ -65,7 +66,7 @@ export type ApiClientOptions = {
   transport?: ApiTransport;
   credentials: CredentialsStore;
   userId?: string;
-  lanCIDRs?: readonly string[];
+  lanCIDRs?: readonly string[] | (() => readonly string[]);
   queryClient?: {
     removeQueries: (filters?: { predicate?: (query: { queryKey: readonly unknown[] }) => boolean }) => unknown;
   };
@@ -193,10 +194,67 @@ function joinURL(baseURL: string, path: string): string {
   return `${baseURL.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
 }
 
+function guardedMediaURL(
+  baseURL: string,
+  path: string,
+  lanCIDRs: readonly string[],
+): string {
+  const url = joinURL(baseURL, path);
+  try {
+    const parsed = new URL(url);
+    if (parsed.username || parsed.password) return '';
+    const decision = evaluateServerURL(`${parsed.protocol}//${parsed.host}`, lanCIDRs);
+    return decision.allowed ? url : '';
+  } catch {
+    return '';
+  }
+}
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 5;
+
+async function requestWithPolicyRedirects(
+  transport: ApiTransport,
+  url: string,
+  init: RequestInit,
+  lanCIDRs: readonly string[],
+): Promise<Response> {
+  let currentURL = new URL(url);
+  if (currentURL.username || currentURL.password) {
+    throw new Error('server_invalid_url');
+  }
+  const initialDecision = evaluateServerURL(
+    `${currentURL.protocol}//${currentURL.host}`,
+    lanCIDRs,
+  );
+  if (!initialDecision.allowed) {
+    throw new Error(`server_${initialDecision.reason}`);
+  }
+  let currentInit = { ...init, redirect: 'manual' as const };
+
+  for (let redirectCount = 0; ; redirectCount += 1) {
+    const response = await transport(currentURL.toString(), currentInit);
+    if (!REDIRECT_STATUSES.has(response.status)) return response;
+    const location = response.headers.get('Location');
+    if (!location) return response;
+    if (redirectCount >= MAX_REDIRECTS) throw new Error('redirect_limit');
+
+    const nextURL = new URL(location, currentURL);
+    assertRedirectAllowed(currentURL, nextURL, lanCIDRs);
+    if ([301, 302, 303].includes(response.status) &&
+      ['POST', 'PUT', 'PATCH'].includes((currentInit.method ?? 'GET').toUpperCase())) {
+      currentInit = { ...currentInit, method: 'GET', body: undefined };
+    }
+    currentURL = nextURL;
+  }
+}
+
 export function createApiClient(options: ApiClientOptions) {
   let activeServerId = options.serverId ?? 'default';
   const transport = options.transport ?? ((url, init) => fetch(url, init));
   const baseURL = options.baseURL.replace(/\/+$/, '');
+  const getLANCIDRs = (): readonly string[] =>
+    typeof options.lanCIDRs === 'function' ? options.lanCIDRs() : options.lanCIDRs ?? [];
 
   let loadedCredentials: StoredCredentials | null | undefined;
   let credentialsLoad: Promise<StoredCredentials | null> | null = null;
@@ -241,7 +299,12 @@ export function createApiClient(options: ApiClientOptions) {
         headers.set('Content-Type', 'application/json');
       }
     }
-    return transport(joinURL(baseURL, path), init);
+    return requestWithPolicyRedirects(
+      transport,
+      joinURL(baseURL, path),
+      init,
+      getLANCIDRs(),
+    );
   };
 
   const requestJSON = async <T>(path: string, requestOptions: RequestOptions = {}): Promise<T> => {
@@ -367,18 +430,22 @@ export function createApiClient(options: ApiClientOptions) {
     getFolder: (id: string): Promise<Folder> => requestJSON<Folder>(`/api/v1/folders/${encodeURIComponent(id)}`),
     getPhoto: (id: string): Promise<Photo> => requestJSON<Photo>(`/api/v1/photos/${encodeURIComponent(id)}`),
     thumbnailURL: (id: string, size: ThumbnailSize): string =>
-      `${joinURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/thumbnail?size=${size}`)}`,
-    previewURL: (id: string): string => joinURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/preview`),
-    originalURL: (id: string): string => joinURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/original`),
+      guardedMediaURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/thumbnail?size=${size}`, getLANCIDRs()),
+    previewURL: (id: string): string =>
+      guardedMediaURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/preview`, getLANCIDRs()),
+    originalURL: (id: string): string =>
+      guardedMediaURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/original`, getLANCIDRs()),
     downloadOriginal: async (id: string, fileName: string): Promise<void> => {
       const stored = await getCredentials();
       if (!stored?.accessToken) throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
       if (!NativeDownload) throw new Error('NativeDownload is unavailable');
+      const url = guardedMediaURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/original`, getLANCIDRs());
+      if (!url) throw new Error('server_media_url_blocked');
       await NativeDownload.download(
-        joinURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/original`),
+        url,
         fileName,
         `Bearer ${stored.accessToken}`,
-        options.lanCIDRs ?? [],
+        getLANCIDRs(),
       );
     },
     createShareLink: (input: CreateShareLinkInput): Promise<ShareLink> => requestJSON<ShareLink>('/api/v1/share-links', {

@@ -19,6 +19,6 @@ class UploadRetryPolicyTest {
   fun retryDelayUsesFullJitterAndCapsAtFifteenMinutes() {
     assertEquals(500L, policy.delayMillis(attempt = 1))
     assertEquals(1000L, policy.delayMillis(attempt = 2))
-    assertEquals(15 * 60 * 1000L, policy.delayMillis(attempt = 20))
+    assertEquals(7 * 60 * 1000L + 30 * 1000L, policy.delayMillis(attempt = 20))
   }
 }

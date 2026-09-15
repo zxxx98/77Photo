@@ -27,10 +27,8 @@ class UploadRetryPolicy(
   fun delayMillis(attempt: Int): Long {
     var upperBound = BASE_DELAY_MILLIS
     repeat(max(0, attempt - 1)) {
-      if (upperBound >= MAX_DELAY_MILLIS) return MAX_DELAY_MILLIS
       upperBound = (upperBound * 2).coerceAtMost(MAX_DELAY_MILLIS)
     }
-    if (upperBound >= MAX_DELAY_MILLIS) return MAX_DELAY_MILLIS
     val factor = random().coerceIn(0.0, 1.0)
     return (upperBound.toDouble() * factor).toLong().coerceIn(0L, MAX_DELAY_MILLIS)
   }

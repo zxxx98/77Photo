@@ -30,6 +30,17 @@ interface UploadTaskSource {
     nextRetryAt: Long?,
   )
 
+  /** State transitions from a leased upload must prove ownership at commit time. */
+  fun updateStateOwned(
+    task: UploadTaskEntity,
+    owner: String,
+    nextState: String,
+    now: Long,
+    errorCode: String?,
+    errorMessage: String?,
+    nextRetryAt: Long?,
+  ) = updateState(task, nextState, now, errorCode, errorMessage, nextRetryAt)
+
   fun hasRunnable(serverId: String, now: Long): Boolean
 
   fun recordAttempt(task: UploadTaskEntity, owner: String, now: Long) = Unit
@@ -39,6 +50,8 @@ interface UploadTaskSource {
   fun pauseForAuthentication(serverId: String, deviceId: String, now: Long) = Unit
 
   fun releaseLeases(owner: String) = Unit
+
+  fun renewLeases(owner: String, now: Long, leaseUntil: Long) = Unit
 
   fun hasQueued(serverId: String): Boolean = false
 
@@ -97,6 +110,7 @@ class UploadScheduler(
   private val clock: () -> Long = { System.currentTimeMillis() },
   private val authRefresher: UploadAuthRefresher? = null,
   private val networkAvailable: () -> Boolean = { true },
+  private val onInitialLeaseDecision: () -> Unit = {},
 ) {
   private val coordinator: ExecutorService = Executors.newSingleThreadExecutor(daemonThreadFactory("photo77-upload-coordinator"))
   private val workers: ExecutorService = Executors.newCachedThreadPool(daemonThreadFactory("photo77-upload-worker"))
@@ -137,14 +151,28 @@ class UploadScheduler(
 
   private fun runLoop(serverId: String, owner: String) {
     val active = LinkedHashMap<Future<*>, UploadTaskEntity>()
+    var initialLeaseDecisionReported = false
+    fun reportInitialLeaseDecision() {
+      if (!initialLeaseDecisionReported) {
+        initialLeaseDecisionReported = true
+        onInitialLeaseDecision()
+      }
+    }
     try {
       source.recoverExpiredLeases(clock())
       while (!stopped.get() && !Thread.currentThread().isInterrupted) {
         reapFinished(active)
         val now = clock()
+        source.renewLeases(owner, now, now + LEASE_MILLIS)
         val runnable = source.hasRunnable(serverId, now)
-        if (active.isEmpty() && !runnable) return
-        if (active.isEmpty() && source.hasActiveLease(serverId, now)) return
+        if (active.isEmpty() && !runnable) {
+          reportInitialLeaseDecision()
+          return
+        }
+        if (active.isEmpty() && source.hasActiveLease(serverId, now)) {
+          reportInitialLeaseDecision()
+          return
+        }
 
         if (networkAvailable()) {
           val available = effectiveConcurrency() - active.size
@@ -161,6 +189,7 @@ class UploadScheduler(
             }
           }
         }
+        reportInitialLeaseDecision()
 
         if (active.isEmpty() && !source.hasRunnable(serverId, clock())) return
         if (active.isEmpty() && !networkAvailable()) return
@@ -169,6 +198,7 @@ class UploadScheduler(
     } catch (_: InterruptedException) {
       Thread.currentThread().interrupt()
     } finally {
+      reportInitialLeaseDecision()
       source.releaseLeases(owner)
       active.keys.forEach { it.cancel(true) }
     }
@@ -205,8 +235,9 @@ class UploadScheduler(
           continue
         }
         source.pauseForAuthentication(task.serverId, task.deviceId, clock())
-        source.updateState(
+        source.updateStateOwned(
           task = task,
+          owner = owner,
           nextState = UploadTaskState.PAUSED,
           now = clock(),
           errorCode = "AUTH_REQUIRED",
@@ -218,13 +249,14 @@ class UploadScheduler(
 
       when {
         result.succeeded -> {
-          source.updateState(task, UploadTaskState.SUCCEEDED, clock(), null, null, null)
+          source.updateStateOwned(task, owner, UploadTaskState.SUCCEEDED, clock(), null, null, null)
           recordSuccess()
           return
         }
         disposition(result) == UploadDisposition.SKIPPED -> {
-          source.updateState(
+          source.updateStateOwned(
             task,
+            owner,
             UploadTaskState.SUCCEEDED,
             clock(),
             "DUPLICATE_PHOTO",
@@ -236,8 +268,9 @@ class UploadScheduler(
         disposition(result) == UploadDisposition.RETRYABLE -> {
           recordTransientFailure(result)
           val now = clock()
-          source.updateState(
+          source.updateStateOwned(
             task,
+            owner,
             UploadTaskState.QUEUED,
             now,
             result.errorCode ?: "UPLOAD_RETRYABLE",
@@ -247,8 +280,9 @@ class UploadScheduler(
           return
         }
         else -> {
-          source.updateState(
+          source.updateStateOwned(
             task,
+            owner,
             UploadTaskState.FAILED,
             clock(),
             result.errorCode ?: "UPLOAD_FAILED",
@@ -294,7 +328,7 @@ class UploadScheduler(
     private const val MIN_CONCURRENCY = 1
     private const val MAX_CONCURRENCY = 4
     private const val ADAPTATION_THRESHOLD = 3
-    private const val LEASE_MILLIS = 60_000L
+    internal const val LEASE_MILLIS = 60_000L
     private const val DEFAULT_SLEEP_MILLIS = 250L
 
     private fun daemonThreadFactory(name: String): ThreadFactory = ThreadFactory { runnable ->
@@ -323,6 +357,18 @@ class RoomUploadTaskSource(private val dao: UploadTaskDao) : UploadTaskSource {
     dao.updateStateWithRetry(task.id, task.state, nextState, now, errorCode, errorMessage, nextRetryAt)
   }
 
+  override fun updateStateOwned(
+    task: UploadTaskEntity,
+    owner: String,
+    nextState: String,
+    now: Long,
+    errorCode: String?,
+    errorMessage: String?,
+    nextRetryAt: Long?,
+  ) {
+    dao.updateStateWithRetryOwned(task.id, owner, nextState, now, errorCode, errorMessage, nextRetryAt)
+  }
+
   override fun hasRunnable(serverId: String, now: Long): Boolean = dao.hasRunnable(serverId, now)
 
   override fun recordAttempt(task: UploadTaskEntity, owner: String, now: Long) {
@@ -330,7 +376,11 @@ class RoomUploadTaskSource(private val dao: UploadTaskDao) : UploadTaskSource {
   }
 
   override fun updateProgress(task: UploadTaskEntity, owner: String, sentBytes: Long, now: Long) {
-    dao.updateProgress(task.id, owner, sentBytes)
+    dao.updateProgress(task.id, owner, sentBytes, now + UploadScheduler.LEASE_MILLIS)
+  }
+
+  override fun renewLeases(owner: String, now: Long, leaseUntil: Long) {
+    dao.renewLeases(owner, leaseUntil)
   }
 
   override fun pauseForAuthentication(serverId: String, deviceId: String, now: Long) {

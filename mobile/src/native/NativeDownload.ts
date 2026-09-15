@@ -7,7 +7,7 @@ export interface Spec extends TurboModule {
     fileName: string,
     authorization: string,
     lanCIDRs: readonly string[],
-  ): Promise<number>;
+  ): Promise<string>;
 }
 
 export default TurboModuleRegistry.get<Spec>('NativeDownload');

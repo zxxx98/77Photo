@@ -8,6 +8,8 @@ import type { ApiClient } from '../../services/api/client';
 import type { User } from '../../services/api/types';
 import type { ServerConfig } from '../../services/connection/types';
 import type { ConnectionStore } from '../../services/connection/store';
+import type { AppLanguage } from '../../services/connection/types';
+import i18n, { resolveLanguage } from '../../i18n';
 import { useConnectionSnapshot } from './LanRangesScreen';
 import { RescanPanel } from './RescanPanel';
 import '../../i18n';
@@ -36,6 +38,31 @@ function ValueSelector({ value, onChange, label }: { value: number; onChange: (v
       {[1, 2, 3, 4].map((candidate) => (
         <Pressable key={candidate} onPress={() => onChange(candidate)} style={[styles.selectorOption, candidate === value && styles.selectorOptionActive]}>
           <Text style={styles.selectorText}>{candidate}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function LanguageSelector({ value, onChange }: { value: AppLanguage; onChange: (value: AppLanguage) => void }) {
+  const { t } = useTranslation();
+  const choices: Array<{ value: AppLanguage; label: string }> = [
+    { value: 'system', label: t('settings.languageSystem', '跟随系统') },
+    { value: 'zh', label: t('settings.languageChinese', '简体中文') },
+    { value: 'en', label: 'English' },
+  ];
+  return (
+    <View style={styles.languageSelector}>
+      {choices.map((choice) => (
+        <Pressable
+          key={choice.value}
+          accessibilityRole="radio"
+          accessibilityLabel={choice.label}
+          accessibilityState={{ selected: choice.value === value }}
+          onPress={() => onChange(choice.value)}
+          style={[styles.languageOption, choice.value === value && styles.selectorOptionActive]}
+        >
+          <Text style={styles.selectorText}>{choice.label}</Text>
         </Pressable>
       ))}
     </View>
@@ -118,6 +145,16 @@ export function SettingsScreen({
           <Text style={styles.actionText}>{t('settings.lanRanges', '编辑内网地址范围')}</Text>
         </Pressable>
       </View>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>{t('settings.languageSection', '语言')}</Text>
+        <LanguageSelector
+          value={settings.language}
+          onChange={(language) => {
+            store.getState().setLanguage(language);
+            i18n.changeLanguage(resolveLanguage(language)).catch(() => undefined);
+          }}
+        />
+      </View>
       {user.role === 'admin' && api ? <RescanPanel api={api} /> : null}
     </Screen>
   );
@@ -136,6 +173,8 @@ const styles = StyleSheet.create({
   selectorOption: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, borderColor: colors.border },
   selectorOptionActive: { backgroundColor: colors.accent, borderColor: colors.accent },
   selectorText: { color: colors.ink, fontSize: 16, fontWeight: '800' },
+  languageSelector: { gap: spacing.xs },
+  languageOption: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.sm, borderRadius: 12, borderWidth: 1, borderColor: colors.border },
   switchRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   actionRow: { minHeight: 48, justifyContent: 'center' },
   actionText: { color: colors.accent, fontWeight: '700' },

@@ -142,6 +142,12 @@ function effectivePort(url: URL): string {
 }
 
 export function assertRedirectAllowed(from: URL, to: URL, cidrs: readonly string[]): void {
+  if (from.protocol === 'https:' && to.protocol !== 'https:') {
+    throw new Error('redirect_scheme_downgrade');
+  }
+  if (to.username || to.password) {
+    throw new Error('redirect_credentials');
+  }
   if (
     normalizedHostname(from) !== normalizedHostname(to) ||
     effectivePort(from) !== effectivePort(to)

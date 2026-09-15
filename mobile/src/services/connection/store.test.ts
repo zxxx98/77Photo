@@ -70,4 +70,20 @@ describe('connection settings store', () => {
 
     expect(store.getState().servers[0]?.allowInsecureConfirmedAt).toBeNull();
   });
+
+  it('persists the selected interface language and defaults invalid values to system', async () => {
+    const storage = createMemoryStorage();
+    const first = createConnectionStore({ storage });
+    first.getState().setLanguage('en');
+    await first.getState().flushPersistence();
+
+    const second = createConnectionStore({ storage });
+    await second.getState().hydrate();
+    expect(second.getState().language).toBe('en');
+
+    await storage.setItem('photo77.connection.settings.v1', JSON.stringify({ language: 'fr' }));
+    const third = createConnectionStore({ storage });
+    await third.getState().hydrate();
+    expect(third.getState().language).toBe('system');
+  });
 });

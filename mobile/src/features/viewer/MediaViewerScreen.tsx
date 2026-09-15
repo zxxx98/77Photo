@@ -20,17 +20,20 @@ import Video from 'react-native-video';
 import { colors, spacing } from '../../components/theme';
 import { PrimaryButton } from '../../components/ui';
 import type { ApiClient } from '../../services/api/client';
-import type { Photo } from '../../services/api/types';
+import type { Folder, Photo, User } from '../../services/api/types';
 import { AuthenticatedImage } from '../gallery/AuthenticatedImage';
 import { MediaDetailsSheet } from './MediaDetailsSheet';
 import '../../i18n';
 
 export type MediaViewerScreenProps = {
-  api: Pick<ApiClient, 'previewURL' | 'originalURL' | 'downloadOriginal' | 'getAuthHeaders' | 'createShareLink' | 'deletePhoto'>;
+  api: Pick<ApiClient, 'previewURL' | 'originalURL' | 'downloadOriginal' | 'getAuthHeaders' | 'createShareLink' | 'deletePhoto'> & {
+    getFolder?: (id: string) => Promise<Folder>;
+  };
   photos: readonly Photo[];
   initialIndex?: number;
   serverId?: string;
   userId?: string;
+  userRole?: User['role'];
   onClose?: () => void;
   onDeleted?: (photoId: string) => void;
 };
@@ -45,6 +48,7 @@ export function MediaViewerScreen({
   initialIndex = 0,
   serverId,
   userId,
+  userRole = 'user',
   onClose,
   onDeleted,
 }: MediaViewerScreenProps) {
@@ -53,10 +57,28 @@ export function MediaViewerScreen({
   const [authHeaders, setAuthHeaders] = useState<Record<string, string>>({});
   const [detailsVisible, setDetailsVisible] = useState(false);
   const [unsupportedPhotoId, setUnsupportedPhotoId] = useState<string | null>(null);
+  const [selectedFolder, setSelectedFolder] = useState<Folder | null>(null);
   const lastTap = useRef(0);
   const scale = useRef(new Animated.Value(1)).current;
   const pinchScale = useRef(1);
   const selectedPhoto = photos[selectedIndex];
+  const isPhotoOwner = Boolean(selectedPhoto && userId && selectedPhoto.owner_id === userId);
+  const canShare = userRole === 'admin' || isPhotoOwner;
+  const selectedFolderId = selectedPhoto?.folder_id;
+  const folderForSelection = selectedFolder?.id === selectedFolderId ? selectedFolder : null;
+  const canDelete = canShare || folderForSelection?.owner_id === userId || folderForSelection?.inherited_permission === 'write';
+
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedFolder(null);
+    if (!selectedFolderId || canShare || !api.getFolder) return () => { cancelled = true; };
+    api.getFolder(selectedFolderId).then((folder) => {
+      if (!cancelled) setSelectedFolder(folder);
+    }).catch(() => {
+      if (!cancelled) setSelectedFolder(null);
+    });
+    return () => { cancelled = true; };
+  }, [api, canShare, selectedFolderId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -194,7 +216,7 @@ export function MediaViewerScreen({
       <View style={styles.toolbar}>
         <PrimaryButton label={t('viewer.details', '详情')} onPress={() => setDetailsVisible(true)} />
         <PrimaryButton label={t('viewer.download', '下载原文件')} onPress={openOriginal} />
-        <PrimaryButton label={t('viewer.share', '分享')} onPress={() => { shareSelected().catch(() => undefined); }} />
+        {canShare ? <PrimaryButton label={t('viewer.share', '分享')} onPress={() => { shareSelected().catch(() => undefined); }} /> : null}
       </View>
       <Modal visible={detailsVisible} transparent animationType="slide" onRequestClose={() => setDetailsVisible(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setDetailsVisible(false)}>
@@ -203,8 +225,8 @@ export function MediaViewerScreen({
               photo={selectedPhoto}
               onClose={() => setDetailsVisible(false)}
               onDownload={openOriginal}
-              onShare={() => { shareSelected().catch(() => undefined); }}
-              onDelete={deleteSelected}
+              onShare={canShare ? () => { shareSelected().catch(() => undefined); } : undefined}
+              onDelete={canDelete ? deleteSelected : undefined}
             />
           </View>
         </Pressable>

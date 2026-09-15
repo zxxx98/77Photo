@@ -72,6 +72,7 @@ abstract class UploadTaskDao {
         lease_owner = CASE WHEN :nextState IN ('succeeded', 'failed', 'paused', 'canceled') THEN NULL ELSE lease_owner END,
         lease_until_epoch_ms = CASE WHEN :nextState IN ('succeeded', 'failed', 'paused', 'canceled') THEN NULL ELSE lease_until_epoch_ms END
     WHERE id = :id AND state = :expectedState
+      AND (state != 'uploading' OR lease_owner IS NULL)
     """,
   )
   abstract fun updateState(
@@ -92,11 +93,33 @@ abstract class UploadTaskDao {
         lease_owner = CASE WHEN :nextState IN ('succeeded', 'failed', 'paused', 'canceled', 'queued') THEN NULL ELSE lease_owner END,
         lease_until_epoch_ms = CASE WHEN :nextState IN ('succeeded', 'failed', 'paused', 'canceled', 'queued') THEN NULL ELSE lease_until_epoch_ms END
     WHERE id = :id AND state = :expectedState
+      AND (state != 'uploading' OR lease_owner IS NULL)
     """,
   )
   abstract fun updateStateWithRetry(
     id: String,
     expectedState: String,
+    nextState: String,
+    now: Long,
+    errorCode: String?,
+    errorMessage: String?,
+    nextRetryAt: Long?,
+  ): Int
+
+  @Query(
+    """
+    UPDATE upload_tasks
+    SET state = :nextState, last_error_code = :errorCode, last_error_message = :errorMessage,
+        next_retry_at_epoch_ms = :nextRetryAt,
+        completed_at_epoch_ms = CASE WHEN :nextState IN ('succeeded', 'canceled') THEN :now ELSE completed_at_epoch_ms END,
+        lease_owner = CASE WHEN :nextState IN ('succeeded', 'failed', 'paused', 'canceled', 'queued') THEN NULL ELSE lease_owner END,
+        lease_until_epoch_ms = CASE WHEN :nextState IN ('succeeded', 'failed', 'paused', 'canceled', 'queued') THEN NULL ELSE lease_until_epoch_ms END
+    WHERE id = :id AND state = 'uploading' AND lease_owner = :owner
+    """,
+  )
+  abstract fun updateStateWithRetryOwned(
+    id: String,
+    owner: String,
     nextState: String,
     now: Long,
     errorCode: String?,
@@ -116,11 +139,21 @@ abstract class UploadTaskDao {
   @Query(
     """
     UPDATE upload_tasks
-    SET sent_bytes = CASE WHEN :sentBytes > sent_bytes THEN :sentBytes ELSE sent_bytes END
+    SET sent_bytes = CASE WHEN :sentBytes > sent_bytes THEN :sentBytes ELSE sent_bytes END,
+        lease_until_epoch_ms = :leaseUntil
     WHERE id = :id AND state = 'uploading' AND lease_owner = :owner
     """,
   )
-  abstract fun updateProgress(id: String, owner: String, sentBytes: Long): Int
+  abstract fun updateProgress(id: String, owner: String, sentBytes: Long, leaseUntil: Long): Int
+
+  @Query(
+    """
+    UPDATE upload_tasks
+    SET lease_until_epoch_ms = :leaseUntil
+    WHERE state = 'uploading' AND lease_owner = :owner
+    """,
+  )
+  abstract fun renewLeases(owner: String, leaseUntil: Long): Int
 
   @Query(
     """

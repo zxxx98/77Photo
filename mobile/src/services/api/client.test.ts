@@ -188,4 +188,69 @@ describe('mobile API client', () => {
     expect(authHeaders[0]).toBeNull();
     expect(authHeaders[1]).toBeNull();
   });
+
+  it('rejects redirects that leave the configured server boundary', async () => {
+    const transport: ApiTransport = jest.fn()
+      .mockResolvedValueOnce(new Response(null, {
+        status: 302,
+        headers: { Location: 'http://192.168.1.9:8080/healthz' },
+      }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'ok', database: 'ok', storage: 'ok', request_id: 'req-health' }));
+    const client = createApiClient({
+      baseURL: 'http://192.168.1.8:8080',
+      lanCIDRs: ['192.168.1.0/24'],
+      transport,
+      credentials: createMemoryCredentials(storedCredentials),
+    });
+
+    await expect(client.healthz()).rejects.toThrow('redirect_host_mismatch');
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('revalidates the initial HTTP endpoint against the current LAN ranges', async () => {
+    const transport: ApiTransport = jest.fn();
+    const client = createApiClient({
+      baseURL: 'http://192.168.1.8:8080',
+      lanCIDRs: [],
+      transport,
+      credentials: createMemoryCredentials(storedCredentials),
+    });
+
+    await expect(client.healthz()).rejects.toThrow('server_http_outside_lan');
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('reads a dynamic LAN range provider for every request', async () => {
+    let lanCIDRs: readonly string[] = ['192.168.1.0/24'];
+    const transport: ApiTransport = jest.fn(() => Promise.resolve(jsonResponse({
+      status: 'ok', database: 'ok', storage: 'ok', request_id: 'req-health',
+    })));
+    const client = createApiClient({
+      baseURL: 'http://192.168.1.8:8080',
+      lanCIDRs: () => lanCIDRs,
+      transport,
+      credentials: createMemoryCredentials(storedCredentials),
+    });
+
+    await client.healthz();
+    lanCIDRs = [];
+
+    await expect(client.healthz()).rejects.toThrow('server_http_outside_lan');
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes HTTP media URLs when the current LAN policy no longer allows them', () => {
+    let lanCIDRs: readonly string[] = ['192.168.1.0/24'];
+    const client = createApiClient({
+      baseURL: 'http://192.168.1.8:8080',
+      lanCIDRs: () => lanCIDRs,
+      credentials: createMemoryCredentials(storedCredentials),
+    });
+
+    expect(client.previewURL('photo-1')).toBe('http://192.168.1.8:8080/api/v1/photos/photo-1/preview');
+    lanCIDRs = [];
+    expect(client.previewURL('photo-1')).toBe('');
+    expect(client.originalURL('photo-1')).toBe('');
+    expect(client.thumbnailURL('photo-1', 256)).toBe('');
+  });
 });

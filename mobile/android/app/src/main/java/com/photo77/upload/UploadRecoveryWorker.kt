@@ -17,6 +17,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
+internal enum class RecoveryLeaseDecision {
+  RUN,
+  YIELD_SUCCESS,
+  RETRY,
+}
+
 /** Restarts queued work after a process kill, reboot, or connectivity interruption. */
 class UploadRecoveryWorker(
   appContext: Context,
@@ -27,12 +33,17 @@ class UploadRecoveryWorker(
     val baseUrl = inputData.getString(KEY_BASE_URL)?.takeIf { it.isNotBlank() }
     val deviceId = inputData.getString(KEY_DEVICE_ID)?.takeIf { it.isNotBlank() }
     if (serverId == null || baseUrl == null || deviceId == null) return@withContext Result.failure()
+    if (reservationDecision(UploadForegroundService.isStartReserved(serverId)) == RecoveryLeaseDecision.RETRY) {
+      return@withContext Result.retry()
+    }
     val lanCIDRs = inputData.getStringArray(KEY_LAN_CIDRS)?.toList().orEmpty()
     val normalizedBaseUrl = runCatching { UploadURLPolicy.requireAllowed(baseUrl, lanCIDRs) }.getOrNull()
       ?: return@withContext Result.failure()
 
     val source = RoomUploadTaskSource(UploadDatabase.getInstance(applicationContext).uploadTaskDao())
-    if (source.hasActiveLease(serverId, System.currentTimeMillis())) return@withContext Result.retry()
+    if (leaseDecision(source.hasActiveLease(serverId, System.currentTimeMillis())) == RecoveryLeaseDecision.YIELD_SUCCESS) {
+      return@withContext Result.success()
+    }
     val api = UploadApi(
       baseUrl = normalizedBaseUrl,
       contentResolver = applicationContext.contentResolver,
@@ -72,6 +83,12 @@ class UploadRecoveryWorker(
     const val KEY_ALLOW_MOBILE = "allow_mobile"
     const val KEY_LAN_CIDRS = "lan_cidrs"
 
+    internal fun leaseDecision(hasActiveLease: Boolean): RecoveryLeaseDecision =
+      if (hasActiveLease) RecoveryLeaseDecision.YIELD_SUCCESS else RecoveryLeaseDecision.RUN
+
+    internal fun reservationDecision(isReserved: Boolean): RecoveryLeaseDecision =
+      if (isReserved) RecoveryLeaseDecision.RETRY else RecoveryLeaseDecision.RUN
+
     fun schedule(
       context: Context,
       serverId: String,
@@ -80,6 +97,7 @@ class UploadRecoveryWorker(
       concurrency: Int = 2,
       allowMobile: Boolean = false,
       lanCIDRs: Collection<String> = emptyList(),
+      initialDelayMillis: Long = 0L,
     ) {
       val input = Data.Builder()
         .putString(KEY_SERVER_ID, serverId)
@@ -92,11 +110,14 @@ class UploadRecoveryWorker(
       val constraints = Constraints.Builder()
         .setRequiredNetworkType(NetworkType.CONNECTED)
         .build()
-      val request = OneTimeWorkRequestBuilder<UploadRecoveryWorker>()
+      val requestBuilder = OneTimeWorkRequestBuilder<UploadRecoveryWorker>()
         .setInputData(input)
         .setConstraints(constraints)
         .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-        .build()
+      if (initialDelayMillis > 0L) {
+        requestBuilder.setInitialDelay(initialDelayMillis, TimeUnit.MILLISECONDS)
+      }
+      val request = requestBuilder.build()
       WorkManager.getInstance(context).enqueueUniqueWork(
         "77photo-upload-$serverId",
         ExistingWorkPolicy.KEEP,

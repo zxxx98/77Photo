@@ -65,4 +65,24 @@ describe('connection policy', () => {
       ),
     ).not.toThrow();
   });
+
+  it('rejects HTTPS redirects that downgrade to HTTP even on the same LAN host', () => {
+    expect(() =>
+      assertRedirectAllowed(
+        new URL('https://192.168.1.8:8080'),
+        new URL('http://192.168.1.8:8080/api'),
+        DEFAULT_LAN_CIDRS,
+      ),
+    ).toThrow();
+  });
+
+  it('rejects redirects that inject URL credentials', () => {
+    expect(() =>
+      assertRedirectAllowed(
+        new URL('https://photo.example'),
+        new URL('https://user:secret@photo.example/api'),
+        DEFAULT_LAN_CIDRS,
+      ),
+    ).toThrow();
+  });
 });

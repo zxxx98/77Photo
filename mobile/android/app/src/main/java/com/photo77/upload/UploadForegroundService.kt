@@ -22,6 +22,12 @@ class UploadForegroundService : Service() {
   private val monitor: ExecutorService = Executors.newSingleThreadExecutor()
   private var scheduler: UploadScheduler? = null
   private var currentServerId: String? = null
+  private var currentBaseUrl: String? = null
+  private var currentDeviceId: String? = null
+  private var currentAllowMobile = false
+  private var currentLanCIDRs: List<String> = emptyList()
+  private var currentConcurrency = DEFAULT_CONCURRENCY
+  private var recoveryNeeded = false
   private val stopping = AtomicBoolean(false)
 
   override fun onCreate() {
@@ -53,12 +59,18 @@ class UploadForegroundService : Service() {
     // Promotion happens before opening the database or network connection.
     stopping.set(false)
     currentServerId = serverId
+    currentBaseUrl = normalizedBaseUrl
+    currentDeviceId = deviceId
+    currentAllowMobile = intent.getBooleanExtra(EXTRA_ALLOW_MOBILE, false)
+    currentLanCIDRs = lanCIDRs
+    currentConcurrency = intent.getIntExtra(EXTRA_CONCURRENCY, DEFAULT_CONCURRENCY).coerceIn(1, 4)
+    recoveryNeeded = false
     synchronized(activeServices) {
       existingServerId?.let { if (activeServices[it] === this) activeServices.remove(it) }
       activeServices[serverId] = this
     }
-    val allowMobile = intent.getBooleanExtra(EXTRA_ALLOW_MOBILE, false)
-    val concurrency = intent.getIntExtra(EXTRA_CONCURRENCY, DEFAULT_CONCURRENCY)
+    val allowMobile = currentAllowMobile
+    val concurrency = currentConcurrency
     startInForeground(serverId, normalizedBaseUrl, deviceId, allowMobile, lanCIDRs, concurrency)
     if (scheduler != null && existingServerId == serverId) {
       scheduler?.setConcurrency(concurrency)
@@ -79,6 +91,7 @@ class UploadForegroundService : Service() {
       uploader = api,
       authRefresher = api,
       networkAvailable = { hasAllowedNetwork(allowMobile) },
+      onInitialLeaseDecision = { releaseStartReservation(serverId) },
     )
     scheduler = nextScheduler
     val future = nextScheduler.start(
@@ -91,9 +104,13 @@ class UploadForegroundService : Service() {
   }
 
   override fun onDestroy() {
+    val hadScheduler = scheduler != null
     stopping.set(true)
+    if (hadScheduler) recoveryNeeded = true
+    currentServerId?.let(::releaseStartReservation)
     scheduler?.stop()
     scheduler = null
+    scheduleRecoveryIfNeeded()
     synchronized(activeServices) {
       currentServerId?.let { if (activeServices[it] === this) activeServices.remove(it) }
     }
@@ -104,7 +121,9 @@ class UploadForegroundService : Service() {
   override fun onTimeout(startId: Int) {
     // Android may time-limit data-sync foreground services. Leases return to queued.
     stopping.set(true)
+    recoveryNeeded = true
     scheduler?.stop()
+    scheduleRecoveryIfNeeded()
     stopSelf(startId)
   }
 
@@ -168,6 +187,7 @@ class UploadForegroundService : Service() {
     if (stopping.get() || Thread.currentThread().isInterrupted) return
     val tasks = dao.findByServer(serverId)
     if (tasks.any { it.state == com.photo77.upload.db.UploadTaskState.QUEUED || it.state == com.photo77.upload.db.UploadTaskState.UPLOADING }) {
+      recoveryNeeded = true
       stopSelfResult(startId)
       return
     }
@@ -182,6 +202,23 @@ class UploadForegroundService : Service() {
       ),
     )
     stopSelfResult(startId)
+  }
+
+  private fun scheduleRecoveryIfNeeded() {
+    if (!recoveryNeeded) return
+    val serverId = currentServerId ?: return
+    val baseUrl = currentBaseUrl ?: return
+    val deviceId = currentDeviceId ?: return
+    UploadRecoveryWorker.schedule(
+      context = applicationContext,
+      serverId = serverId,
+      baseUrl = baseUrl,
+      deviceId = deviceId,
+      concurrency = currentConcurrency,
+      allowMobile = currentAllowMobile,
+      lanCIDRs = currentLanCIDRs,
+    )
+    recoveryNeeded = false
   }
 
   private fun publishProgress(
@@ -258,7 +295,19 @@ class UploadForegroundService : Service() {
       return true
     }
 
+    fun reserveStart(serverId: String) {
+      synchronized(startReservations) { startReservations.add(serverId) }
+    }
+
+    fun releaseStartReservation(serverId: String) {
+      synchronized(startReservations) { startReservations.remove(serverId) }
+    }
+
+    internal fun isStartReserved(serverId: String): Boolean =
+      synchronized(startReservations) { serverId in startReservations }
+
     private const val MAX_LAN_CIDRS = 128
     private val activeServices = mutableMapOf<String, UploadForegroundService>()
+    private val startReservations = mutableSetOf<String>()
   }
 }

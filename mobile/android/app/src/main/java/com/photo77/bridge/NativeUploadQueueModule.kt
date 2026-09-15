@@ -42,29 +42,41 @@ class NativeUploadQueueModule(
       val safeDeviceId = requireIdentifier(deviceId, "deviceId")
       val safeLANCIDRs = readLANCIDRs(lanCIDRs)
       val normalizedBaseURL = com.photo77.upload.UploadURLPolicy.requireAllowed(safeBaseURL, safeLANCIDRs)
-      val intent = Intent(reactApplicationContext, com.photo77.upload.UploadForegroundService::class.java).apply {
-        action = com.photo77.upload.UploadForegroundService.ACTION_START
-        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_SERVER_ID, safeServerId)
-        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_BASE_URL, normalizedBaseURL)
-        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_DEVICE_ID, safeDeviceId)
-        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_CONCURRENCY, concurrency.coerceIn(1, 4))
-        putExtra(com.photo77.upload.UploadForegroundService.EXTRA_ALLOW_MOBILE, allowMobile)
-        putStringArrayListExtra(com.photo77.upload.UploadForegroundService.EXTRA_LAN_CIDRS, ArrayList(safeLANCIDRs))
+      com.photo77.upload.UploadForegroundService.reserveStart(safeServerId)
+      try {
+        val intent = Intent(reactApplicationContext, com.photo77.upload.UploadForegroundService::class.java).apply {
+          action = com.photo77.upload.UploadForegroundService.ACTION_START
+          putExtra(com.photo77.upload.UploadForegroundService.EXTRA_SERVER_ID, safeServerId)
+          putExtra(com.photo77.upload.UploadForegroundService.EXTRA_BASE_URL, normalizedBaseURL)
+          putExtra(com.photo77.upload.UploadForegroundService.EXTRA_DEVICE_ID, safeDeviceId)
+          putExtra(com.photo77.upload.UploadForegroundService.EXTRA_CONCURRENCY, concurrency.coerceIn(1, 4))
+          putExtra(com.photo77.upload.UploadForegroundService.EXTRA_ALLOW_MOBILE, allowMobile)
+          putStringArrayListExtra(com.photo77.upload.UploadForegroundService.EXTRA_LAN_CIDRS, ArrayList(safeLANCIDRs))
+        }
+        com.photo77.upload.UploadStartCoordinator(
+          scheduleRecovery = {
+            com.photo77.upload.UploadRecoveryWorker.schedule(
+              context = reactApplicationContext,
+              serverId = safeServerId,
+              baseUrl = normalizedBaseURL,
+              deviceId = safeDeviceId,
+              concurrency = concurrency,
+              allowMobile = allowMobile,
+              lanCIDRs = safeLANCIDRs,
+            )
+          },
+          startService = {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+              reactApplicationContext.startForegroundService(intent)
+            } else {
+              reactApplicationContext.startService(intent)
+            }
+          },
+        ).run()
+      } catch (error: Throwable) {
+        com.photo77.upload.UploadForegroundService.releaseStartReservation(safeServerId)
+        throw error
       }
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        reactApplicationContext.startForegroundService(intent)
-      } else {
-        reactApplicationContext.startService(intent)
-      }
-      com.photo77.upload.UploadRecoveryWorker.schedule(
-        context = reactApplicationContext,
-        serverId = safeServerId,
-        baseUrl = normalizedBaseURL,
-        deviceId = safeDeviceId,
-        concurrency = concurrency,
-        allowMobile = allowMobile,
-        lanCIDRs = safeLANCIDRs,
-      )
       null
     }
   }

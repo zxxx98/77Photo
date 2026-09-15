@@ -61,7 +61,7 @@ function AuthenticatedApi({ server, user }: AuthenticatedRouteProps) {
       baseURL: server.baseURL,
       serverId: server.id,
       userId: user.id,
-      lanCIDRs: getEnabledLANCIDRs(connectionStore.getState()),
+      lanCIDRs: () => getEnabledLANCIDRs(connectionStore.getState()),
       credentials: credentialsStore,
       queryClient,
     }),
@@ -243,6 +243,7 @@ function ViewerRoute({
       initialIndex={route.params.initialIndex}
       serverId={server.id}
       userId={user.id}
+      userRole={user.role}
       onClose={() => navigation.goBack()}
     />
   );
@@ -253,7 +254,7 @@ function LoginRoute({ server, reload }: { server: ServerConfig; reload: () => vo
     () => createApiClient({
       baseURL: server.baseURL,
       serverId: server.id,
-      lanCIDRs: getEnabledLANCIDRs(connectionStore.getState()),
+      lanCIDRs: () => getEnabledLANCIDRs(connectionStore.getState()),
       credentials: credentialsStore,
     }),
     [server.baseURL, server.id],

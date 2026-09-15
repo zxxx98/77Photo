@@ -12,6 +12,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import com.photo77.network.PolicyAwareHttpClient
 
 data class UploadStoredCredentials(
   val serverId: String,
@@ -99,9 +100,10 @@ class UploadApi(
   private val baseUrl: String,
   private val contentResolver: ContentResolver,
   private val credentials: UploadCredentialStore,
-  private val client: OkHttpClient = OkHttpClient.Builder().build(),
+  client: OkHttpClient = PolicyAwareHttpClient.create(),
   allowedLANCIDRs: Collection<String> = emptyList(),
 ) : UploadTaskUploader, UploadAuthRefresher {
+  private val client: OkHttpClient = PolicyAwareHttpClient.enforce(client).build()
   private val allowedBaseUrl = runCatching { UploadURLPolicy.requireAllowed(baseUrl, allowedLANCIDRs) }.getOrNull()
 
   override fun upload(task: com.photo77.upload.db.UploadTaskEntity, onProgress: (Long, Long?) -> Unit): UploadResult {

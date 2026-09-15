@@ -66,13 +66,19 @@ describe('LoginScreen', () => {
     expect(services.onAuthenticated).toHaveBeenCalled();
   });
 
-  it('shows the LAN warning and permits an explicit HTTP login', async () => {
+  it('requires explicit confirmation before an HTTP login', async () => {
     const services = servicesFor('http://192.168.1.9:8080');
     await render(<LoginScreen services={services} />);
 
     expect(screen.getByText(/内网未加密/)).toBeTruthy();
     await fireEvent.changeText(screen.getByLabelText('用户名'), 'admin');
     await fireEvent.changeText(screen.getByLabelText('密码'), 'correct horse battery staple');
+    await fireEvent.press(screen.getByRole('button', { name: '安全登录' }));
+
+    expect(services.api.healthz).not.toHaveBeenCalled();
+    expect(services.api.login).not.toHaveBeenCalled();
+
+    await fireEvent.press(screen.getByRole('checkbox', { name: '确认在内网使用未加密 HTTP' }));
     await fireEvent.press(screen.getByRole('button', { name: '安全登录' }));
 
     await waitFor(() => expect(services.api.login).toHaveBeenCalled());

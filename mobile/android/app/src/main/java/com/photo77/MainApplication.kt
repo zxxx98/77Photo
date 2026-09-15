@@ -10,6 +10,8 @@ import com.photo77.credentials.NativeCredentialsPackage
 import com.photo77.bridge.NativeUploadQueuePackage
 import com.photo77.bridge.NativeDownloadPackage
 import com.photo77.picker.NativePhotoPickerPackage
+import com.photo77.network.PolicyAwareRedirectInterceptor
+import com.facebook.react.modules.network.OkHttpClientProvider
 
 class MainApplication : Application(), ReactApplication {
 
@@ -28,6 +30,13 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    OkHttpClientProvider.setOkHttpClientFactory {
+      OkHttpClientProvider.createClientBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .addInterceptor(PolicyAwareRedirectInterceptor())
+        .build()
+    }
     loadReactNative(this)
   }
 }

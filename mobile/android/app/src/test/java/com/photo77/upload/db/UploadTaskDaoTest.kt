@@ -65,6 +65,39 @@ class UploadTaskDaoTest {
   }
 
   @Test
+  fun staleLeaseOwnerCannotCompleteAReclaimedTask() = runBlocking {
+    dao.insert(task("task-1", "server-a", 1000))
+    dao.acquireQueued("server-a", "worker-1", 1, 1000, 31000)
+    dao.recoverExpiredLeases(31001)
+    dao.acquireQueued("server-a", "worker-2", 1, 31001, 61001)
+
+    assertEquals(
+      0,
+      dao.updateStateWithRetryOwned(
+        id = "task-1",
+        owner = "worker-1",
+        nextState = UploadTaskState.SUCCEEDED,
+        now = 32000,
+        errorCode = null,
+        errorMessage = null,
+        nextRetryAt = null,
+      ),
+    )
+    assertEquals(
+      1,
+      dao.updateStateWithRetryOwned(
+        id = "task-1",
+        owner = "worker-2",
+        nextState = UploadTaskState.SUCCEEDED,
+        now = 32001,
+        errorCode = null,
+        errorMessage = null,
+        nextRetryAt = null,
+      ),
+    )
+  }
+
+  @Test
   fun stateUpdatesRequireExpectedCurrentState() = runBlocking {
     dao.insert(task("task-1", "server-a", 1000))
 

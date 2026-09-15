@@ -4,10 +4,6 @@ import android.content.ContentResolver
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
-import androidx.activity.ComponentActivity
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import com.facebook.react.BaseReactPackage
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.NativeModule
@@ -22,6 +18,33 @@ import com.facebook.react.module.model.ReactModuleInfoProvider
 import com.facebook.react.turbomodule.core.interfaces.TurboModule
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+
+/** Implemented by the activity that owns the Activity Result registration. */
+interface PhotoPickerHost {
+  fun launchPhotoPicker()
+}
+
+/** Keeps the result callback with the React module while the activity is recreated. */
+internal object PhotoPickerResultDispatcher {
+  private var handler: ((List<Uri>) -> Unit)? = null
+
+  @Synchronized
+  fun register(handler: (List<Uri>) -> Unit) {
+    this.handler = handler
+  }
+
+  @Synchronized
+  fun clear() {
+    handler = null
+  }
+
+  @Synchronized
+  fun dispatch(uris: List<Uri>) {
+    val callback = handler
+    handler = null
+    callback?.invoke(uris)
+  }
+}
 
 data class PhotoPickerMetadataInput(
   val displayName: String?,
@@ -77,11 +100,7 @@ internal class PhotoPickerContentReader(private val resolver: ContentResolver) {
     val mimeType = resolver.getType(uri) ?: queriedMime
       ?: throw IllegalArgumentException("media type is missing")
     return PhotoPickerMetadata.from(uri.toString(), PhotoPickerMetadataInput(displayName, mimeType, size, fallbackSize)) {
-      try {
-        resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      } catch (_: SecurityException) {
-        // Some Photo Picker providers grant only a transient read permission.
-      }
+      resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
   }
 }
@@ -92,14 +111,6 @@ class NativePhotoPickerModule(
 ) : ReactContextBaseJavaModule(reactContext), TurboModule {
   private val executor: ExecutorService = Executors.newSingleThreadExecutor()
   private var pending: Promise? = null
-  private val pickerLauncher: ActivityResultLauncher<PickVisualMediaRequest>? =
-    (reactContext.currentActivity as? ComponentActivity)?.let { activity ->
-      runCatching {
-        activity.registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_SELECTION)) { uris ->
-          handleSelection(uris)
-        }
-      }.getOrNull()
-    }
 
   override fun getName(): String = NAME
 
@@ -112,15 +123,17 @@ class NativePhotoPickerModule(
       }
       pending = promise
     }
-    val launcher = pickerLauncher
-    if (launcher == null) {
+    val host = reactApplicationContext.currentActivity as? PhotoPickerHost
+    if (host == null) {
       synchronized(this) { pending = null }
       promise.reject("PICKER_UNAVAILABLE", "Android Photo Picker is unavailable")
       return
     }
+    PhotoPickerResultDispatcher.register(::handleSelection)
     try {
-      launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+      host.launchPhotoPicker()
     } catch (error: Throwable) {
+      PhotoPickerResultDispatcher.clear()
       synchronized(this) { pending = null }
       promise.reject("PICKER_UNAVAILABLE", error)
     }
@@ -145,6 +158,7 @@ class NativePhotoPickerModule(
   }
 
   override fun invalidate() {
+    PhotoPickerResultDispatcher.clear()
     synchronized(this) { pending = null }
     executor.shutdownNow()
     super.invalidate()
@@ -159,7 +173,7 @@ class NativePhotoPickerModule(
 
   companion object {
     const val NAME = "NativePhotoPicker"
-    private const val MAX_SELECTION = 100
+    const val MAX_SELECTION = 100
   }
 }
 

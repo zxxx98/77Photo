@@ -1,11 +1,22 @@
 package com.photo77.picker
 
+import android.net.Uri
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativePhotoPickerModuleTest {
+  @Test
+  fun activityResultDispatcherDeliversSelectionsToTheNativeModule() {
+    var received: List<Uri>? = null
+    PhotoPickerResultDispatcher.register { received = it }
+
+    PhotoPickerResultDispatcher.dispatch(listOf(Uri.parse("content://media/photo-1")))
+
+    assertEquals(listOf(Uri.parse("content://media/photo-1")), received)
+  }
+
   @Test
   fun metadataUsesProviderValuesAndPersistsReadGrant() {
     var persisted = false

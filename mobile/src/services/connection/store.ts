@@ -3,7 +3,7 @@ import { create } from 'zustand';
 
 import { parseCIDR } from './cidr';
 import { DEFAULT_LAN_CIDRS, validateManualCIDR } from './policy';
-import type { ConnectionSettings, ManualCIDR, ServerConfig } from './types';
+import type { AppLanguage, ConnectionSettings, ManualCIDR, ServerConfig } from './types';
 
 export const CONNECTION_SETTINGS_STORAGE_KEY = 'photo77.connection.settings.v1';
 
@@ -36,6 +36,7 @@ export type ConnectionStoreState = ConnectionSettings & {
   setManualCIDREnabled: (cidr: string, enabled: boolean) => void;
   setUploadConcurrency: (value: UploadConcurrency) => void;
   setCellularUploadEnabled: (enabled: boolean) => void;
+  setLanguage: (language: AppLanguage) => void;
 };
 
 export type ConnectionStoreOptions = {
@@ -53,6 +54,7 @@ export const DEFAULT_CONNECTION_SETTINGS: ConnectionSettings = {
   manualCIDRs: [],
   uploadConcurrency: 2,
   cellularUploadEnabled: false,
+  language: 'system',
 };
 
 function generateServerID(): string {
@@ -61,6 +63,10 @@ function generateServerID(): string {
 
 function isUploadConcurrency(value: unknown): value is UploadConcurrency {
   return value === 1 || value === 2 || value === 3 || value === 4;
+}
+
+function isAppLanguage(value: unknown): value is AppLanguage {
+  return value === 'system' || value === 'zh' || value === 'en';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -145,6 +151,7 @@ function normalizeSettings(value: unknown): ConnectionSettings {
     manualCIDRs,
     uploadConcurrency: isUploadConcurrency(value.uploadConcurrency) ? value.uploadConcurrency : 2,
     cellularUploadEnabled: value.cellularUploadEnabled === true,
+    language: isAppLanguage(value.language) ? value.language : 'system',
   };
 }
 
@@ -156,6 +163,7 @@ function settingsFromState(state: ConnectionStoreState): ConnectionSettings {
     manualCIDRs: state.manualCIDRs,
     uploadConcurrency: state.uploadConcurrency,
     cellularUploadEnabled: state.cellularUploadEnabled,
+    language: state.language,
   };
 }
 
@@ -315,6 +323,10 @@ export function createConnectionStore(options: ConnectionStoreOptions = {}) {
       },
       setCellularUploadEnabled: (enabled) => {
         persistUpdate((state) => ({ ...state, cellularUploadEnabled: enabled }));
+      },
+      setLanguage: (language) => {
+        if (!isAppLanguage(language)) return;
+        persistUpdate((state) => ({ ...state, language }));
       },
     };
   });

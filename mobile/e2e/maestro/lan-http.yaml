@@ -7,7 +7,10 @@ appId: com.photo77
 - tapOn: "显示名称"
 - inputText: "家庭图库"
 - tapOn: "添加服务器"
-- assertVisible: "内网未加密"
+- extendedWaitUntil:
+    visible: "内网未加密"
+    timeout: 10000
+- tapOn: "确认在内网使用未加密 HTTP"
 - launchApp:
     clearState: true
 - tapOn: "服务器地址"

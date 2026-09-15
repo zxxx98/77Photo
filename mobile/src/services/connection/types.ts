@@ -10,6 +10,8 @@ export type ManualCIDR = {
   enabled: boolean;
 };
 
+export type AppLanguage = 'system' | 'zh' | 'en';
+
 export type ConnectionSettings = {
   servers: ServerConfig[];
   selectedServerId: string | null;
@@ -17,4 +19,5 @@ export type ConnectionSettings = {
   manualCIDRs: ManualCIDR[];
   uploadConcurrency: 1 | 2 | 3 | 4;
   cellularUploadEnabled: boolean;
+  language: AppLanguage;
 };

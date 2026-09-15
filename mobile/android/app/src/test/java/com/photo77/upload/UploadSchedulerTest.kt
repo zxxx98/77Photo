@@ -106,6 +106,23 @@ class UploadSchedulerTest {
     assertEquals(UploadTaskState.QUEUED, source.tasks.single().state)
   }
 
+  @Test
+  fun reportsWhenTheInitialLeaseDecisionHasCompleted() {
+    val source = FakeTaskSource(tasks("server-a", 1))
+    val initialized = CountDownLatch(1)
+    val scheduler = UploadScheduler(
+      source = source,
+      uploader = UploadTaskUploader { _, _ -> UploadResult.success() },
+      sleepMillis = 1,
+      onInitialLeaseDecision = { initialized.countDown() },
+    )
+
+    scheduler.start("server-a", "worker-1", 1)
+
+    assertTrue(initialized.await(5, TimeUnit.SECONDS))
+    scheduler.stop()
+  }
+
   private fun tasks(serverId: String, count: Int): List<UploadTaskEntity> = (1..count).map { index ->
     UploadTaskEntity(
       id = "task-$index",

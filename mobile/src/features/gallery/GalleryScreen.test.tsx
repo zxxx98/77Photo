@@ -303,4 +303,62 @@ describe('folders and authenticated media', () => {
     expect(api.previewURL).toHaveBeenCalledWith('photo-1');
     expect(api.previewURL).toHaveBeenCalledWith('photo-1');
   });
+
+  it('hides share and permanent delete actions for read-only shared media', async () => {
+    const selectedPhoto = photo('shared-photo');
+    selectedPhoto.owner_id = 'owner-1';
+    const api = createClient({
+      getFolder: jest.fn(async () => folder({
+        owner_id: 'owner-1',
+        inherited_permission: 'read',
+        is_shared: true,
+      })),
+    });
+    const rendered = await renderWithQuery(
+      <MediaViewerScreen
+        api={api}
+        photos={[selectedPhoto]}
+        userId="member-1"
+        userRole="user"
+      />,
+    );
+
+    await waitFor(() => expect(api.getFolder).toHaveBeenCalledWith('folder-1'));
+    expect(rendered.queryByRole('button', { name: '分享' })).toBeNull();
+    await fireEvent.press(rendered.getByRole('button', { name: '详情' }));
+    expect(rendered.queryByRole('button', { name: '分享' })).toBeNull();
+    expect(rendered.queryByRole('button', { name: '永久删除' })).toBeNull();
+  });
+
+  it('does not carry delete permission across a swipe to another folder', async () => {
+    const writablePhoto = photo('writable-photo');
+    writablePhoto.owner_id = 'owner-1';
+    writablePhoto.folder_id = 'writable-folder';
+    const readOnlyPhoto = photo('read-only-photo');
+    readOnlyPhoto.owner_id = 'owner-1';
+    readOnlyPhoto.folder_id = 'read-only-folder';
+    const api = createClient({
+      getFolder: jest.fn(async (id: string) => folder({
+        id,
+        owner_id: id === 'writable-folder' ? 'member-1' : 'owner-1',
+        inherited_permission: id === 'writable-folder' ? 'write' : 'read',
+        is_shared: true,
+      })),
+    });
+    const rendered = await renderWithQuery(
+      <MediaViewerScreen api={api} photos={[writablePhoto]} userId="member-1" userRole="user" />,
+    );
+
+    await waitFor(() => expect(api.getFolder).toHaveBeenCalledWith('writable-folder'));
+    await fireEvent.press(rendered.getByRole('button', { name: '详情' }));
+    expect(rendered.getByRole('button', { name: '永久删除' })).toBeTruthy();
+
+    await rendered.rerender(
+      <QueryClientProvider client={rendered.queryClient}>
+        <MediaViewerScreen api={api} photos={[readOnlyPhoto]} userId="member-1" userRole="user" />
+      </QueryClientProvider>,
+    );
+    expect(api.getFolder).toHaveBeenCalledWith('read-only-folder');
+    expect(rendered.queryByRole('button', { name: '永久删除' })).toBeNull();
+  });
 });

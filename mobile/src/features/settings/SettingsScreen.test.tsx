@@ -6,6 +6,7 @@ import type { ServerConfig } from '../../services/connection/types';
 import type { User } from '../../services/api/types';
 import { LanRangesScreen } from './LanRangesScreen';
 import { SettingsScreen } from './SettingsScreen';
+import i18n from '../../i18n';
 
 const server: ServerConfig = {
   id: 'server-1', baseURL: 'https://photo.test', displayName: 'Home', allowInsecureConfirmedAt: null,
@@ -63,5 +64,19 @@ describe('settings', () => {
       fireEvent.press(view.getByRole('button', { name: '切换到 旅行图库' }));
     });
     expect(onSwitchServer).toHaveBeenCalledWith(otherId);
+  });
+
+  it('offers system, Chinese, and English language choices and persists the selection', async () => {
+    const store = createConnectionStore({ storage: { getItem: async () => null, setItem: async () => undefined } });
+    const view = await renderWith(<SettingsScreen store={store} server={server} user={admin} />);
+
+    expect(store.getState().language).toBe('system');
+    expect(view.getByRole('radio', { name: '跟随系统' })).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(view.getByRole('radio', { name: 'English' }));
+    });
+
+    await waitFor(() => expect(store.getState().language).toBe('en'));
+    expect(i18n.language).toBe('en');
   });
 });

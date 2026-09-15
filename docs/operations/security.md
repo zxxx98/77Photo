@@ -33,7 +33,7 @@ go test ./tests/integration -count=1 -v
 
 - 最低兼容服务端是包含移动认证接口和 Bearer 资源认证的版本：必须支持 `/api/v1/mobile/auth/login`、`/api/v1/mobile/auth/refresh`、`/api/v1/mobile/auth/logout`、设备管理接口，以及当前 OpenAPI 中声明的 Bearer 资源路由。旧服务端不会回退到 Cookie 登录，客户端应提示升级。
 - HTTPS 服务器应由反向代理终止 TLS；用 IP 访问时证书必须包含对应 IP SAN。客户端首版不提供自定义私有 CA 导入或绕过证书校验，生产环境使用公有 CA，或先把受信 CA 正确部署到受管设备并完成真机验证。
-- HTTP 只对用户明确启用且命中配置 CIDR 的 IP 字面量开放。公网范围和 catch-all 范围不会被默认允许；HTTP 会话中的密码、令牌和照片内容可能被同一网络读取或篡改，因此仅用于受控家庭 LAN。
+- HTTP 只对用户明确启用、在登录页确认风险且命中配置 CIDR 的 IP 字面量开放。公网范围和 catch-all 范围不会被默认允许；HTTP 会话中的密码、令牌和照片内容可能被同一网络读取或篡改，因此仅用于受控家庭 LAN。
 - Android 13+ 的通知权限决定后台进度是否可见；拒绝权限不能被当作安全授权。电池优化、厂商后台限制或 data-sync 前台服务时限可能暂停任务，服务必须释放租约并让 WorkManager 恢复，不能通过提升权限规避系统限制。
 - Photo Picker URI、令牌和队列元数据不应写入日志、剪贴板或 URL。清理缩略图缓存不能删除原媒体、Room 上传队列或 Keystore 凭据；进程终止后，已完成项不重复消费，未完成单文件允许从头重试。
 

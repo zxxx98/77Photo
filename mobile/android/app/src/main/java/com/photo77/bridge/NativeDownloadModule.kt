@@ -1,9 +1,8 @@
 package com.photo77.bridge
 
-import android.app.DownloadManager
-import android.content.Context
-import android.net.Uri
-import android.os.Environment
+import android.content.ContentValues
+import android.os.Build
+import android.provider.MediaStore
 import com.facebook.react.BaseReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.Promise
@@ -15,14 +14,23 @@ import com.facebook.react.module.model.ReactModuleInfo
 import com.facebook.react.module.model.ReactModuleInfoProvider
 import com.facebook.react.turbomodule.core.interfaces.TurboModule
 import com.photo77.upload.UploadURLPolicy
+import com.photo77.network.PolicyAwareHttpClient
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import okhttp3.OkHttpClient
+import okhttp3.Request
+
+internal fun requireMediaStoreUpdate(updatedRows: Int) {
+  if (updatedRows <= 0) throw java.io.IOException("download destination could not be published")
+}
 
 /** Queues an authenticated original download without putting the bearer token in its URL. */
 @ReactModule(name = NativeDownloadModule.NAME)
 class NativeDownloadModule(
   reactContext: ReactApplicationContext,
+  client: OkHttpClient = PolicyAwareHttpClient.create(),
 ) : ReactContextBaseJavaModule(reactContext), TurboModule {
+  private val client: OkHttpClient = PolicyAwareHttpClient.enforce(client).build()
   private val executor: ExecutorService = Executors.newSingleThreadExecutor()
 
   override fun getName(): String = NAME
@@ -40,16 +48,40 @@ class NativeDownloadModule(
           !value.contains('\r') && !value.contains('\n')
       } ?: throw IllegalArgumentException("authorization is invalid")
       val safeFileName = sanitizeFileName(fileName)
-      val manager = reactApplicationContext.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
-        ?: throw IllegalStateException("download manager is unavailable")
-      val request = DownloadManager.Request(Uri.parse(safeURL))
-        .setTitle("77Photo")
-        .setDescription("Original photo download")
-        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-        .setMimeType("application/octet-stream")
-        .addRequestHeader("Authorization", safeAuthorization)
-        .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, safeFileName)
-      manager.enqueue(request).toDouble()
+      val request = Request.Builder()
+        .url(safeURL)
+        .header("Authorization", safeAuthorization)
+        .get()
+        .build()
+      val resolver = reactApplicationContext.contentResolver
+      val values = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, safeFileName)
+        put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/77Photo")
+          put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+      }
+      val destination = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        ?: throw IllegalStateException("download destination is unavailable")
+      var completed = false
+      try {
+        client.newCall(request).execute().use { response ->
+          if (!response.isSuccessful) throw java.io.IOException("download failed with HTTP ${response.code}")
+          val body = response.body ?: throw java.io.IOException("download response is empty")
+          val output = resolver.openOutputStream(destination)
+            ?: throw java.io.IOException("download destination cannot be opened")
+          body.byteStream().use { input -> output.use { input.copyTo(it) } }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          val published = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+          requireMediaStoreUpdate(resolver.update(destination, published, null, null))
+        }
+        completed = true
+        destination.toString()
+      } finally {
+        if (!completed) resolver.delete(destination, null, null)
+      }
     }
   }
 
