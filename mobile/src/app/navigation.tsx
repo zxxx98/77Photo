@@ -1,15 +1,20 @@
-import React, { useMemo } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useMemo, useState } from 'react';
+import { NavigationContainer, useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { StyleSheet, Text } from 'react-native';
+import { createNativeStackNavigator, type NativeStackNavigationProp, type NativeStackScreenProps } from '@react-navigation/native-stack';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { Screen } from '../components/ui';
-import { colors } from '../components/theme';
+import { colors, spacing } from '../components/theme';
 import { ConnectionSettingsScreen } from '../features/auth/ConnectionSettingsScreen';
 import { LoginScreen } from '../features/auth/LoginScreen';
+import { FolderBrowserScreen } from '../features/folders/FolderBrowserScreen';
+import { GalleryScreen } from '../features/gallery/GalleryScreen';
+import { MediaViewerScreen } from '../features/viewer/MediaViewerScreen';
 import { createApiClient } from '../services/api/client';
+import type { Photo, User } from '../services/api/types';
 import { credentialsStore } from '../services/credentials';
 import { connectionStore, getEnabledLANCIDRs } from '../services/connection/store';
 import type { ServerConfig } from '../services/connection/types';
@@ -21,7 +26,7 @@ type RootStackParamList = {
   Connection: undefined;
   Login: undefined;
   Main: undefined;
-  Viewer: undefined;
+  Viewer: { photos: readonly Photo[]; initialIndex?: number };
 };
 
 type MainTabParamList = {
@@ -42,12 +47,99 @@ function PlaceholderScreen({ title }: { title: string }) {
   return <Screen><Text style={styles.placeholderTitle}>{title}</Text></Screen>;
 }
 
-function MainTabNavigator() {
+type AuthenticatedRouteProps = {
+  server: ServerConfig;
+  user: User;
+};
+
+function AuthenticatedApi({ server, user }: AuthenticatedRouteProps) {
+  const queryClient = useQueryClient();
+  return useMemo(
+    () => createApiClient({
+      baseURL: server.baseURL,
+      serverId: server.id,
+      userId: user.id,
+      credentials: credentialsStore,
+      queryClient,
+    }),
+    [queryClient, server.baseURL, server.id, user.id],
+  );
+}
+
+function GalleryTab({ server, user }: AuthenticatedRouteProps) {
+  const { t } = useTranslation();
+  const api = AuthenticatedApi({ server, user });
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const [view, setView] = useState<'timeline' | 'folders'>('timeline');
+  const [folder, setFolder] = useState<{ id: string; name: string } | null>(null);
+
+  if (folder) {
+    return (
+      <View style={styles.galleryRoot}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t('common.back', '返回')}
+          onPress={() => setFolder(null)}
+          style={styles.folderBack}
+        >
+          <Text style={styles.folderBackText}>‹ {t('common.back', '返回')} · {folder.name}</Text>
+        </Pressable>
+        <GalleryScreen
+          api={api}
+          serverId={server.id}
+          userId={user.id}
+          folderId={folder.id}
+          onPhotoPress={(photo) => navigation.navigate('Viewer', { photos: [photo], initialIndex: 0 })}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.galleryRoot}>
+      <View style={styles.gallerySwitcher} accessibilityRole="tablist">
+        <Pressable
+          accessibilityRole="tab"
+          accessibilityState={{ selected: view === 'timeline' }}
+          onPress={() => setView('timeline')}
+          style={[styles.switcherButton, view === 'timeline' && styles.switcherButtonActive]}
+        >
+          <Text style={styles.switcherText}>{t('gallery.timeline', '时间线')}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="tab"
+          accessibilityState={{ selected: view === 'folders' }}
+          onPress={() => setView('folders')}
+          style={[styles.switcherButton, view === 'folders' && styles.switcherButtonActive]}
+        >
+          <Text style={styles.switcherText}>{t('folders.title', '文件夹')}</Text>
+        </Pressable>
+      </View>
+      {view === 'timeline' ? (
+        <GalleryScreen
+          api={api}
+          serverId={server.id}
+          userId={user.id}
+          onPhotoPress={(photo) => navigation.navigate('Viewer', { photos: [photo], initialIndex: 0 })}
+        />
+      ) : (
+        <FolderBrowserScreen
+          api={api}
+          serverId={server.id}
+          userId={user.id}
+          onFolderPress={(selected) => setFolder({ id: selected.id, name: selected.name })}
+        />
+      )}
+    </View>
+  );
+}
+
+function MainTabNavigator({ server, user }: AuthenticatedRouteProps) {
   const { t } = useTranslation();
   return (
     <MainTabs.Navigator screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.accent }}>
       <MainTabs.Screen name="Gallery">
-        {() => <PlaceholderScreen title={t('tabs.gallery')} />}
+        {() => <GalleryTab server={server} user={user} />}
       </MainTabs.Screen>
       <MainTabs.Screen name="Upload">
         {() => <PlaceholderScreen title={t('tabs.upload')} />}
@@ -56,6 +148,25 @@ function MainTabNavigator() {
         {() => <PlaceholderScreen title={t('tabs.settings')} />}
       </MainTabs.Screen>
     </MainTabs.Navigator>
+  );
+}
+
+function ViewerRoute({
+  server,
+  user,
+  route,
+  navigation,
+}: AuthenticatedRouteProps & NativeStackScreenProps<RootStackParamList, 'Viewer'>) {
+  const api = AuthenticatedApi({ server, user });
+  return (
+    <MediaViewerScreen
+      api={api}
+      photos={route.params.photos}
+      initialIndex={route.params.initialIndex}
+      serverId={server.id}
+      userId={user.id}
+      onClose={() => navigation.goBack()}
+    />
   );
 }
 
@@ -94,11 +205,13 @@ export function RootNavigator() {
           </RootStack.Screen>
         ) : null}
         {state.status === 'authenticated' ? (
-          <RootStack.Screen name="Main" component={MainTabNavigator} />
+          <RootStack.Screen name="Main">
+            {() => <MainTabNavigator server={state.server} user={state.user} />}
+          </RootStack.Screen>
         ) : null}
         {state.status === 'authenticated' ? (
           <RootStack.Screen name="Viewer">
-            {() => <PlaceholderScreen title={t('viewer.title')} />}
+            {(props) => <ViewerRoute server={state.server} user={state.user} {...props} />}
           </RootStack.Screen>
         ) : null}
       </RootStack.Navigator>
@@ -108,4 +221,23 @@ export function RootNavigator() {
 
 const styles = StyleSheet.create({
   placeholderTitle: { color: colors.ink, fontSize: 28, fontWeight: '800' },
+  galleryRoot: { flex: 1, backgroundColor: colors.background },
+  gallerySwitcher: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    backgroundColor: colors.background,
+  },
+  switcherButton: {
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  switcherButtonActive: { borderBottomColor: colors.accent },
+  switcherText: { color: colors.ink, fontSize: 16, fontWeight: '700' },
+  folderBack: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.md },
+  folderBackText: { color: colors.accent, fontSize: 16, fontWeight: '700' },
 });

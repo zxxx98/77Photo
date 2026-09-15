@@ -135,8 +135,8 @@ export function MediaViewerScreen({
     );
   };
 
-  const openOriginal = () => {
-    if (selectedPhoto) void Linking.openURL(api.originalURL(selectedPhoto.id));
+  const openOriginal = (photo = selectedPhoto) => {
+    if (photo) void Linking.openURL(api.originalURL(photo.id));
   };
 
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -173,7 +173,7 @@ export function MediaViewerScreen({
                       onError={() => setUnsupportedPhotoId(item.id)}
                     />
                   ) : item.mime_type.startsWith('video/') ? (
-                    <UnsupportedMedia photo={item} onDownload={openOriginal} />
+                    <UnsupportedMedia photo={item} onDownload={() => openOriginal(item)} />
                   ) : (
                     <AuthenticatedImage
                       testID={`media-preview-${item.id}`}

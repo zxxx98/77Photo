@@ -256,11 +256,13 @@ describe('folders and authenticated media', () => {
       <FolderPickerScreen api={api} serverId="server-1" userId="user-1" onSelectFolder={onSelectFolder} />,
     );
 
-    await waitFor(() => expect(screen.getByText('可写')).toBeTruthy());
-    await fireEvent.press(screen.getByText('可写'));
+    await waitFor(() => expect(screen.getByTestId('folder-picker-owned')).toBeTruthy());
+    await fireEvent.press(screen.getByTestId('folder-picker-owned'));
     expect(onSelectFolder).toHaveBeenCalledWith('owned');
-    expect(screen.getByText('只读')).toBeTruthy();
-    expect(screen.getByText('只读').props.accessibilityState).toEqual(expect.objectContaining({ disabled: true }));
+    expect(screen.getByTestId('folder-picker-read-only')).toBeTruthy();
+    expect(screen.getByTestId('folder-picker-read-only').props.accessibilityState).toEqual(
+      expect.objectContaining({ disabled: true }),
+    );
   });
 
   it('passes the Bearer header to thumbnail image requests', async () => {

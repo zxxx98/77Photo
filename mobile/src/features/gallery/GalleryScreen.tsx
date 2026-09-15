@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo } from 'react';
-import { ActivityIndicator, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { FlashList, type ListRenderItem } from '@shopify/flash-list';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -83,11 +83,11 @@ export function GalleryScreen({
           resizeMode="cover"
           onError={() => undefined}
         />
-        <View
+        <Pressable
           accessible
           accessibilityRole="button"
           accessibilityLabel={item.photo.filename}
-          onTouchEnd={() => onPhotoPress?.(item.photo)}
+          onPress={() => onPhotoPress?.(item.photo)}
           style={styles.photoHitTarget}
         />
       </View>
@@ -120,7 +120,6 @@ export function GalleryScreen({
           if (item.type === 'day') layout.span = 3;
         }}
         numColumns={3}
-        estimatedItemSize={128}
         onEndReached={() => {
           if (query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
         }}
@@ -169,5 +168,5 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   thumbnail: { width: '100%', height: '100%' },
-  photoHitTarget: { ...StyleSheet.absoluteFillObject },
+  photoHitTarget: { ...StyleSheet.absoluteFill },
 });
