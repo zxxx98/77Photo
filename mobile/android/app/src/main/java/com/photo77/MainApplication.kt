@@ -7,6 +7,7 @@ import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.photo77.credentials.NativeCredentialsPackage
+import com.photo77.bridge.NativeUploadQueuePackage
 
 class MainApplication : Application(), ReactApplication {
 
@@ -16,6 +17,7 @@ class MainApplication : Application(), ReactApplication {
       packageList =
         PackageList(this).packages.apply {
           add(NativeCredentialsPackage())
+          add(NativeUploadQueuePackage())
         },
     )
   }
