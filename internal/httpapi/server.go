@@ -13,6 +13,7 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/auth"
 	"github.com/zxxx98/77Photo/internal/folders"
+	"github.com/zxxx98/77Photo/internal/importer"
 	"github.com/zxxx98/77Photo/internal/indexer"
 	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/sharelinks"
@@ -48,6 +49,7 @@ type Services struct {
 	Shares        *shares.Service
 	ShareLinks    *sharelinks.Service
 	Indexer       *indexer.Service
+	Importer      *importer.Service
 	SecureCookies bool
 	Static        http.Handler
 }
@@ -89,6 +91,11 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 	if services.Auth != nil && services.Indexer != nil {
 		mux.Handle("/api/v1/admin/rescan", indexer.NewHTTPHandler(services.Indexer, services.Auth))
 		mux.Handle("/api/v1/admin/rescan/", indexer.NewHTTPHandler(services.Indexer, services.Auth))
+	}
+	if services.Auth != nil && services.Importer != nil {
+		importHandler := importer.NewHTTPHandler(services.Importer, services.Auth)
+		mux.Handle("/api/v1/admin/imports", importHandler)
+		mux.Handle("/api/v1/admin/imports/", importHandler)
 	}
 	if services.Auth != nil && services.Photos != nil {
 		photoHandler := photos.NewHTTPHandler(services.Photos, services.Auth)

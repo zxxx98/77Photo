@@ -110,6 +110,24 @@ export interface RescanJob {
   error?: string;
 }
 
+export interface ImportCounts {
+  scanned: number;
+  moved: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface ImportJob {
+  id: string;
+  status: RescanStatus;
+  source_path: string;
+  user_id: string;
+  started_at: string;
+  finished_at?: string;
+  counts: ImportCounts;
+  error?: string;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -154,6 +172,8 @@ export interface ApiClient {
   deleteUser(id: string): Promise<void>;
   startRescan(): Promise<RescanJob>;
   getRescan(id: string): Promise<RescanJob>;
+  startImport(input: { source_path: string; user_id: string }): Promise<ImportJob>;
+  getImport(id: string): Promise<ImportJob>;
 }
 
 type Fetcher = typeof fetch;
@@ -280,5 +300,7 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     deleteUser: async (id) => { await request(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ photo_action: 'retain' }) }); },
     startRescan: () => request<RescanJob>('/api/v1/admin/rescan', { method: 'POST', body: JSON.stringify({}) }) as Promise<RescanJob>,
     getRescan: (id) => request<RescanJob>(`/api/v1/admin/rescan/${encodeURIComponent(id)}`) as Promise<RescanJob>,
+    startImport: (input) => request<ImportJob>('/api/v1/admin/imports', { method: 'POST', body: JSON.stringify(input) }) as Promise<ImportJob>,
+    getImport: (id) => request<ImportJob>(`/api/v1/admin/imports/${encodeURIComponent(id)}`) as Promise<ImportJob>,
   };
 }

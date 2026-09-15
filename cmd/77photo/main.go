@@ -18,6 +18,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/folders"
 	"github.com/zxxx98/77Photo/internal/httpapi"
+	"github.com/zxxx98/77Photo/internal/importer"
 	"github.com/zxxx98/77Photo/internal/indexer"
 	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/sharelinks"
@@ -65,6 +66,8 @@ func run(parent context.Context, logger *slog.Logger) error {
 	shareService := shares.NewService(db)
 	indexerService := indexer.NewServiceWithContext(ctx, db, photoStore, photoService)
 	defer indexerService.Wait()
+	importerService := importer.NewServiceWithContext(ctx, db, photoStore, indexerService)
+	defer importerService.Wait()
 	thumbnailService, err := thumbnails.NewService(photoService, photoStore, cfg.CacheDir, cfg.ThumbnailWorkers, thumbnails.DefaultQueueCapacity)
 	if err != nil {
 		return fmt.Errorf("initialize thumbnail service: %w", err)
@@ -76,7 +79,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
 	shareLinkService := sharelinks.NewService(db, photoStore, thumbnailService, secureCookies)
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, SecureCookies: secureCookies, Static: webassets.Handler()})
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler()})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
