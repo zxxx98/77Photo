@@ -15,6 +15,7 @@ env:
 
 jobs:
   prepare:
+    name: Prepare version tag
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}
@@ -23,15 +24,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - id: version
+      - name: Resolve version
+        id: version
         shell: bash
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./web/package.json').version")
           TAG="v${VERSION}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
+          if git show-ref --verify --quiet "refs/tags/${TAG}"; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "${TAG} already exists; skipping release."
           else
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
@@ -46,6 +49,7 @@ jobs:
           git push origin "$TAG"
 
   image:
+    name: Publish multi-architecture image
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-latest
@@ -74,3 +78,43 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           provenance: true
           sbom: true
+
+  binaries:
+    name: Publish ${{ matrix.arch }} binary
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build and embed Web assets
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      - name: Replace checked-in shell with release assets
+        run: |
+          find internal/webassets/static -mindepth 1 -delete
+          cp -R web/dist/. internal/webassets/static/
+      - name: Build CGO-free binary
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+        run: go build -trimpath -ldflags='-s -w' -o 77photo-linux-${{ matrix.arch }} ./cmd/77photo
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 77photo-linux-${{ matrix.arch }}
+          path: 77photo-linux-${{ matrix.arch }}
+          if-no-files-found: error
