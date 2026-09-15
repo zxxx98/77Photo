@@ -2,6 +2,7 @@ package users
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -128,6 +129,7 @@ func TestDisableUserRevokesOnlyThatUsersMobileSession(t *testing.T) {
 	if _, err := service.Update(ctx, admin, target.ID, UpdateInput{IsActive: boolPtr(false)}); err != nil {
 		t.Fatalf("Update(disable) error = %v", err)
 	}
+	assertNoUnrevokedMobileTokens(t, service.db, mobile.Device.ID)
 	if _, err := authService.CurrentBearer(ctx, mobile.AccessToken); !errors.Is(err, auth.ErrUnauthorized) {
 		t.Fatalf("CurrentBearer(disabled user) error = %v, want ErrUnauthorized", err)
 	}
@@ -159,6 +161,7 @@ func TestDeleteUserRevokesOnlyThatUsersMobileSession(t *testing.T) {
 	if err := service.Delete(ctx, admin, target.ID, DeleteInput{}); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
+	assertNoUnrevokedMobileTokens(t, service.db, mobile.Device.ID)
 	if _, err := authService.CurrentBearer(ctx, mobile.AccessToken); !errors.Is(err, auth.ErrUnauthorized) {
 		t.Fatalf("CurrentBearer(deleted user) error = %v, want ErrUnauthorized", err)
 	}
@@ -182,6 +185,10 @@ func TestChangePasswordRevokesOnlyThatUsersMobileSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, browserSession, err := authService.Authenticate(ctx, "alice", "alice's secure password")
+	if err != nil {
+		t.Fatal(err)
+	}
 	otherMobile, err := authService.CreateMobileSession(ctx, other.ID, auth.MobileDeviceInput{Name: "Bob phone", Platform: "ios", AppVersion: "1.0.0"})
 	if err != nil {
 		t.Fatal(err)
@@ -190,11 +197,26 @@ func TestChangePasswordRevokesOnlyThatUsersMobileSession(t *testing.T) {
 	if _, err := service.Update(ctx, admin, target.ID, UpdateInput{Password: stringPtr("alice's new secure password")}); err != nil {
 		t.Fatalf("Update(password) error = %v", err)
 	}
+	assertNoUnrevokedMobileTokens(t, service.db, mobile.Device.ID)
 	if _, err := authService.CurrentBearer(ctx, mobile.AccessToken); !errors.Is(err, auth.ErrUnauthorized) {
 		t.Fatalf("CurrentBearer(password-changed user) error = %v, want ErrUnauthorized", err)
 	}
+	if _, _, err := authService.Current(ctx, browserSession.Token); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("Current(password-changed user browser session) error = %v, want ErrUnauthorized", err)
+	}
 	if _, err := authService.CurrentBearer(ctx, otherMobile.AccessToken); err != nil {
 		t.Fatalf("CurrentBearer(other user) error = %v, want nil", err)
+	}
+}
+
+func assertNoUnrevokedMobileTokens(t *testing.T, db *sql.DB, deviceID string) {
+	t.Helper()
+	var count int
+	if err := db.QueryRowContext(context.Background(), "SELECT count(*) FROM mobile_tokens WHERE device_id=? AND revoked_at IS NULL", deviceID).Scan(&count); err != nil {
+		t.Fatalf("count unrevoked mobile tokens for device %q: %v", deviceID, err)
+	}
+	if count != 0 {
+		t.Fatalf("unrevoked mobile tokens for device %q = %d, want 0", deviceID, count)
 	}
 }
 

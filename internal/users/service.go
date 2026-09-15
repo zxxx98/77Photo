@@ -187,10 +187,8 @@ func (s *Service) Update(ctx context.Context, principal acl.Principal, id string
 		if err := s.auth.RevokeMobileSessionsForUserTx(ctx, tx, id); err != nil {
 			return auth.Account{}, fmt.Errorf("revoke user mobile sessions: %w", err)
 		}
-	}
-	if input.IsActive != nil && !*input.IsActive {
 		if _, err := tx.ExecContext(ctx, "UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", formatTime(time.Now().UTC()), id); err != nil {
-			return auth.Account{}, fmt.Errorf("revoke disabled user sessions: %w", err)
+			return auth.Account{}, fmt.Errorf("revoke user browser sessions: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
