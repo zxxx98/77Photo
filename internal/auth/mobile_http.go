@@ -207,33 +207,6 @@ func writeMobileSession(w http.ResponseWriter, session MobileSession, account Ac
 	})
 }
 
-func (s *Service) AuthenticateAccount(ctx context.Context, username, password string) (Account, error) {
-	if !s.limiter.allow(username) {
-		return Account{}, ErrRateLimited
-	}
-	var account Account
-	var hash string
-	var active int
-	var deletedAt sql.NullString
-	var created, updated string
-	err := s.db.QueryRowContext(ctx, `SELECT id, username, password_hash, role, is_active, deleted_at, created_at, updated_at
-FROM users WHERE username = ? COLLATE NOCASE`, strings.TrimSpace(username)).Scan(&account.ID, &account.Username, &hash, &account.Role, &active, &deletedAt, &created, &updated)
-	if err != nil {
-		s.limiter.failure(username)
-		return Account{}, ErrInvalidCredentials
-	}
-	ok, verifyErr := VerifyPassword(hash, password)
-	if verifyErr != nil || !ok || active == 0 || deletedAt.Valid {
-		s.limiter.failure(username)
-		return Account{}, ErrInvalidCredentials
-	}
-	account.IsActive = true
-	account.CreatedAt, _ = parseTime(created)
-	account.UpdatedAt, _ = parseTime(updated)
-	s.limiter.success(username)
-	return account, nil
-}
-
 func (s *Service) mobileAccount(ctx context.Context, userID string) (Account, error) {
 	var account Account
 	var active int
