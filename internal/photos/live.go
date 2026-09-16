@@ -29,8 +29,36 @@ type LiveVideoInput struct {
 	Body         io.Reader
 }
 
+type LivePhotoUploadInput struct {
+	Still  UploadInput
+	Motion *LiveVideoInput
+}
+
 func liveMotionStoragePath(photoID string) string {
+	return filepath.ToSlash(filepath.Join(".77photo", "live", photoID+".motion"))
+}
+
+func legacyLiveMotionStoragePath(photoID string) string {
 	return filepath.ToSlash(filepath.Join(".77photo", "live", photoID+".mov"))
+}
+
+func (s *Service) liveMotionPath(photoID string) string {
+	return liveMotionStoragePath(photoID)
+}
+
+// UploadLivePhoto stores the still and optional companion as one logical
+// operation. If the companion fails validation, the just-created still is
+// deleted before the error is returned.
+func (s *Service) UploadLivePhoto(ctx context.Context, principal acl.Principal, input LivePhotoUploadInput) (Photo, error) {
+	photo, err := s.Upload(ctx, principal, input.Still)
+	if err != nil || input.Motion == nil {
+		return photo, err
+	}
+	if err := s.AttachLiveVideo(ctx, principal, photo.ID, *input.Motion); err != nil {
+		_ = s.Delete(ctx, principal, photo.ID, true)
+		return Photo{}, err
+	}
+	return photo, nil
 }
 
 func (s *Service) AttachLiveVideo(ctx context.Context, principal acl.Principal, photoID string, input LiveVideoInput) error {
@@ -44,7 +72,7 @@ func (s *Service) AttachLiveVideo(ctx context.Context, principal acl.Principal, 
 	if !s.canWrite(ctx, principal, photo) {
 		return ErrForbidden
 	}
-	if photo.MIMEType != "image/jpeg" && photo.MIMEType != "image/png" {
+	if photo.MIMEType != "image/jpeg" && photo.MIMEType != "image/png" && photo.MIMEType != "image/heic" && photo.MIMEType != "image/heif" {
 		return ErrInvalidLivePhoto
 	}
 	if !strings.EqualFold(filepath.Ext(strings.TrimSpace(input.Filename)), ".mov") {
@@ -90,6 +118,17 @@ func (s *Service) AttachLiveVideo(ctx context.Context, principal acl.Principal, 
 		_ = os.Remove(temporaryPath)
 		return fmt.Errorf("%w: close live photo motion: %v", ErrUploadFailed, err)
 	}
+	if s.mediaTools != nil {
+		valid, probeErr := s.mediaTools.ProbeVideo(ctx, temporaryPath)
+		if probeErr != nil {
+			_ = os.Remove(temporaryPath)
+			return fmt.Errorf("%w: validate live photo motion: %v", ErrInvalidMedia, probeErr)
+		}
+		if !valid {
+			_ = os.Remove(temporaryPath)
+			return ErrInvalidMedia
+		}
+	}
 
 	finalPath, err := s.storage.ResolvePath(liveMotionStoragePath(photoID))
 	if err != nil {
@@ -127,18 +166,21 @@ func (s *Service) LiveVideoPath(ctx context.Context, principal acl.Principal, ph
 	if err != nil {
 		return Photo{}, "", err
 	}
-	path, err := s.storage.ResolvePath(liveMotionStoragePath(photoID))
-	if err != nil {
-		return Photo{}, "", err
+	paths := []string{liveMotionStoragePath(photoID), legacyLiveMotionStoragePath(photoID)}
+	for _, relative := range paths {
+		path, resolveErr := s.storage.ResolvePath(relative)
+		if resolveErr != nil {
+			return Photo{}, "", resolveErr
+		}
+		info, statErr := os.Stat(path)
+		if statErr == nil && info.Mode().IsRegular() {
+			return photo, path, nil
+		}
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return Photo{}, "", statErr
+		}
 	}
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) || err == nil && !info.Mode().IsRegular() {
-		return Photo{}, "", ErrLiveMotionNotFound
-	}
-	if err != nil {
-		return Photo{}, "", err
-	}
-	return photo, path, nil
+	return Photo{}, "", ErrLiveMotionNotFound
 }
 
 func (s *Service) LivePhotoIDs(ctx context.Context, principal acl.Principal, ids []string) []string {
@@ -163,18 +205,50 @@ func (s *Service) RemoveLiveVideo(ctx context.Context, principal acl.Principal, 
 	if !s.canWrite(ctx, principal, photo) {
 		return ErrForbidden
 	}
-	path, err := s.storage.ResolvePath(liveMotionStoragePath(photoID))
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+	return s.removeLiveMotionArtifacts(photoID)
+}
+
+func (s *Service) removeLiveMotionArtifacts(photoID string) error {
+	for _, relative := range []string{liveMotionStoragePath(photoID), legacyLiveMotionStoragePath(photoID)} {
+		path, err := s.storage.ResolvePath(relative)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }
 
 func looksLikeQuickTime(head []byte) bool {
 	return len(head) >= 12 && string(head[4:8]) == "ftyp"
+}
+
+func motionMIME(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return "video/quicktime"
+	}
+	defer file.Close()
+	head := make([]byte, 512)
+	n, _ := file.Read(head)
+	head = head[:n]
+	if mediaLooksLikeWebM(head) {
+		return "video/webm"
+	}
+	if len(head) >= 12 && string(head[4:8]) == "ftyp" {
+		major := string(head[8:12])
+		if major == "qt  " {
+			return "video/quicktime"
+		}
+		return "video/mp4"
+	}
+	return "video/quicktime"
+}
+
+func mediaLooksLikeWebM(head []byte) bool {
+	return len(head) >= 4 && head[0] == 0x1a && head[1] == 0x45 && head[2] == 0xdf && head[3] == 0xa3
 }
 
 type LiveHTTPHandler struct {
@@ -268,7 +342,7 @@ func (h *LiveHTTPHandler) get(w http.ResponseWriter, r *http.Request, photoID st
 		return
 	}
 	motionName := strings.TrimSuffix(photo.Filename, filepath.Ext(photo.Filename)) + ".mov"
-	w.Header().Set("Content-Type", "video/quicktime")
+	w.Header().Set("Content-Type", motionMIME(path))
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": motionName}))
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.Header().Set("Vary", "Cookie, Authorization")

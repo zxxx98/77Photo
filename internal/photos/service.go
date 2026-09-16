@@ -13,7 +13,6 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/rwcarlsen/goexif/exif"
 	"github.com/zxxx98/77Photo/internal/acl"
+	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/storage"
 	"github.com/zxxx98/77Photo/internal/thumbnails"
 )
@@ -111,6 +111,7 @@ type Service struct {
 	maxSize    int64
 	cache      CacheInvalidator
 	queue      ThumbnailEnqueuer
+	mediaTools *media.Tools
 	cursorKey  [32]byte
 	cursorTTL  time.Duration
 	authorizer *acl.Authorizer
@@ -128,6 +129,8 @@ func NewService(db *sql.DB, store storage.Store, maxUploadSize int64) *Service {
 func (s *Service) SetCacheInvalidator(invalidator CacheInvalidator) { s.cache = invalidator }
 
 func (s *Service) SetThumbnailEnqueuer(enqueuer ThumbnailEnqueuer) { s.queue = enqueuer }
+
+func (s *Service) SetMediaTools(tools *media.Tools) { s.mediaTools = tools }
 
 func (s *Service) SetAuthorizer(authorizer *acl.Authorizer) { s.authorizer = authorizer }
 
@@ -207,7 +210,7 @@ func (s *Service) Upload(ctx context.Context, principal acl.Principal, input Upl
 		_ = os.Remove(temporaryPath)
 		return Photo{}, ErrUnsupportedMedia
 	}
-	metadata, err := extractMetadata(temporaryPath, mimeType, size)
+	metadata, err := extractMetadataWithTools(temporaryPath, mimeType, size, s.mediaTools)
 	if err != nil {
 		_ = os.Remove(temporaryPath)
 		return Photo{}, err
@@ -286,6 +289,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 		return Photo{}, fmt.Errorf("index uploaded photo: %w", err)
 	}
 	keepFile = true
+	if s.mediaTools != nil && mimeType == "image/jpeg" {
+		if motion, motionErr := s.mediaTools.FindEmbeddedMotion(ctx, finalPath); motionErr == nil && motion.Offset > 0 {
+			if destination, resolveErr := s.storage.ResolvePath(s.liveMotionPath(photo.ID)); resolveErr == nil {
+				_ = s.mediaTools.ExtractMotion(ctx, finalPath, destination)
+			}
+		}
+	}
 	if s.queue != nil {
 		_ = s.queue.Enqueue(photo.ID)
 	}
@@ -434,6 +444,9 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 		_, _ = s.db.ExecContext(ctx, "UPDATE photos SET deleted_at=NULL, updated_at=? WHERE id=?", formatTime(time.Now().UTC()), id)
 		return fmt.Errorf("remove photo on disk: %w", err)
 	}
+	if err := s.removeLiveMotionArtifacts(photo.ID); err != nil {
+		return fmt.Errorf("remove photo motion artifact: %w", err)
+	}
 	if _, err := s.db.ExecContext(ctx, "DELETE FROM photos WHERE id=? AND deleted_at IS NOT NULL", id); err != nil {
 		// Keep the tombstone hidden from normal reads so a later scan can finish
 		// cleanup without resurrecting a deleted photo.
@@ -571,22 +584,11 @@ func streamToFile(destination *os.File, source io.Reader, maxSize int64) ([32]by
 }
 
 func detectAndValidateMIME(declared, filename string, head []byte) string {
-	actual := http.DetectContentType(head)
-	extension := strings.ToLower(filepath.Ext(filename))
-	allowed := map[string]struct{ ext string }{
-		"image/jpeg": {ext: ".jpg"}, "image/png": {ext: ".png"}, "video/mp4": {ext: ".mp4"}, "video/webm": {ext: ".webm"},
-	}
-	if strings.EqualFold(declared, "image/jpg") {
-		declared = "image/jpeg"
-	}
-	entry, ok := allowed[declared]
-	if !ok || extension != entry.ext && !(declared == "image/jpeg" && extension == ".jpeg") {
+	inspection, err := media.InspectBytes(filename, declared, head)
+	if err != nil {
 		return ""
 	}
-	if actual != declared {
-		return ""
-	}
-	return declared
+	return inspection.MIME
 }
 
 type imageMetadata struct {
@@ -601,19 +603,53 @@ type imageMetadata struct {
 }
 
 func extractMetadata(path, mimeType string, size int64) (imageMetadata, error) {
+	return extractMetadataWithTools(path, mimeType, size, nil)
+}
+
+func extractMetadataWithTools(path, mimeType string, size int64, tools *media.Tools) (imageMetadata, error) {
 	stat, err := os.Stat(path)
 	if err != nil {
 		return imageMetadata{}, fmt.Errorf("stat media: %w", err)
 	}
 	metadata := imageMetadata{capturedAt: stat.ModTime().UTC(), capturedAtSource: "file_mtime"}
-	if mimeType == "video/mp4" || mimeType == "video/webm" {
+	if strings.HasPrefix(mimeType, "video/") {
 		return metadata, nil
 	}
-	file, err := os.Open(path)
+	decodePath := path
+	cleanup := func() {}
+	if mimeType == "image/heic" || mimeType == "image/heif" {
+		if tools == nil {
+			return imageMetadata{}, fmt.Errorf("%w: HEIC decoder is unavailable", ErrUnsupportedMedia)
+		}
+		temporary, tempErr := os.CreateTemp(filepath.Dir(path), ".77photo-decode-*.png")
+		if tempErr != nil {
+			return imageMetadata{}, fmt.Errorf("create decoded image: %w", tempErr)
+		}
+		decodePath = temporary.Name()
+		if closeErr := temporary.Close(); closeErr != nil {
+			_ = os.Remove(decodePath)
+			return imageMetadata{}, fmt.Errorf("close decoded image: %w", closeErr)
+		}
+		_ = os.Remove(decodePath)
+		cleanup = func() { _ = os.Remove(decodePath) }
+		if decodeErr := tools.DecodeStill(context.Background(), path, decodePath); decodeErr != nil {
+			cleanup()
+			return imageMetadata{}, fmt.Errorf("%w: decode HEIC image: %v", ErrInvalidMedia, decodeErr)
+		}
+	}
+	defer cleanup()
+	decodeLimit := size + 1
+	if mimeType == "image/heic" || mimeType == "image/heif" {
+		decodeLimit = 256 << 20
+	}
+	if decodeLimit < 1 || decodeLimit > 256<<20 {
+		decodeLimit = 256 << 20
+	}
+	file, err := os.Open(decodePath)
 	if err != nil {
 		return imageMetadata{}, fmt.Errorf("open image: %w", err)
 	}
-	config, _, err := image.DecodeConfig(io.LimitReader(file, size+1))
+	config, _, err := image.DecodeConfig(io.LimitReader(file, decodeLimit))
 	_ = file.Close()
 	if err != nil {
 		return imageMetadata{}, fmt.Errorf("%w: decode image: %v", ErrInvalidMedia, err)
@@ -622,12 +658,14 @@ func extractMetadata(path, mimeType string, size int64) (imageMetadata, error) {
 		return imageMetadata{}, ErrPixelLimit
 	}
 	metadata.width, metadata.height = config.Width, config.Height
-	file, err = os.Open(path)
-	if err == nil {
-		if parsed, exifErr := exif.Decode(file); exifErr == nil {
-			applyEXIF(&metadata, parsed)
+	if mimeType != "image/heic" && mimeType != "image/heif" {
+		file, err = os.Open(path)
+		if err == nil {
+			if parsed, exifErr := exif.Decode(file); exifErr == nil {
+				applyEXIF(&metadata, parsed)
+			}
+			_ = file.Close()
 		}
-		_ = file.Close()
 	}
 	return metadata, nil
 }

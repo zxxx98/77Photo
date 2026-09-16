@@ -66,6 +66,54 @@ func TestHTTPMultipartUploadStreamsAndReturnsPhoto(t *testing.T) {
 	}
 }
 
+func TestHTTPLogicalLiveUploadCreatesOnePhoto(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, session, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := folders.NewService(db, store).Create(ctx, acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}, folders.CreateInput{Name: "uploads"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	photoService := NewService(db, store, 1<<20)
+	handler := NewHTTPHandler(photoService, authService)
+	body, contentType := logicalMultipartUpload(t, folder.ID, jpegTestBytes(t), quickTimeBytes())
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/photos/live-upload", body)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set(auth.CSRFHeaderName(), session.CSRFToken)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", res.Code, res.Body.String())
+	}
+	var photo Photo
+	if err := json.NewDecoder(res.Body).Decode(&photo); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM photos").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("photo rows = %d, want 1", count)
+	}
+	if _, _, err := photoService.LiveVideoPath(ctx, acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}, photo.ID); err != nil {
+		t.Fatalf("logical upload motion = %v", err)
+	}
+}
+
 func TestHTTPUploadTooLargeUsesContractError(t *testing.T) {
 	ctx := context.Background()
 	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
@@ -245,4 +293,40 @@ func jpegTestBytes(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return body.Bytes()
+}
+
+func logicalMultipartUpload(t *testing.T, folderID string, still, motion []byte) (*bytes.Buffer, string) {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("folder_id", folderID); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("conflict", "reject"); err != nil {
+		t.Fatal(err)
+	}
+	stillHeader := make(textproto.MIMEHeader)
+	stillHeader.Set("Content-Disposition", `form-data; name="file"; filename="photo.jpg"`)
+	stillHeader.Set("Content-Type", "image/jpeg")
+	part, err := writer.CreatePart(stillHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(still); err != nil {
+		t.Fatal(err)
+	}
+	motionHeader := make(textproto.MIMEHeader)
+	motionHeader.Set("Content-Disposition", `form-data; name="motion"; filename="photo.mov"`)
+	motionHeader.Set("Content-Type", "video/quicktime")
+	part, err = writer.CreatePart(motionHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(motion); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return &body, writer.FormDataContentType()
 }

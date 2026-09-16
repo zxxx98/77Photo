@@ -19,7 +19,10 @@ import (
 	"github.com/zxxx98/77Photo/internal/thumbnails"
 )
 
-const uploadPath = "/api/v1/photos/upload"
+const (
+	uploadPath     = "/api/v1/photos/upload"
+	liveUploadPath = "/api/v1/photos/live-upload"
+)
 
 type HTTPHandler struct {
 	service     *Service
@@ -38,6 +41,15 @@ func NewHTTPHandler(service *Service, authService *auth.Service) *HTTPHandler {
 func (h *HTTPHandler) SetThumbnailService(service ThumbnailService) { h.thumbnails = service }
 
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == liveUploadPath {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
+			return
+		}
+		h.liveUpload(w, r)
+		return
+	}
 	if r.URL.Path == uploadPath {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -130,6 +142,106 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "GET, PATCH, DELETE")
 		writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
 	}
+}
+
+func (h *HTTPHandler) liveUpload(w http.ResponseWriter, r *http.Request) {
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
+		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
+		return
+	}
+	reader, err := r.MultipartReader()
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "multipart body is invalid", nil)
+		return
+	}
+	folderID := strings.TrimSpace(r.URL.Query().Get("folder_id"))
+	conflict := ConflictReject
+	var photo *Photo
+	fileSeen, motionSeen, partsStarted := false, false, false
+	cleanup := func() {
+		if photo != nil {
+			_ = h.service.Delete(r.Context(), principal(authenticated.Account), photo.ID, true)
+			photo = nil
+		}
+	}
+	for {
+		part, nextErr := reader.NextPart()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			cleanup()
+			writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "multipart body is invalid", nil)
+			return
+		}
+		name := part.FormName()
+		if name == "folder_id" || name == "conflict" {
+			if partsStarted {
+				_ = part.Close()
+				cleanup()
+				writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "scalar fields must precede media parts", nil)
+				return
+			}
+			value, readErr := io.ReadAll(io.LimitReader(part, 256))
+			_ = part.Close()
+			if readErr != nil {
+				writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "multipart field is invalid", nil)
+				return
+			}
+			if name == "folder_id" {
+				folderID = strings.TrimSpace(string(value))
+			} else if strings.TrimSpace(string(value)) == string(ConflictRename) {
+				conflict = ConflictRename
+			}
+			continue
+		}
+		partsStarted = true
+		switch name {
+		case "file":
+			if fileSeen || folderID == "" {
+				_ = part.Close()
+				cleanup()
+				writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "exactly one still file requires folder_id before file", nil)
+				return
+			}
+			fileSeen = true
+			created, uploadErr := h.service.Upload(r.Context(), principal(authenticated.Account), UploadInput{FolderID: folderID, Filename: part.FileName(), DeclaredMIME: part.Header.Get("Content-Type"), Conflict: conflict, Body: part})
+			_ = part.Close()
+			if uploadErr != nil {
+				h.writeServiceError(w, r, uploadErr)
+				return
+			}
+			photo = &created
+		case "motion":
+			if !fileSeen || motionSeen {
+				_ = part.Close()
+				cleanup()
+				writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "at most one motion part must follow file", nil)
+				return
+			}
+			motionSeen = true
+			attachErr := h.service.AttachLiveVideo(r.Context(), principal(authenticated.Account), photo.ID, LiveVideoInput{Filename: part.FileName(), DeclaredMIME: part.Header.Get("Content-Type"), Body: part})
+			_ = part.Close()
+			if attachErr != nil {
+				cleanup()
+				h.writeServiceError(w, r, attachErr)
+				return
+			}
+		default:
+			_ = part.Close()
+		}
+	}
+	if !fileSeen || photo == nil {
+		cleanup()
+		writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "exactly one still file part is required", nil)
+		return
+	}
+	writeJSON(w, http.StatusCreated, *photo)
 }
 
 func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
