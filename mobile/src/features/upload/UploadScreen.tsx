@@ -11,7 +11,7 @@ import type { ApiClient } from '../../services/api/client';
 import type { User } from '../../services/api/types';
 import type { ServerConfig } from '../../services/connection/types';
 import { FolderPickerScreen } from '../folders/FolderPickerScreen';
-import { uploadQueue, type UploadQueueService } from './uploadService';
+import { pairPickedMedia, uploadQueue, type UploadQueueService } from './uploadService';
 import type { UploadQueueSnapshot, UploadTask } from './types';
 import '../../i18n';
 
@@ -151,7 +151,7 @@ export function UploadScreen({
     setBusy(true);
     try {
       const items = await picker.pick();
-      setSelected(items);
+      setSelected(pairPickedMedia(items));
       setFolderId(null);
       setFolderName(null);
     } catch (caught) {

@@ -6,6 +6,7 @@ import android.net.Uri
 import com.photo77.credentials.CredentialCipher
 import com.photo77.credentials.EncryptedPayload
 import java.io.IOException
+import java.io.InputStream
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
@@ -102,6 +103,7 @@ class UploadApi(
   private val credentials: UploadCredentialStore,
   client: OkHttpClient = PolicyAwareHttpClient.create(),
   allowedLANCIDRs: Collection<String> = emptyList(),
+  private val openStream: (Uri) -> InputStream? = { contentResolver.openInputStream(it) },
 ) : UploadTaskUploader, UploadAuthRefresher {
   private val client: OkHttpClient = PolicyAwareHttpClient.enforce(client).build()
   private val allowedBaseUrl = runCatching { UploadURLPolicy.requireAllowed(baseUrl, allowedLANCIDRs) }.getOrNull()
@@ -110,12 +112,25 @@ class UploadApi(
     if (allowedBaseUrl == null) return UploadResult.permanent("SERVER_URL_BLOCKED", "server URL is not allowed")
     val stored = credentials.get(task.serverId, task.deviceId)
       ?: return UploadResult.authRequired()
+    val hasMotionFields = listOf(
+      task.motionUri,
+      task.motionDisplayName,
+      task.motionMimeType,
+      task.motionSizeBytes,
+    ).any { it != null }
+    if (hasMotionFields && (task.motionUri == null || task.motionDisplayName == null || task.motionMimeType == null)) {
+      return UploadResult.permanent("INVALID_UPLOAD", "motion metadata is incomplete")
+    }
+
+    val motionSize = task.motionSizeBytes
+    val totalMediaBytes = if (task.sizeBytes != null && motionSize != null) task.sizeBytes + motionSize else null
     val body = UploadRequestBody(
       resolver = contentResolver,
       uri = Uri.parse(task.contentUri),
       mediaType = task.mimeType.toMediaTypeOrNull(),
       length = task.sizeBytes,
-      onProgress = onProgress,
+      onProgress = { sent, _ -> onProgress(sent, totalMediaBytes ?: task.sizeBytes) },
+      openStream = openStream,
     )
     val multipart = okhttp3.MultipartBody.Builder()
       .setType(okhttp3.MultipartBody.FORM)
@@ -123,11 +138,23 @@ class UploadApi(
       .addFormDataPart("folder_id", task.folderId)
       .addFormDataPart("conflict", "rename")
       .addFormDataPart("file", task.displayName, body)
-      .build()
+    if (task.motionUri != null && task.motionDisplayName != null && task.motionMimeType != null) {
+      val primaryOffset = task.sizeBytes ?: 0L
+      val motionBody = UploadRequestBody(
+        resolver = contentResolver,
+        uri = Uri.parse(task.motionUri),
+        mediaType = task.motionMimeType.toMediaTypeOrNull(),
+        length = motionSize,
+        onProgress = { sent, _ -> onProgress(primaryOffset + sent, totalMediaBytes) },
+        openStream = openStream,
+      )
+      multipart.addFormDataPart("motion", task.motionDisplayName, motionBody)
+    }
+    val target = if (task.motionUri != null) "/api/v1/photos/live-upload" else "/api/v1/photos/upload"
     val request = Request.Builder()
-      .url(endpoint("/api/v1/photos/upload"))
+      .url(endpoint(target))
       .header("Authorization", "Bearer ${stored.accessToken}")
-      .post(multipart)
+      .post(multipart.build())
       .build()
 
     return try {

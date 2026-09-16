@@ -126,7 +126,8 @@ describe('UploadScreen', () => {
   it('offers retry for failed tasks without exposing a file path', async () => {
     const snapshot = { ...emptySnapshot, failed: 1, tasks: [{
       id: 'task-1', batchId: 'batch-1', contentUri: 'content://private/path', displayName: 'secret.jpg',
-      mimeType: 'image/jpeg', size: 100, serverId: 'server-1', userId: 'user-1', deviceId: 'device-1',
+      mimeType: 'image/jpeg', size: 100, motionUri: null, motionDisplayName: null, motionMimeType: null, motionSize: null,
+      serverId: 'server-1', userId: 'user-1', deviceId: 'device-1',
       sessionId: null, folderId: 'folder-1', state: 'failed' as const, sentBytes: 0, attempts: 1,
       lastErrorCode: 'NETWORK_ERROR', lastErrorMessage: 'offline', createdAtEpochMs: 1,
       startedAtEpochMs: null, completedAtEpochMs: null, nextRetryAtEpochMs: null,
@@ -145,7 +146,8 @@ describe('UploadScreen', () => {
   it('shows task rows and confirms before canceling an unfinished task', async () => {
     const snapshot = { ...emptySnapshot, queued: 1, tasks: [{
       id: 'task-1', batchId: 'batch-1', contentUri: 'content://private/path', displayName: 'secret.jpg',
-      mimeType: 'image/jpeg', size: 100, serverId: 'server-1', userId: 'user-1', deviceId: 'device-1',
+      mimeType: 'image/jpeg', size: 100, motionUri: null, motionDisplayName: null, motionMimeType: null, motionSize: null,
+      serverId: 'server-1', userId: 'user-1', deviceId: 'device-1',
       sessionId: null, folderId: 'folder-1', state: 'queued' as const, sentBytes: 0, attempts: 0,
       lastErrorCode: null, lastErrorMessage: null, createdAtEpochMs: 1,
       startedAtEpochMs: null, completedAtEpochMs: null, nextRetryAtEpochMs: null,

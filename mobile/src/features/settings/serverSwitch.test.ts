@@ -8,7 +8,8 @@ import { switchServerWithQueueDecision } from './serverSwitch';
 const snapshot: UploadQueueSnapshot = {
   tasks: [{
     id: 'task-1', batchId: 'batch-1', contentUri: 'content://private/path', displayName: 'photo.jpg',
-    mimeType: 'image/jpeg', size: 10, serverId: 'server-1', userId: 'user-1', deviceId: 'device-1',
+    mimeType: 'image/jpeg', size: 10, motionUri: null, motionDisplayName: null, motionMimeType: null, motionSize: null,
+    serverId: 'server-1', userId: 'user-1', deviceId: 'device-1',
     sessionId: null, folderId: 'folder-1', state: 'uploading', sentBytes: 2, attempts: 1,
     lastErrorCode: null, lastErrorMessage: null, createdAtEpochMs: 1, startedAtEpochMs: 1,
     completedAtEpochMs: null, nextRetryAtEpochMs: null, leaseOwner: 'service', leaseUntilEpochMs: 100,

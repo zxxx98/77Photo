@@ -19,6 +19,7 @@ function servicesFor(baseURL: string, overrides: Partial<LoginScreenServices> = 
         status: 'ok' as const,
         database: 'ok' as const,
         storage: 'ok' as const,
+        media: 'ok' as const,
         request_id: 'req-health',
       })),
       login: jest.fn(async () => ({
@@ -101,6 +102,7 @@ describe('LoginScreen', () => {
           status: 'ok' as const,
           database: 'ok' as const,
           storage: 'ok' as const,
+          media: 'ok' as const,
           request_id: 'req-health',
         })),
         login: jest.fn(async () => {
@@ -134,6 +136,7 @@ describe('LoginScreen', () => {
           status: 'ok' as const,
           database: 'ok' as const,
           storage: 'ok' as const,
+          media: 'ok' as const,
           request_id: 'req-health',
         })),
         login: jest.fn(async () => {
@@ -154,6 +157,7 @@ describe('LoginScreen', () => {
           status: 'ok' as const,
           database: 'ok' as const,
           storage: 'ok' as const,
+          media: 'ok' as const,
           request_id: 'req-health',
         })),
         login: jest.fn(async () => {

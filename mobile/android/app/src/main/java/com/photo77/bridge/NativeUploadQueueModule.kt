@@ -93,6 +93,7 @@ class NativeUploadQueueModule(
       val batchId = UUID.randomUUID().toString()
       val tasks = (0 until items.size()).map { index ->
         val item = items.getMap(index) ?: throw IllegalArgumentException("item is invalid")
+        val motion = optionalMotion(item)
         UploadTaskEntity(
           id = UUID.randomUUID().toString(),
           batchId = batchId,
@@ -100,6 +101,10 @@ class NativeUploadQueueModule(
           displayName = requiredString(item, "displayName"),
           mimeType = requiredString(item, "mimeType"),
           sizeBytes = optionalSize(item),
+          motionUri = motion?.let { requiredString(it, "uri") },
+          motionDisplayName = motion?.let { requiredString(it, "displayName") },
+          motionMimeType = motion?.let { requiredString(it, "mimeType") },
+          motionSizeBytes = motion?.let(::optionalSize),
           serverId = serverId,
           userId = null,
           deviceId = deviceId,
@@ -196,7 +201,7 @@ class NativeUploadQueueModule(
     result.putInt("succeeded", tasks.count { it.state == UploadTaskState.SUCCEEDED })
     result.putInt("failed", tasks.count { it.state == UploadTaskState.FAILED })
     result.putDouble("sentBytes", tasks.sumOf { it.sentBytes }.toDouble())
-    result.putDouble("totalBytes", tasks.mapNotNull { it.sizeBytes }.sum().toDouble())
+    result.putDouble("totalBytes", tasks.sumOf { (it.sizeBytes ?: 0L) + (it.motionSizeBytes ?: 0L) }.toDouble())
     return result
   }
 
@@ -207,6 +212,10 @@ class NativeUploadQueueModule(
     putString("displayName", task.displayName)
     putString("mimeType", task.mimeType)
     putNullableDouble("size", task.sizeBytes)
+    putNullableString("motionUri", task.motionUri)
+    putNullableString("motionDisplayName", task.motionDisplayName)
+    putNullableString("motionMimeType", task.motionMimeType)
+    putNullableDouble("motionSize", task.motionSizeBytes)
     putString("serverId", task.serverId)
     putNullableString("userId", task.userId)
     putString("deviceId", task.deviceId)
@@ -233,6 +242,11 @@ class NativeUploadQueueModule(
     val value = map.getDouble("size")
     if (!value.isFinite() || value < 0 || value > Long.MAX_VALUE) throw IllegalArgumentException("size is invalid")
     return value.toLong()
+  }
+
+  private fun optionalMotion(map: ReadableMap): ReadableMap? {
+    if (!map.hasKey("motion") || map.isNull("motion")) return null
+    return map.getMap("motion") ?: throw IllegalArgumentException("motion is invalid")
   }
 
   private fun requireIdentifier(value: String, key: String): String =

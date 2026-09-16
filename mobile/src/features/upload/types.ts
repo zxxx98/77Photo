@@ -1,1 +1,1 @@
-export type { PickedMedia, UploadQueueSnapshot, UploadState, UploadTask } from '../../native/NativeUploadQueue';
+export type { MotionMedia, PickedMedia, UploadQueueSnapshot, UploadState, UploadTask } from '../../native/NativeUploadQueue';

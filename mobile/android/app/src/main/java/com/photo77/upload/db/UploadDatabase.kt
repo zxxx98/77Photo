@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [UploadTaskEntity::class], version = 1, exportSchema = false)
+@Database(entities = [UploadTaskEntity::class], version = 2, exportSchema = false)
 abstract class UploadDatabase : RoomDatabase() {
   abstract fun uploadTaskDao(): UploadTaskDao
 
@@ -18,7 +18,7 @@ abstract class UploadDatabase : RoomDatabase() {
           context.applicationContext,
           UploadDatabase::class.java,
           DATABASE_NAME,
-        ).build().also { instance = it }
+        ).addMigrations(Migration2).build().also { instance = it }
       }
 
     fun newInMemory(context: Context): UploadDatabase =

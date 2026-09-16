@@ -229,7 +229,8 @@ class UploadForegroundService : Service() {
     lanCIDRs: List<String>,
     tasks: List<com.photo77.upload.db.UploadTaskEntity>,
   ) {
-    val totalBytes = tasks.takeIf { it.all { task -> task.sizeBytes != null } }?.sumOf { it.sizeBytes ?: 0L }
+    val totalBytes = tasks.takeIf { it.all { task -> task.sizeBytes != null && (task.motionUri == null || task.motionSizeBytes != null) } }
+      ?.sumOf { (it.sizeBytes ?: 0L) + (it.motionSizeBytes ?: 0L) }
     val state = UploadNotificationState(
       serverId = serverId,
       sentBytes = tasks.sumOf { it.sentBytes },

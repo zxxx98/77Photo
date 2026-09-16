@@ -114,6 +114,19 @@ class UploadTaskDaoTest {
     assertEquals(listOf("b"), dao.findByServer("server-b").map { it.id })
   }
 
+  @Test
+  fun persistsOptionalMotionCompanionOnTheSameLogicalTask() = runBlocking {
+    val original = task("task-1", "server-a", 1000).copy(
+      motionUri = "content://media/task-1-motion",
+      motionDisplayName = "task-1.mov",
+      motionMimeType = "video/quicktime",
+      motionSizeBytes = 200L,
+    )
+    dao.insert(original)
+
+    assertEquals(original, dao.findByServer("server-a").single())
+  }
+
   private fun task(id: String, serverId: String, createdAt: Long) = UploadTaskEntity(
     id = id,
     batchId = "batch-$serverId",
@@ -121,6 +134,10 @@ class UploadTaskDaoTest {
     displayName = "$id.jpg",
     mimeType = "image/jpeg",
     sizeBytes = 100L,
+    motionUri = null,
+    motionDisplayName = null,
+    motionMimeType = null,
+    motionSizeBytes = null,
     serverId = serverId,
     userId = "user-1",
     deviceId = "device-1",

@@ -3,11 +3,19 @@ import { TurboModuleRegistry } from 'react-native';
 
 export type UploadState = 'queued' | 'uploading' | 'paused' | 'succeeded' | 'failed' | 'canceled';
 
+export type MotionMedia = {
+  uri: string;
+  displayName: string;
+  mimeType: string;
+  size: number | null;
+};
+
 export type PickedMedia = {
   uri: string;
   displayName: string;
   mimeType: string;
   size: number | null;
+  motion?: MotionMedia;
 };
 
 export type UploadTask = {
@@ -17,6 +25,10 @@ export type UploadTask = {
   displayName: string;
   mimeType: string;
   size: number | null;
+  motionUri: string | null;
+  motionDisplayName: string | null;
+  motionMimeType: string | null;
+  motionSize: number | null;
   serverId: string;
   userId: string | null;
   deviceId: string;

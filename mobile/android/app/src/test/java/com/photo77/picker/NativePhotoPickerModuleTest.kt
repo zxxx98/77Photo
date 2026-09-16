@@ -72,4 +72,16 @@ class NativePhotoPickerModuleTest {
     assertTrue(isSupportedVisualMimeType("video/mp4"))
     assertTrue(!isSupportedVisualMimeType("application/pdf"))
   }
+
+  @Test
+  fun acceptsHeicAndHeifProviderMimeTypes() {
+    listOf("image/heic", "image/heif").forEach { mimeType ->
+      val result = PhotoPickerMetadata.from(
+        uri = "content://media/photo-1",
+        input = PhotoPickerMetadataInput("photo", mimeType, 12L, null),
+        persistReadGrant = {},
+      )
+      assertEquals(mimeType, result.mimeType)
+    }
+  }
 }
