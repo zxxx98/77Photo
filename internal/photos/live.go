@@ -55,10 +55,18 @@ func (s *Service) UploadLivePhoto(ctx context.Context, principal acl.Principal, 
 		return photo, err
 	}
 	if err := s.AttachLiveVideo(ctx, principal, photo.ID, *input.Motion); err != nil {
-		_ = s.Delete(ctx, principal, photo.ID, true)
+		if cleanupErr := s.Delete(context.WithoutCancel(ctx), principal, photo.ID, true); cleanupErr != nil {
+			s.logLivePhotoRollbackFailure(photo.ID, cleanupErr)
+		}
 		return Photo{}, err
 	}
 	return photo, nil
+}
+
+func (s *Service) logLivePhotoRollbackFailure(photoID string, err error) {
+	if s.logger != nil {
+		s.logger.Error("live photo rollback failed", "photo_id", photoID, "error", err)
+	}
 }
 
 func (s *Service) AttachLiveVideo(ctx context.Context, principal acl.Principal, photoID string, input LiveVideoInput) error {

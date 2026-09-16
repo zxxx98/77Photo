@@ -49,6 +49,10 @@ export function pairPickedMedia(items: readonly PickedMedia[]): readonly PickedM
   });
 }
 
+export function pickedMediaUris(items: readonly PickedMedia[]): readonly string[] {
+  return Array.from(new Set(items.flatMap((item) => [item.uri, item.motion?.uri].filter((uri): uri is string => Boolean(uri)))));
+}
+
 export const uploadQueue = createUploadService();
 
 export type { PickedMedia, UploadQueueSnapshot };

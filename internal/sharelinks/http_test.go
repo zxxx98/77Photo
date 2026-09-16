@@ -283,10 +283,39 @@ func TestPublicPreviewUsesInlineDisposition(t *testing.T) {
 	}
 }
 
+func TestPublicPreviewPendingIncludesRetryAfter(t *testing.T) {
+	fixture := shareLinkHTTPFixture(t)
+	service := NewService(fixture.db, fixture.store, pendingThumbnail{}, false)
+	handler := NewHTTPHandler(service, fixture.auth)
+	link := createHTTPShareLinkWithHandler(t, fixture, handler, ResourcePhoto, fixture.photo.ID, DurationForever, "")
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/share-links/"+link.Token+"/photos/"+fixture.photo.ID+"/preview", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("pending preview status = %d: %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Status       string `json:"status"`
+		RetryAfterMS int    `json:"retry_after_ms"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status != string(thumbnails.Pending) || payload.RetryAfterMS < 50 {
+		t.Fatalf("pending preview response = %+v, want status pending and retry_after_ms >= 50", payload)
+	}
+}
+
 type readyThumbnail struct{ path string }
 
 func (f readyThumbnail) Ensure(context.Context, string, int) (thumbnails.State, string, error) {
 	return thumbnails.Ready, f.path, nil
+}
+
+type pendingThumbnail struct{}
+
+func (pendingThumbnail) Ensure(context.Context, string, int) (thumbnails.State, string, error) {
+	return thumbnails.Pending, "", nil
 }
 
 func createHTTPShareLinkWithHandler(t *testing.T, fixture shareLinkHTTPFixtureData, handler http.Handler, resourceType ResourceType, resourceID string, duration Duration, password string) Link {

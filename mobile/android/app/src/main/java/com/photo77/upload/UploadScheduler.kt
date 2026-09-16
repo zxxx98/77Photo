@@ -39,7 +39,10 @@ interface UploadTaskSource {
     errorCode: String?,
     errorMessage: String?,
     nextRetryAt: Long?,
-  ) = updateState(task, nextState, now, errorCode, errorMessage, nextRetryAt)
+  ): Boolean {
+    updateState(task, nextState, now, errorCode, errorMessage, nextRetryAt)
+    return true
+  }
 
   fun hasRunnable(serverId: String, now: Long): Boolean
 
@@ -111,6 +114,7 @@ class UploadScheduler(
   private val authRefresher: UploadAuthRefresher? = null,
   private val networkAvailable: () -> Boolean = { true },
   private val onInitialLeaseDecision: () -> Unit = {},
+  private val onTaskTerminal: (UploadTaskEntity) -> Unit = {},
 ) {
   private val coordinator: ExecutorService = Executors.newSingleThreadExecutor(daemonThreadFactory("photo77-upload-coordinator"))
   private val workers: ExecutorService = Executors.newCachedThreadPool(daemonThreadFactory("photo77-upload-worker"))
@@ -249,12 +253,14 @@ class UploadScheduler(
 
       when {
         result.succeeded -> {
-          source.updateStateOwned(task, owner, UploadTaskState.SUCCEEDED, clock(), null, null, null)
+          if (source.updateStateOwned(task, owner, UploadTaskState.SUCCEEDED, clock(), null, null, null)) {
+            onTaskTerminal(task)
+          }
           recordSuccess()
           return
         }
         disposition(result) == UploadDisposition.SKIPPED -> {
-          source.updateStateOwned(
+          if (source.updateStateOwned(
             task,
             owner,
             UploadTaskState.SUCCEEDED,
@@ -262,7 +268,9 @@ class UploadScheduler(
             "DUPLICATE_PHOTO",
             result.errorMessage,
             null,
-          )
+          )) {
+            onTaskTerminal(task)
+          }
           return
         }
         disposition(result) == UploadDisposition.RETRYABLE -> {
@@ -365,9 +373,7 @@ class RoomUploadTaskSource(private val dao: UploadTaskDao) : UploadTaskSource {
     errorCode: String?,
     errorMessage: String?,
     nextRetryAt: Long?,
-  ) {
-    dao.updateStateWithRetryOwned(task.id, owner, nextState, now, errorCode, errorMessage, nextRetryAt)
-  }
+  ): Boolean = dao.updateStateWithRetryOwned(task.id, owner, nextState, now, errorCode, errorMessage, nextRetryAt) == 1
 
   override fun hasRunnable(serverId: String, now: Long): Boolean = dao.hasRunnable(serverId, now)
 

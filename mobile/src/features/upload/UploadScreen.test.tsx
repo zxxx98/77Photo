@@ -68,27 +68,33 @@ async function renderScreen(options: {
   };
   const picker = {
     pick: jest.fn(async () => [pickerItem]),
+    release: jest.fn(async () => undefined),
     ...options.picker,
   };
+  const apiService = options.api ?? api();
+  const selectedUser = options.user ?? {
+    id: 'user-1', username: 'admin', role: 'admin', is_active: true,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+  };
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  const result = await render(
+  const server = { id: 'server-1', baseURL: 'https://photo.test', displayName: '家庭图库', allowInsecureConfirmedAt: null };
+  const renderUploadScreen = (isFocused = true) => (
     <QueryClientProvider client={queryClient}>
       <UploadScreen
-        api={options.api ?? api()}
-        server={{ id: 'server-1', baseURL: 'https://photo.test', displayName: '家庭图库', allowInsecureConfirmedAt: null }}
-        user={options.user ?? {
-          id: 'user-1', username: 'admin', role: 'admin', is_active: true,
-          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
-        }}
+        api={apiService}
+        server={server}
+        user={selectedUser}
         queue={queue}
         picker={picker}
         notificationsAllowed
         notificationPermission={options.notificationPermission}
         concurrency={2}
+        isFocused={isFocused}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-  return { ...result, queue, picker };
+  const result = await render(renderUploadScreen());
+  return { ...result, queue, picker, setFocused: (isFocused: boolean) => result.rerender(renderUploadScreen(isFocused)) };
 }
 
 describe('UploadScreen', () => {
@@ -174,5 +180,81 @@ describe('UploadScreen', () => {
     });
     await waitFor(() => expect(rendered.queue.cancel).toHaveBeenCalledWith(['task-1']));
     alert.mockRestore();
+  });
+
+  it('releases the previous picker grants when media is selected again', async () => {
+    const nextItem = { ...pickerItem, uri: 'content://media/photo-2', displayName: 'photo-2.jpg' };
+    const release = jest.fn(async () => undefined);
+    const pick = jest.fn()
+      .mockResolvedValueOnce([pickerItem])
+      .mockResolvedValueOnce([nextItem]);
+    const rendered = await renderScreen({ picker: { pick, release } });
+
+    await act(async () => {
+      fireEvent.press(rendered.getByRole('button', { name: '选择照片或视频' }));
+    });
+    await waitFor(() => expect(rendered.getByText('已选择 1 项')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(rendered.getByRole('button', { name: '选择照片或视频' }));
+    });
+
+    await waitFor(() => expect(release).toHaveBeenCalledWith([pickerItem.uri]));
+    expect(rendered.getByText('已选择 1 项')).toBeTruthy();
+  });
+
+  it('releases selected picker grants when the upload screen unmounts', async () => {
+    const release = jest.fn(async () => undefined);
+    const rendered = await renderScreen({ picker: { release } });
+
+    await act(async () => {
+      fireEvent.press(rendered.getByRole('button', { name: '选择照片或视频' }));
+    });
+    await waitFor(() => expect(rendered.getByText('已选择 1 项')).toBeTruthy());
+    rendered.unmount();
+
+    await waitFor(() => expect(release).toHaveBeenCalledWith([pickerItem.uri]));
+  });
+
+  it('releases selected picker grants when enqueueing fails', async () => {
+    const release = jest.fn(async () => undefined);
+    const rendered = await renderScreen({
+      picker: { release },
+      queue: { enqueue: jest.fn(async () => { throw new Error('queue unavailable'); }) },
+    });
+
+    await act(async () => {
+      fireEvent.press(rendered.getByRole('button', { name: '选择照片或视频' }));
+    });
+    await waitFor(() => expect(rendered.getByText('已选择 1 项')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(rendered.getByRole('button', { name: '选择目标文件夹' }));
+    });
+    await waitFor(() => expect(rendered.getByTestId('folder-picker-folder-1')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(rendered.getByTestId('folder-picker-folder-1'));
+    });
+    await act(async () => {
+      fireEvent.press(rendered.getByRole('button', { name: '开始上传' }));
+    });
+
+    await waitFor(() => expect(release).toHaveBeenCalledWith([pickerItem.uri]));
+  });
+
+  it('releases media returned after the upload page loses focus', async () => {
+    let resolvePick: ((items: readonly PickedMedia[]) => void) | undefined;
+    const pick = jest.fn(() => new Promise<readonly PickedMedia[]>((resolve) => { resolvePick = resolve; }));
+    const release = jest.fn(async () => undefined);
+    const rendered = await renderScreen({ picker: { pick, release } });
+
+    await act(async () => {
+      fireEvent.press(rendered.getByRole('button', { name: '选择照片或视频' }));
+    });
+    await waitFor(() => expect(pick).toHaveBeenCalled());
+    await act(async () => {
+      rendered.setFocused(false);
+      resolvePick?.([pickerItem]);
+    });
+
+    await waitFor(() => expect(release).toHaveBeenCalledWith([pickerItem.uri]));
   });
 });

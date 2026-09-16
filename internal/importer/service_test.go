@@ -142,6 +142,53 @@ func TestImportPairsHEIFAndMOVAndSkipsOrphanMOV(t *testing.T) {
 	}
 }
 
+func TestImportSkipsBothFilesWhenPairedStillDestinationExists(t *testing.T) {
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceDir, err := store.ResolvePath(filepath.Join("legacy", "camera"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sourceDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "IMG_42.HEIF"), heifBytesForImporter("mif1"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "img_42.MOV"), quickTimeBytesForImporter(), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	targetStill, err := store.ResolvePath(filepath.Join("users", "user-import", "Imported", "camera", "IMG_42.HEIF"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(targetStill), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetStill, []byte("existing"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	service := NewService(nil, store, nil)
+	err = service.importFiles(context.Background(), acl.Principal{}, &Job{SourcePath: "legacy", UserID: "user-import"})
+	if err == nil {
+		t.Fatal("importFiles() error = nil, want missing indexer error")
+	}
+	motionSource := filepath.Join(sourceDir, "img_42.MOV")
+	if _, statErr := os.Stat(motionSource); statErr != nil {
+		t.Fatalf("paired MOV stat error = %v, want source companion preserved", statErr)
+	}
+	motionTarget, err := store.ResolvePath(filepath.Join("users", "user-import", "Imported", "camera", "img_42.MOV"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(motionTarget); !os.IsNotExist(statErr) {
+		t.Fatalf("paired MOV target stat error = %v, want not exists", statErr)
+	}
+}
+
 func heifBytesForImporter(brand string) []byte {
 	data := make([]byte, 24)
 	binary.BigEndian.PutUint32(data[:4], uint32(len(data)))

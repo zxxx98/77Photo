@@ -114,6 +114,49 @@ func TestHTTPLogicalLiveUploadCreatesOnePhoto(t *testing.T) {
 	}
 }
 
+func TestHTTPLiveUploadCleansUpAfterRequestCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, session, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := folders.NewService(db, store).Create(ctx, acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}, folders.CreateInput{Name: "uploads"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	photoService := NewService(db, store, 1<<20)
+	photoService.SetThumbnailEnqueuer(cancelingThumbnailEnqueuer{cancel: cancel})
+	handler := NewHTTPHandler(photoService, authService)
+	body, contentType := logicalMultipartUpload(t, folder.ID, jpegTestBytes(t), quickTimeBytes())
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/photos/live-upload", body).WithContext(ctx)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set(auth.CSRFHeaderName(), session.CSRFToken)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: %s", res.Code, res.Body.String())
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM photos").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("photo rows = %d, want 0 after canceled request cleanup", count)
+	}
+}
+
 func TestHTTPUploadTooLargeUsesContractError(t *testing.T) {
 	ctx := context.Background()
 	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
@@ -195,6 +238,16 @@ func TestHTTPThumbnailQueuesMissingVariantThenServesWebP(t *testing.T) {
 	handler.ServeHTTP(pendingRes, thumbnailReq)
 	if pendingRes.Code != http.StatusAccepted {
 		t.Fatalf("pending thumbnail status = %d: %s", pendingRes.Code, pendingRes.Body.String())
+	}
+	var pending struct {
+		Status       string `json:"status"`
+		RetryAfterMS int    `json:"retry_after_ms"`
+	}
+	if err := json.NewDecoder(pendingRes.Body).Decode(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending.Status != string(thumbnails.Pending) || pending.RetryAfterMS < 50 {
+		t.Fatalf("pending thumbnail response = %+v, want status pending and retry_after_ms >= 50", pending)
 	}
 	thumbs.Start(ctx)
 	waitForThumbnail(t, func() bool {

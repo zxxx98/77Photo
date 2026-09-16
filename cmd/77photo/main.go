@@ -71,6 +71,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 	}
 	folderService := folders.NewService(db, photoStore)
 	photoService := photos.NewService(db, photoStore, cfg.MaxUploadSize)
+	photoService.SetLogger(logger)
 	photoService.SetMediaTools(mediaTools)
 	authorizer := acl.NewAuthorizer(db)
 	folderService.SetAuthorizer(authorizer)

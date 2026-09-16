@@ -40,7 +40,12 @@ class UploadRecoveryWorker(
     val normalizedBaseUrl = runCatching { UploadURLPolicy.requireAllowed(baseUrl, lanCIDRs) }.getOrNull()
       ?: return@withContext Result.failure()
 
-    val source = RoomUploadTaskSource(UploadDatabase.getInstance(applicationContext).uploadTaskDao())
+    val dao = UploadDatabase.getInstance(applicationContext).uploadTaskDao()
+    releaseCompletedTaskUriGrants(
+      dao.findByServer(serverId),
+      ContentResolverUriGrantReleaser(applicationContext.contentResolver),
+    )
+    val source = RoomUploadTaskSource(dao)
     if (leaseDecision(source.hasActiveLease(serverId, System.currentTimeMillis())) == RecoveryLeaseDecision.YIELD_SUCCESS) {
       return@withContext Result.success()
     }
@@ -56,6 +61,9 @@ class UploadRecoveryWorker(
       api,
       authRefresher = api,
       networkAvailable = { hasAllowedNetwork(allowMobile) },
+      onTaskTerminal = { task ->
+        releaseTaskUriGrants(task, ContentResolverUriGrantReleaser(applicationContext.contentResolver))
+      },
     )
     val future = scheduler.start(
       serverId = serverId,

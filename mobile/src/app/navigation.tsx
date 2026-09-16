@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { NavigationContainer, useNavigation } from '@react-navigation/native';
+import { NavigationContainer, useIsFocused, useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackNavigationProp, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -214,6 +214,7 @@ function SettingsTab({ server, user, onSessionChanged }: AuthenticatedRouteProps
 
 function UploadTab({ server, user }: AuthenticatedRouteProps) {
   const api = AuthenticatedApi({ server, user });
+  const isFocused = useIsFocused();
   const concurrency = connectionStore((state) => state.uploadConcurrency);
   const cellularUploadEnabled = connectionStore((state) => state.cellularUploadEnabled);
   const lanCIDRs = connectionStore((state) => getEnabledLANCIDRs(state));
@@ -225,6 +226,7 @@ function UploadTab({ server, user }: AuthenticatedRouteProps) {
       concurrency={concurrency}
       cellularUploadEnabled={cellularUploadEnabled}
       lanCIDRs={lanCIDRs}
+      isFocused={isFocused}
     />
   );
 }

@@ -33,12 +33,10 @@ describe('upload selection', () => {
     ]);
   });
 
-  it('keeps unmatched MOV files as standalone uploads', () => {
+  it('skips unmatched MOV files instead of uploading them standalone', () => {
     const motion = new File(['motion'], 'clip.mov', { type: 'video/quicktime' });
 
-    expect(queuedItemsFromFiles([motion])).toEqual([
-      { file: motion, status: 'queued', progress: 0 },
-    ]);
+    expect(queuedItemsFromFiles([motion])).toEqual([]);
   });
 
   it('treats both sides of a live photo pair as queued', () => {
@@ -55,5 +53,13 @@ describe('upload selection', () => {
 
     expect(shouldAutoStartAfterSelection([file])).toBe(true);
     expect(shouldAutoStartAfterSelection([])).toBe(false);
+  });
+
+  it('ignores orphan MOV files when deciding whether to auto-start', () => {
+    const still = new File(['photo'], 'IMG_1234.jpg', { type: 'image/jpeg' });
+    const orphan = new File(['motion'], 'orphan.MOV', { type: 'video/quicktime' });
+
+    expect(shouldAutoStartAfterSelection([orphan])).toBe(false);
+    expect(shouldAutoStartAfterSelection([still, orphan])).toBe(true);
   });
 });

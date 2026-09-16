@@ -158,6 +158,21 @@ func TestCommandRunnerRemovesOutputAboveLimit(t *testing.T) {
 	}
 }
 
+func TestCommandRunnerRunToFileHandlesPreCanceledContext(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "canceled.mp4")
+	runner := NewRunner(1024)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := runner.RunToFile(ctx, "sleep", destination, "1")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunToFile() error = %v, want context.Canceled", err)
+	}
+	if _, statErr := os.Stat(destination); !os.IsNotExist(statErr) {
+		t.Fatalf("canceled output stat error = %v, want not exists", statErr)
+	}
+}
+
 func TestFindEmbeddedMotionRequiresVideoStream(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "MVIMG_0001.JPG")
 	jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0xff, 0xd9}
@@ -182,6 +197,40 @@ func TestFindEmbeddedMotionRequiresVideoStream(t *testing.T) {
 	}
 	if motion.Offset != 0 || motion.Size != 0 {
 		t.Fatalf("audio-only motion = %#v, want empty", motion)
+	}
+}
+
+func TestFindEmbeddedMotionDetectsHEICVideoContainer(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "photo.heic")
+	data := ftypBytes("heic")
+	if err := os.WriteFile(input, data, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{runOut: []byte("video\n")}
+	tools := Tools{FFprobe: "ffprobe", Runner: runner, Timeout: time.Second, MaxOutputBytes: 1 << 20}
+
+	motion, err := tools.FindEmbeddedMotion(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if motion.Size != int64(len(data)) || motion.MIME != "video/mp4" {
+		t.Fatalf("motion = %#v, want container motion of %d bytes", motion, len(data))
+	}
+	if len(runner.runArgs) != 1 || runner.runArgs[0][len(runner.runArgs[0])-1] != input {
+		t.Fatalf("probe args = %#v, want direct HEIC input", runner.runArgs)
+	}
+}
+
+func TestFindEmbeddedMotionBoundedChecksSizeBeforeReading(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "photo.heic")
+	if err := os.Mkdir(input, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	tools := Tools{MaxInputBytes: 1}
+
+	_, err := tools.FindEmbeddedMotionBounded(context.Background(), input)
+	if !errors.Is(err, ErrOutputTooLarge) {
+		t.Fatalf("FindEmbeddedMotionBounded() error = %v, want ErrOutputTooLarge", err)
 	}
 }
 
@@ -242,5 +291,25 @@ func TestExtractMotionIsAtomic(t *testing.T) {
 	}
 	if _, err := os.Stat(failedDestination); !os.IsNotExist(err) {
 		t.Fatalf("failed destination stat error = %v, want not exists", err)
+	}
+}
+
+func TestExtractMotionUsesVideoContainerForHEIC(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "photo.heic")
+	if err := os.WriteFile(input, ftypBytes("heic"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "live", "photo.motion")
+	runner := &fakeRunner{runOut: []byte("video\n")}
+	tools := Tools{FFmpeg: "ffmpeg", FFprobe: "ffprobe", Runner: runner, Timeout: time.Second, MaxOutputBytes: 1 << 20}
+
+	if err := tools.ExtractMotion(context.Background(), input, destination); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.fileArgs) != 1 {
+		t.Fatalf("RunToFile calls = %d, want one", len(runner.fileArgs))
+	}
+	if extension := strings.ToLower(filepath.Ext(runner.fileArgs[0][1])); extension != ".mp4" {
+		t.Fatalf("temporary video output extension = %q, want .mp4", extension)
 	}
 }

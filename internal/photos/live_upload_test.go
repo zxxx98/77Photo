@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,6 +117,55 @@ func TestUploadExtractsEmbeddedMVIMGMotion(t *testing.T) {
 	}
 }
 
+func TestUploadExtractsEmbeddedHEICMotion(t *testing.T) {
+	fixture := newUploadFixture(t, 1<<20)
+	runner := &uploadMediaRunner{probeOutput: []byte("video\n")}
+	fixture.service.SetMediaTools(&media.Tools{
+		HeifConvert: "heif-convert", FFmpeg: "ffmpeg", FFprobe: "ffprobe", Runner: runner, Timeout: time.Second, MaxOutputBytes: 1 << 20,
+	})
+	photo, err := fixture.service.Upload(context.Background(), fixture.principal, UploadInput{
+		FolderID: fixture.folderID, Filename: "photo.heic", DeclaredMIME: "image/heic", Body: bytes.NewReader(heifBytes("heic")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := fixture.service.LiveVideoPath(context.Background(), fixture.principal, photo.ID); err != nil {
+		t.Fatalf("LiveVideoPath() error = %v, want embedded HEIC motion", err)
+	}
+}
+
+func TestUploadLogsEmbeddedMotionExtractionFailureWithoutDroppingStill(t *testing.T) {
+	fixture := newUploadFixture(t, 1<<20)
+	var logs bytes.Buffer
+	fixture.service.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+	fixture.service.SetMediaTools(&media.Tools{
+		HeifConvert: "heif-convert", FFmpeg: "ffmpeg", FFprobe: "ffprobe", Runner: &motionExtractionFailureRunner{}, Timeout: time.Second, MaxOutputBytes: 1 << 20,
+	})
+
+	photo, err := fixture.service.Upload(context.Background(), fixture.principal, UploadInput{
+		FolderID: fixture.folderID, Filename: "photo.heic", DeclaredMIME: "image/heic", Body: bytes.NewReader(heifBytes("heic")),
+	})
+	if err != nil {
+		t.Fatalf("Upload() error = %v, want still upload to remain best-effort", err)
+	}
+	if !strings.Contains(logs.String(), "embedded motion extraction failed") || !strings.Contains(logs.String(), photo.ID) {
+		t.Fatalf("logs = %q, want embedded motion extraction warning for %s", logs.String(), photo.ID)
+	}
+}
+
+type motionExtractionFailureRunner struct{}
+
+func (r *motionExtractionFailureRunner) Run(_ context.Context, _ string, _ ...string) ([]byte, error) {
+	return []byte("video\n"), nil
+}
+
+func (r *motionExtractionFailureRunner) RunToFile(_ context.Context, executable, output string, _ ...string) error {
+	if strings.Contains(filepath.Base(executable), "heif-convert") {
+		return writeDecodedPNG(output)
+	}
+	return errors.New("ffmpeg failed")
+}
+
 func TestAttachLiveVideoAcceptsHEICStill(t *testing.T) {
 	fixture := newUploadFixture(t, 1<<20)
 	runner := &uploadMediaRunner{probeOutput: []byte("video\n")}
@@ -159,6 +209,76 @@ func TestLogicalLiveUploadRemovesPartialFilesWhenMotionIsInvalid(t *testing.T) {
 			t.Fatalf("temporary artifact remains: %s", entry.Name())
 		}
 	}
+}
+
+func TestUploadLivePhotoCleansUpAfterRequestCancellation(t *testing.T) {
+	fixture := newUploadFixture(t, 1<<20)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fixture.service.SetThumbnailEnqueuer(cancelingThumbnailEnqueuer{cancel: cancel})
+
+	_, err := fixture.service.UploadLivePhoto(ctx, fixture.principal, LivePhotoUploadInput{
+		Still:  UploadInput{FolderID: fixture.folderID, Filename: "pair.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(jpegBytes(t, 2, 2))},
+		Motion: &LiveVideoInput{Filename: "pair.mov", DeclaredMIME: "video/quicktime", Body: bytes.NewReader(quickTimeBytes())},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("UploadLivePhoto() error = %v, want context.Canceled", err)
+	}
+	var count int
+	if err := fixture.service.db.QueryRow("SELECT COUNT(*) FROM photos").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("photo rows = %d, want 0 after canceled request cleanup", count)
+	}
+}
+
+func TestUploadLivePhotoLogsRollbackFailure(t *testing.T) {
+	fixture := newUploadFixture(t, 1<<20)
+	var logs bytes.Buffer
+	fixture.service.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fixture.service.SetThumbnailEnqueuer(failingCleanupThumbnailEnqueuer{service: fixture.service, cancel: cancel})
+
+	_, err := fixture.service.UploadLivePhoto(ctx, fixture.principal, LivePhotoUploadInput{
+		Still:  UploadInput{FolderID: fixture.folderID, Filename: "pair.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(jpegBytes(t, 2, 2))},
+		Motion: &LiveVideoInput{Filename: "pair.mov", DeclaredMIME: "video/quicktime", Body: bytes.NewReader(quickTimeBytes())},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("UploadLivePhoto() error = %v, want context.Canceled", err)
+	}
+	if !strings.Contains(logs.String(), "live photo rollback failed") {
+		t.Fatalf("logs = %q, want rollback failure record", logs.String())
+	}
+}
+
+type cancelingThumbnailEnqueuer struct {
+	cancel context.CancelFunc
+}
+
+func (e cancelingThumbnailEnqueuer) Enqueue(string) bool {
+	e.cancel()
+	return true
+}
+
+type failingCleanupThumbnailEnqueuer struct {
+	service *Service
+	cancel  context.CancelFunc
+}
+
+func (e failingCleanupThumbnailEnqueuer) Enqueue(photoID string) bool {
+	photo, err := e.service.getRaw(context.Background(), photoID)
+	if err == nil {
+		path, resolveErr := e.service.storage.ResolvePath(photo.StoragePath)
+		if resolveErr == nil {
+			_ = os.Remove(path)
+			_ = os.Mkdir(path, 0o750)
+			_ = os.WriteFile(filepath.Join(path, "keep"), []byte("keep"), 0o640)
+		}
+	}
+	e.cancel()
+	return true
 }
 
 func TestLiveVideoPathReturnsActualMotionMIME(t *testing.T) {

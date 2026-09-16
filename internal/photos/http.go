@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	uploadPath     = "/api/v1/photos/upload"
-	liveUploadPath = "/api/v1/photos/live-upload"
+	uploadPath            = "/api/v1/photos/upload"
+	liveUploadPath        = "/api/v1/photos/live-upload"
+	thumbnailRetryAfterMS = 1000
 )
 
 type HTTPHandler struct {
@@ -39,6 +40,14 @@ func NewHTTPHandler(service *Service, authService *auth.Service) *HTTPHandler {
 }
 
 func (h *HTTPHandler) SetThumbnailService(service ThumbnailService) { h.thumbnails = service }
+
+func thumbnailPendingPayload(photoID string) map[string]any {
+	return map[string]any{
+		"status":         string(thumbnails.Pending),
+		"photo_id":       photoID,
+		"retry_after_ms": thumbnailRetryAfterMS,
+	}
+}
 
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == liveUploadPath {
@@ -165,7 +174,9 @@ func (h *HTTPHandler) liveUpload(w http.ResponseWriter, r *http.Request) {
 	fileSeen, motionSeen, partsStarted := false, false, false
 	cleanup := func() {
 		if photo != nil {
-			_ = h.service.Delete(r.Context(), principal(authenticated.Account), photo.ID, true)
+			if cleanupErr := h.service.Delete(context.WithoutCancel(r.Context()), principal(authenticated.Account), photo.ID, true); cleanupErr != nil {
+				h.service.logLivePhotoRollbackFailure(photo.ID, cleanupErr)
+			}
 			photo = nil
 		}
 	}
@@ -416,7 +427,7 @@ func (h *HTTPHandler) thumbnail(w http.ResponseWriter, r *http.Request, id strin
 	if err != nil {
 		switch {
 		case errors.Is(err, thumbnails.ErrQueueFull):
-			writeJSON(w, http.StatusAccepted, map[string]any{"status": string(thumbnails.Pending), "photo_id": id})
+			writeJSON(w, http.StatusAccepted, thumbnailPendingPayload(id))
 		case errors.Is(err, thumbnails.ErrInvalidSize):
 			writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "thumbnail size is invalid", nil)
 		case errors.Is(err, thumbnails.ErrUnsupported):
@@ -427,12 +438,12 @@ func (h *HTTPHandler) thumbnail(w http.ResponseWriter, r *http.Request, id strin
 		return
 	}
 	if state != thumbnails.Ready {
-		writeJSON(w, http.StatusAccepted, map[string]any{"status": string(state), "photo_id": id})
+		writeJSON(w, http.StatusAccepted, thumbnailPendingPayload(id))
 		return
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		writeError(w, r, http.StatusAccepted, "THUMBNAIL_PENDING", "thumbnail is still being generated", nil)
+		writeJSON(w, http.StatusAccepted, thumbnailPendingPayload(id))
 		return
 	}
 	defer file.Close()
@@ -465,7 +476,7 @@ func (h *HTTPHandler) preview(w http.ResponseWriter, r *http.Request, id string)
 	state, path, err := h.thumbnails.Ensure(r.Context(), id, 1280)
 	if err != nil {
 		if errors.Is(err, thumbnails.ErrQueueFull) {
-			writeJSON(w, http.StatusAccepted, map[string]any{"status": string(thumbnails.Pending), "photo_id": id})
+			writeJSON(w, http.StatusAccepted, thumbnailPendingPayload(id))
 			return
 		}
 		if errors.Is(err, thumbnails.ErrInvalidSize) || errors.Is(err, thumbnails.ErrUnsupported) {
@@ -476,12 +487,12 @@ func (h *HTTPHandler) preview(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	if state != thumbnails.Ready {
-		writeJSON(w, http.StatusAccepted, map[string]any{"status": string(state), "photo_id": id})
+		writeJSON(w, http.StatusAccepted, thumbnailPendingPayload(id))
 		return
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		writeJSON(w, http.StatusAccepted, map[string]any{"status": string(thumbnails.Pending), "photo_id": id})
+		writeJSON(w, http.StatusAccepted, thumbnailPendingPayload(id))
 		return
 	}
 	defer file.Close()

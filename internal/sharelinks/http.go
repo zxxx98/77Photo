@@ -17,14 +17,23 @@ import (
 )
 
 const (
-	shareLinksPath       = "/api/v1/share-links"
-	shareAccessCookie    = "77photo_share_access"
-	sharePasswordMessage = "the share link password is incorrect"
+	shareLinksPath        = "/api/v1/share-links"
+	shareAccessCookie     = "77photo_share_access"
+	sharePasswordMessage  = "the share link password is incorrect"
+	thumbnailRetryAfterMS = 1000
 )
 
 type HTTPHandler struct {
 	service     *Service
 	authService *auth.Service
+}
+
+func thumbnailPendingPayload(photoID string) map[string]any {
+	return map[string]any{
+		"status":         string(thumbnails.Pending),
+		"photo_id":       photoID,
+		"retry_after_ms": thumbnailRetryAfterMS,
+	}
 }
 
 func NewHTTPHandler(service *Service, authService *auth.Service) http.Handler {
@@ -159,19 +168,19 @@ func (h *HTTPHandler) preview(w http.ResponseWriter, r *http.Request, token, pho
 	state, path, err := h.service.thumbnails.Ensure(r.Context(), photo.ID, 1280)
 	if err != nil {
 		if errors.Is(err, thumbnails.ErrQueueFull) {
-			writeJSON(w, http.StatusAccepted, map[string]any{"status": string(thumbnails.Pending), "photo_id": photo.ID})
+			writeJSON(w, http.StatusAccepted, thumbnailPendingPayload(photo.ID))
 			return
 		}
 		writeError(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "preview is not available for this media", nil)
 		return
 	}
 	if state != thumbnails.Ready {
-		writeJSON(w, http.StatusAccepted, map[string]any{"status": string(state), "photo_id": photo.ID})
+		writeJSON(w, http.StatusAccepted, thumbnailPendingPayload(photo.ID))
 		return
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		writeJSON(w, http.StatusAccepted, map[string]any{"status": string(thumbnails.Pending), "photo_id": photo.ID})
+		writeJSON(w, http.StatusAccepted, thumbnailPendingPayload(photo.ID))
 		return
 	}
 	defer file.Close()

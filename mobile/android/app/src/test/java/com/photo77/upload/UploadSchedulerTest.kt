@@ -70,17 +70,93 @@ class UploadSchedulerTest {
 
   @Test
   fun preservesPermanentDispositionWithoutRetrying() {
-    val source = FakeTaskSource(tasks("server-a", 1))
+    val source = FakeTaskSource(tasks("server-a", 1).map { task ->
+      task.copy(
+        motionUri = "content://media/1-motion",
+        motionDisplayName = "photo-1.mov",
+        motionMimeType = "video/quicktime",
+        motionSizeBytes = 200L,
+      )
+    })
+    val released = mutableListOf<String>()
     val scheduler = UploadScheduler(
       source = source,
       uploader = UploadTaskUploader { _, _ -> UploadResult.permanent("URI_ACCESS_DENIED") },
       sleepMillis = 1,
+      onTaskTerminal = { task ->
+        releaseTaskUriGrants(task, UriGrantReleaser { released += it.toString() })
+      },
     )
 
     scheduler.start("server-a", "worker-1", 1).await(5, TimeUnit.SECONDS)
 
     assertEquals(UploadTaskState.FAILED, source.tasks.single().state)
     assertEquals("URI_ACCESS_DENIED", source.tasks.single().lastErrorCode)
+    assertTrue(released.isEmpty())
+  }
+
+  @Test
+  fun successfulPairedUploadReleasesStillAndMotionGrants() {
+    val source = FakeTaskSource(tasks("server-a", 1).map { task ->
+      task.copy(
+        motionUri = "content://media/1-motion",
+        motionDisplayName = "photo-1.mov",
+        motionMimeType = "video/quicktime",
+        motionSizeBytes = 200L,
+      )
+    })
+    val released = mutableListOf<String>()
+    val scheduler = UploadScheduler(
+      source = source,
+      uploader = UploadTaskUploader { _, _ -> UploadResult.success() },
+      sleepMillis = 1,
+      onTaskTerminal = { task ->
+        releaseTaskUriGrants(task, UriGrantReleaser { released += it.toString() })
+      },
+    )
+
+    scheduler.start("server-a", "worker-1", 1).await(5, TimeUnit.SECONDS)
+
+    assertEquals(UploadTaskState.SUCCEEDED, source.tasks.single().state)
+    assertEquals(listOf("content://media/1", "content://media/1-motion"), released)
+  }
+
+  @Test
+  fun retryableUploadKeepsGrantsForTheQueuedRetry() {
+    val source = FakeTaskSource(tasks("server-a", 1))
+    val released = mutableListOf<String>()
+    val scheduler = UploadScheduler(
+      source = source,
+      uploader = UploadTaskUploader { _, _ -> UploadResult.retryable("NETWORK_ERROR") },
+      sleepMillis = 1,
+      onTaskTerminal = { task ->
+        releaseTaskUriGrants(task, UriGrantReleaser { released += it.toString() })
+      },
+    )
+
+    scheduler.start("server-a", "worker-1", 1).await(5, TimeUnit.SECONDS)
+
+    assertEquals(UploadTaskState.QUEUED, source.tasks.single().state)
+    assertTrue(released.isEmpty())
+  }
+
+  @Test
+  fun authenticationPauseKeepsGrantsForResume() {
+    val source = FakeTaskSource(tasks("server-a", 1))
+    val released = mutableListOf<String>()
+    val scheduler = UploadScheduler(
+      source = source,
+      uploader = UploadTaskUploader { _, _ -> UploadResult.authRequired() },
+      sleepMillis = 1,
+      onTaskTerminal = { task ->
+        releaseTaskUriGrants(task, UriGrantReleaser { released += it.toString() })
+      },
+    )
+
+    scheduler.start("server-a", "worker-1", 1).await(5, TimeUnit.SECONDS)
+
+    assertEquals(UploadTaskState.PAUSED, source.tasks.single().state)
+    assertTrue(released.isEmpty())
   }
 
   @Test
@@ -177,7 +253,10 @@ class UploadSchedulerTest {
       }
     }
 
-    override fun hasRunnable(serverId: String, now: Long): Boolean = tasks.any { it.serverId == serverId && it.state == UploadTaskState.QUEUED }
+    override fun hasRunnable(serverId: String, now: Long): Boolean = tasks.any {
+      it.serverId == serverId && it.state == UploadTaskState.QUEUED &&
+        (it.nextRetryAtEpochMs == null || it.nextRetryAtEpochMs <= now)
+    }
 
     override fun releaseLeases(owner: String) {
       synchronized(tasks) {

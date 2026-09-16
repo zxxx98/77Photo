@@ -51,6 +51,7 @@ export function queuedItemsFromFiles(files: File[]): QueuedUploadItem[] {
         continue;
       }
     }
+    if (isLiveMotion(file)) continue;
     if (!pairedMotions.has(file)) result.push({ file, status: 'queued', progress: 0 });
   }
   return result;
@@ -61,5 +62,5 @@ export function selectionFileIsQueued(file: File, items: Array<Pick<QueuedUpload
 }
 
 export function shouldAutoStartAfterSelection(files: File[]): boolean {
-  return files.length > 0;
+  return queuedItemsFromFiles(files).length > 0;
 }

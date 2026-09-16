@@ -8,6 +8,7 @@ import com.facebook.react.BaseReactPackage
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -18,6 +19,10 @@ import com.facebook.react.module.model.ReactModuleInfoProvider
 import com.facebook.react.turbomodule.core.interfaces.TurboModule
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.text.Normalizer
+import java.util.Locale
+import com.photo77.upload.ContentResolverUriGrantReleaser
+import com.photo77.upload.UriGrantReleaser
 
 /** Implemented by the activity that owns the Activity Result registration. */
 interface PhotoPickerHost {
@@ -73,6 +78,37 @@ object PhotoPickerMetadata {
     return PickedMediaMetadata(uri, displayName, mimeType, size)
   }
 }
+
+/** Mirrors the JS pairing rule so a dropped MOV does not retain a grant forever. */
+internal fun dropOrphanMotion(
+  items: List<PickedMediaMetadata>,
+  releaser: UriGrantReleaser,
+): List<PickedMediaMetadata> {
+  val motions = linkedMapOf<String, PickedMediaMetadata>()
+  items.forEach { item ->
+    if (extension(item.displayName) == "mov") motions.putIfAbsent(basename(item.displayName), item)
+  }
+  val paired = mutableSetOf<String>()
+  items.forEach { item ->
+    if (isStill(item.displayName)) motions[basename(item.displayName)]?.let { paired += it.uri }
+  }
+  val result = items.filter { item ->
+    if (extension(item.displayName) != "mov") return@filter true
+    if (item.uri in paired) return@filter true
+    releaser.release(Uri.parse(item.uri))
+    false
+  }
+  return result
+}
+
+private fun extension(name: String): String = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+
+private fun basename(name: String): String = Normalizer.normalize(
+  name.substringBeforeLast('.', name),
+  Normalizer.Form.NFKC,
+).lowercase(Locale.ROOT)
+
+private fun isStill(name: String): Boolean = extension(name) in setOf("jpg", "jpeg", "png", "heic", "heif")
 
 fun isSupportedVisualMimeType(mimeType: String): Boolean =
   mimeType.lowercase().startsWith("image/") || mimeType.lowercase().startsWith("video/")
@@ -139,6 +175,23 @@ class NativePhotoPickerModule(
     }
   }
 
+  @ReactMethod
+  fun release(uris: ReadableArray, promise: Promise) {
+    executor.execute {
+      try {
+        val releaser = ContentResolverUriGrantReleaser(reactApplicationContext.contentResolver)
+        (0 until uris.size()).forEach { index ->
+          val value = uris.getString(index)?.takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("URI is invalid")
+          releaser.release(Uri.parse(value))
+        }
+        promise.resolve(null)
+      } catch (error: Throwable) {
+        promise.reject("PICKER_GRANT_RELEASE_FAILED", "selected media grants could not be released", error)
+      }
+    }
+  }
+
   private fun handleSelection(uris: List<Uri>) {
     val promise = synchronized(this) {
       val result = pending
@@ -146,12 +199,21 @@ class NativePhotoPickerModule(
       result
     } ?: return
     executor.execute {
+      val picked = mutableListOf<PickedMediaMetadata>()
       try {
         val reader = PhotoPickerContentReader(reactApplicationContext.contentResolver)
         val result = Arguments.createArray()
-        uris.map { reader.read(it) }.forEach { result.pushMap(it.toWritableMap()) }
+        uris.forEach { picked += reader.read(it) }
+        val filtered = dropOrphanMotion(
+          picked,
+          ContentResolverUriGrantReleaser(reactApplicationContext.contentResolver),
+        )
+        filtered.forEach { result.pushMap(it.toWritableMap()) }
         promise.resolve(result)
       } catch (error: Throwable) {
+        picked.forEach { metadata ->
+          ContentResolverUriGrantReleaser(reactApplicationContext.contentResolver).release(Uri.parse(metadata.uri))
+        }
         promise.reject("PICKER_METADATA_UNREADABLE", "selected media metadata could not be read", error)
       }
     }

@@ -661,7 +661,12 @@ paths:
             video/mp4: { schema: { type: string, format: binary } }
             video/webm: { schema: { type: string, format: binary } }
             video/quicktime: { schema: { type: string, format: binary } }
-        '206': { description: Partial motion bytes for range playback, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '206':
+          description: Partial motion bytes for range playback
+          content:
+            video/mp4: { schema: { type: string, format: binary } }
+            video/webm: { schema: { type: string, format: binary } }
+            video/quicktime: { schema: { type: string, format: binary } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/ReadForbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1374,10 +1379,11 @@ components:
             - type: 'null'
     ThumbnailPending:
       type: object
-      required: [status, retry_after_ms]
+      required: [status, retry_after_ms, photo_id]
       properties:
         status: { type: string, const: pending }
         retry_after_ms: { type: integer, minimum: 50 }
+        photo_id: { $ref: '#/components/schemas/ID' }
     LivePhotoStatus:
       type: object
       required: [live_photo_ids]

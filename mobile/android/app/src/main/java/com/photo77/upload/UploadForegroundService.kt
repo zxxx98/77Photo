@@ -79,7 +79,12 @@ class UploadForegroundService : Service() {
 
     scheduler?.stop()
     val owner = "service-${UUID.randomUUID()}"
-    val source = RoomUploadTaskSource(UploadDatabase.getInstance(applicationContext).uploadTaskDao())
+    val dao = UploadDatabase.getInstance(applicationContext).uploadTaskDao()
+    releaseCompletedTaskUriGrants(
+      dao.findByServer(serverId),
+      ContentResolverUriGrantReleaser(contentResolver),
+    )
+    val source = RoomUploadTaskSource(dao)
     val api = UploadApi(
       baseUrl = normalizedBaseUrl,
       contentResolver = contentResolver,
@@ -91,6 +96,9 @@ class UploadForegroundService : Service() {
       uploader = api,
       authRefresher = api,
       networkAvailable = { hasAllowedNetwork(allowMobile) },
+      onTaskTerminal = { task ->
+        releaseTaskUriGrants(task, ContentResolverUriGrantReleaser(contentResolver))
+      },
       onInitialLeaseDecision = { releaseStartReservation(serverId) },
     )
     scheduler = nextScheduler

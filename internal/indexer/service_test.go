@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +25,13 @@ import (
 
 type scannerMediaRunner struct{}
 
-func (scannerMediaRunner) Run(context.Context, string, ...string) ([]byte, error) {
+func (scannerMediaRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	if len(args) > 0 {
+		input := args[len(args)-1]
+		if extension := strings.ToLower(filepath.Ext(input)); extension == ".heic" || extension == ".heif" {
+			return []byte("audio\n"), nil
+		}
+	}
 	return []byte("video\n"), nil
 }
 

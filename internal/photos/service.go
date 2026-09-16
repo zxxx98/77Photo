@@ -13,6 +13,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -112,13 +113,14 @@ type Service struct {
 	cache      CacheInvalidator
 	queue      ThumbnailEnqueuer
 	mediaTools *media.Tools
+	logger     *slog.Logger
 	cursorKey  [32]byte
 	cursorTTL  time.Duration
 	authorizer *acl.Authorizer
 }
 
 func NewService(db *sql.DB, store storage.Store, maxUploadSize int64) *Service {
-	service := &Service{db: db, storage: store, maxSize: maxUploadSize, cursorTTL: 15 * time.Minute}
+	service := &Service{db: db, storage: store, maxSize: maxUploadSize, cursorTTL: 15 * time.Minute, logger: slog.Default()}
 	if _, err := rand.Read(service.cursorKey[:]); err != nil {
 		fallback := sha256.Sum256([]byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
 		copy(service.cursorKey[:], fallback[:])
@@ -131,6 +133,14 @@ func (s *Service) SetCacheInvalidator(invalidator CacheInvalidator) { s.cache = 
 func (s *Service) SetThumbnailEnqueuer(enqueuer ThumbnailEnqueuer) { s.queue = enqueuer }
 
 func (s *Service) SetMediaTools(tools *media.Tools) { s.mediaTools = tools }
+
+func (s *Service) SetLogger(logger *slog.Logger) {
+	if logger == nil {
+		s.logger = slog.Default()
+		return
+	}
+	s.logger = logger
+}
 
 func (s *Service) SetAuthorizer(authorizer *acl.Authorizer) { s.authorizer = authorizer }
 
@@ -289,11 +299,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 		return Photo{}, fmt.Errorf("index uploaded photo: %w", err)
 	}
 	keepFile = true
-	if s.mediaTools != nil && mimeType == "image/jpeg" {
-		if motion, motionErr := s.mediaTools.FindEmbeddedMotion(ctx, finalPath); motionErr == nil && motion.Offset > 0 {
-			if destination, resolveErr := s.storage.ResolvePath(s.liveMotionPath(photo.ID)); resolveErr == nil {
-				_ = s.mediaTools.ExtractMotion(ctx, finalPath, destination)
-			}
+	if s.mediaTools != nil && supportsEmbeddedMotion(mimeType) {
+		if motionErr := s.refreshEmbeddedMotion(ctx, photo.ID, finalPath, mimeType); motionErr != nil && s.logger != nil {
+			s.logger.Warn("embedded motion extraction failed", "status", "degraded", "photo_id", photo.ID, "filename", photo.Filename, "mime_type", photo.MIMEType, "error", motionErr)
 		}
 	}
 	if s.queue != nil {

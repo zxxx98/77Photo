@@ -56,6 +56,7 @@ type Job struct {
 type fileMove struct {
 	source      string
 	destination string
+	pairKey     string
 }
 
 type importCandidate struct {
@@ -175,31 +176,11 @@ func (s *Service) importFiles(ctx context.Context, principal acl.Principal, job 
 		return fmt.Errorf("prepare target user directory: %w", err)
 	}
 
-	for _, move := range moves {
+	for _, group := range groupMoves(moves) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		destination, err := s.storage.ResolvePath(move.destination)
-		if err != nil {
-			s.increment(job, func(c *Counts) { c.Failed++ })
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
-			s.increment(job, func(c *Counts) { c.Failed++ })
-			continue
-		}
-		if _, err := os.Lstat(destination); err == nil {
-			s.increment(job, func(c *Counts) { c.Skipped++ })
-			continue
-		} else if !os.IsNotExist(err) {
-			s.increment(job, func(c *Counts) { c.Failed++ })
-			continue
-		}
-		if err := s.storage.Rename(move.source, move.destination); err != nil {
-			s.increment(job, func(c *Counts) { c.Failed++ })
-			continue
-		}
-		s.increment(job, func(c *Counts) { c.Moved++ })
+		s.moveGroup(job, group)
 	}
 
 	if s.indexer == nil {
@@ -284,9 +265,12 @@ func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove,
 		return nil, err
 	}
 	stillKeys := make(map[string]struct{})
+	motionKeys := make(map[string]struct{})
 	for _, candidate := range candidates {
 		if candidate.still {
 			stillKeys[mediaPairKey(candidate.relative)] = struct{}{}
+		} else if candidate.MOV {
+			motionKeys[mediaPairKey(candidate.relative)] = struct{}{}
 		}
 	}
 	moves := make([]fileMove, 0, len(candidates))
@@ -298,9 +282,74 @@ func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove,
 			}
 		}
 		destination := filepath.Join("users", userID, "Imported", candidate.relative)
-		moves = append(moves, fileMove{source: candidate.source, destination: filepath.ToSlash(destination)})
+		pairKey := ""
+		key := mediaPairKey(candidate.relative)
+		if _, hasStill := stillKeys[key]; hasStill {
+			if candidate.MOV {
+				pairKey = key
+			} else if _, hasMotion := motionKeys[key]; hasMotion {
+				pairKey = key
+			}
+		}
+		moves = append(moves, fileMove{source: candidate.source, destination: filepath.ToSlash(destination), pairKey: pairKey})
 	}
 	return moves, nil
+}
+
+func groupMoves(moves []fileMove) [][]fileMove {
+	groups := make([][]fileMove, 0, len(moves))
+	paired := make(map[string]int)
+	for _, move := range moves {
+		if move.pairKey == "" {
+			groups = append(groups, []fileMove{move})
+			continue
+		}
+		if index, ok := paired[move.pairKey]; ok {
+			groups[index] = append(groups[index], move)
+			continue
+		}
+		paired[move.pairKey] = len(groups)
+		groups = append(groups, []fileMove{move})
+	}
+	return groups
+}
+
+func (s *Service) moveGroup(job *Job, group []fileMove) {
+	conflict := false
+	for _, move := range group {
+		destination, err := s.storage.ResolvePath(move.destination)
+		if err != nil {
+			s.increment(job, func(c *Counts) { c.Failed += len(group) })
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
+			s.increment(job, func(c *Counts) { c.Failed += len(group) })
+			return
+		}
+		if _, err := os.Lstat(destination); err == nil {
+			conflict = true
+		} else if !os.IsNotExist(err) {
+			s.increment(job, func(c *Counts) { c.Failed += len(group) })
+			return
+		}
+	}
+	if conflict {
+		s.increment(job, func(c *Counts) { c.Skipped += len(group) })
+		return
+	}
+
+	moved := 0
+	for _, move := range group {
+		if err := s.storage.Rename(move.source, move.destination); err != nil {
+			for rollback := moved - 1; rollback >= 0; rollback-- {
+				_ = s.storage.Rename(group[rollback].destination, group[rollback].source)
+			}
+			s.increment(job, func(c *Counts) { c.Failed += len(group) })
+			return
+		}
+		moved++
+	}
+	s.increment(job, func(c *Counts) { c.Moved += len(group) })
 }
 
 func isImportableMedia(path string) bool {

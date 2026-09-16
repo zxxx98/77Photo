@@ -96,6 +96,32 @@ describe('API client', () => {
     expect(fetcher).toHaveBeenCalledWith('/api/v1/photos?folder_id=f_1&cursor=cursor-value&limit=25', expect.objectContaining({ credentials: 'include' }));
   });
 
+  it('checks LIVE status in batches of at most 100 photo ids', async () => {
+    const items = Array.from({ length: 205 }, (_, index) => ({
+      id: `p_${index}`,
+      owner_id: 'u_1',
+      folder_id: 'f_1',
+      filename: `photo-${index}.jpg`,
+      mime_type: 'image/jpeg',
+      size: 100,
+      captured_at: '2026-09-15T01:00:00Z',
+      captured_at_source: 'file_mod_time',
+    }));
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items, next_cursor: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ live_photo_ids: ['p_0'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ live_photo_ids: ['p_100'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ live_photo_ids: ['p_200'] }), { status: 200 }));
+    const client = createApiClient(fetcher as typeof fetch);
+
+    const page = await client.listPhotos({ limit: 205 });
+
+    const statusCalls = fetcher.mock.calls.slice(1).map(([path]) => String(path));
+    expect(statusCalls).toHaveLength(3);
+    expect(statusCalls.map((path) => new URL(path, 'https://77photo.test').searchParams.get('ids')!.split(',').length)).toEqual([100, 100, 5]);
+    expect(page.items.filter((photo) => photo.is_live_photo).map((photo) => photo.id)).toEqual(['p_0', 'p_100', 'p_200']);
+  });
+
   it('uses XMLHttpRequest for upload progress and preserves FormData content type', async () => {
     const open = vi.fn();
     const send = vi.fn(function (this: { status: number; responseText: string; onload?: (event: ProgressEvent) => void }) {

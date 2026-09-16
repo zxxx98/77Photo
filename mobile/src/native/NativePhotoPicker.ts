@@ -7,6 +7,7 @@ export type { PickedMedia };
 
 export interface Spec extends TurboModule {
   pick(): Promise<readonly PickedMedia[]>;
+  release(uris: readonly string[]): Promise<void>;
 }
 
 export default TurboModuleRegistry.get<Spec>('NativePhotoPicker');

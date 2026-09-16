@@ -1,6 +1,7 @@
 package com.photo77.picker
 
 import android.net.Uri
+import com.photo77.upload.UriGrantReleaser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -84,4 +85,28 @@ class NativePhotoPickerModuleTest {
       assertEquals(mimeType, result.mimeType)
     }
   }
+
+  @Test
+  fun dropsOrphanAndDuplicateMotionFilesAndReleasesTheirGrants() {
+    val still = metadata("IMG_0001.HEIC", "image/heic")
+    val paired = metadata("IMG_0001.MOV", "video/quicktime")
+    val duplicate = metadata("img_0001.mov", "video/quicktime")
+    val orphan = metadata("orphan.MOV", "video/quicktime")
+    val released = mutableListOf<String>()
+
+    val result = dropOrphanMotion(
+      listOf(orphan, paired, still, duplicate),
+      UriGrantReleaser { released += it.toString() },
+    )
+
+    assertEquals(listOf("IMG_0001.MOV", "IMG_0001.HEIC"), result.map { it.displayName })
+    assertEquals(listOf("content://media/orphan.MOV", "content://media/img_0001.mov"), released)
+  }
+
+  private fun metadata(name: String, mimeType: String) = PickedMediaMetadata(
+    uri = "content://media/$name",
+    displayName = name,
+    mimeType = mimeType,
+    sizeBytes = 12L,
+  )
 }

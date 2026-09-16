@@ -20,6 +20,8 @@ import com.facebook.react.turbomodule.core.interfaces.TurboModule
 import com.photo77.upload.db.UploadDatabase
 import com.photo77.upload.db.UploadTaskEntity
 import com.photo77.upload.db.UploadTaskState
+import com.photo77.upload.ContentResolverUriGrantReleaser
+import com.photo77.upload.releaseCanceledTaskUriGrants
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -171,7 +173,14 @@ class NativeUploadQueueModule(
         taskIds.getString(index)?.takeIf { it.isNotBlank() }
           ?: throw IllegalArgumentException("task ID is invalid")
       }
-      if (ids.isNotEmpty()) database.uploadTaskDao().cancel(ids, System.currentTimeMillis())
+      if (ids.isNotEmpty()) {
+        val dao = database.uploadTaskDao()
+        dao.cancel(ids, System.currentTimeMillis())
+        releaseCanceledTaskUriGrants(
+          dao.findByIds(ids),
+          ContentResolverUriGrantReleaser(reactApplicationContext.contentResolver),
+        )
+      }
       null
     }
   }

@@ -79,7 +79,7 @@ export default function UploadWorkspace({ api, selection, onSelectionConsumed }:
   useEffect(() => {
     const pendingFiles = autoStartFilesRef.current;
     if (pendingFiles.length === 0 || running || !folderId || items.length === 0) return;
-    if (!pendingFiles.every((file) => selectionFileIsQueued(file, items.filter((item) => item.status === 'queued')))) return;
+    if (!pendingFiles.some((file) => selectionFileIsQueued(file, items.filter((item) => item.status === 'queued')))) return;
     autoStartFilesRef.current = [];
     void start();
   }, [folderId, items, running]);

@@ -127,6 +127,21 @@ class UploadTaskDaoTest {
     assertEquals(original, dao.findByServer("server-a").single())
   }
 
+  @Test
+  fun cancelMovesQueuedPausedAndFailedTasksToCanceled() = runBlocking {
+    dao.insertAll(listOf(
+      task("queued", "server-a", 1000),
+      task("paused", "server-a", 1001).copy(state = UploadTaskState.PAUSED),
+      task("failed", "server-a", 1002).copy(state = UploadTaskState.FAILED),
+    ))
+
+    assertEquals(3, dao.cancel(listOf("queued", "paused", "failed"), 2000L))
+    assertEquals(
+      listOf(UploadTaskState.CANCELED, UploadTaskState.CANCELED, UploadTaskState.CANCELED),
+      dao.findByServer("server-a").map { it.state },
+    )
+  }
+
   private fun task(id: String, serverId: String, createdAt: Long) = UploadTaskEntity(
     id = id,
     batchId = "batch-$serverId",

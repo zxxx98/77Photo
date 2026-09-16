@@ -179,6 +179,8 @@ export interface ApiClient {
 
 type Fetcher = typeof fetch;
 
+const liveStatusBatchSize = 100;
+
 export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
   let csrfToken: string | null = null;
 
@@ -271,9 +273,12 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
       const page = await request<PhotoPage>(`/api/v1/photos${suffix ? `?${suffix}` : ''}`) as PhotoPage;
       if (page.items.length === 0) return page;
       try {
-        const ids = page.items.map((photo) => photo.id).join(',');
-        const status = await request<{ live_photo_ids: string[] }>(`/api/v1/live-photos/status?ids=${encodeURIComponent(ids)}`);
-        const liveIds = new Set(status?.live_photo_ids ?? []);
+        const liveIds = new Set<string>();
+        for (let offset = 0; offset < page.items.length; offset += liveStatusBatchSize) {
+          const ids = page.items.slice(offset, offset + liveStatusBatchSize).map((photo) => photo.id).join(',');
+          const status = await request<{ live_photo_ids: string[] }>(`/api/v1/live-photos/status?ids=${encodeURIComponent(ids)}`);
+          for (const id of status?.live_photo_ids ?? []) liveIds.add(id);
+        }
         return { ...page, items: page.items.map((photo) => ({ ...photo, is_live_photo: liveIds.has(photo.id) })) };
       } catch {
         return page;

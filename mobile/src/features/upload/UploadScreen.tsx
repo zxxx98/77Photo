@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
@@ -11,7 +11,7 @@ import type { ApiClient } from '../../services/api/client';
 import type { User } from '../../services/api/types';
 import type { ServerConfig } from '../../services/connection/types';
 import { FolderPickerScreen } from '../folders/FolderPickerScreen';
-import { pairPickedMedia, uploadQueue, type UploadQueueService } from './uploadService';
+import { pairPickedMedia, pickedMediaUris, uploadQueue, type UploadQueueService } from './uploadService';
 import type { UploadQueueSnapshot, UploadTask } from './types';
 import '../../i18n';
 
@@ -20,12 +20,13 @@ export type UploadScreenProps = {
   server: ServerConfig;
   user: User;
   queue?: UploadQueueService;
-  picker?: Pick<PhotoPickerSpec, 'pick'>;
+  picker?: Pick<PhotoPickerSpec, 'pick' | 'release'>;
   notificationsAllowed?: boolean;
   notificationPermission?: () => Promise<boolean>;
   concurrency?: 1 | 2 | 3 | 4;
   cellularUploadEnabled?: boolean;
   lanCIDRs?: readonly string[];
+  isFocused?: boolean;
   onUploadStarted?: () => void | Promise<void>;
 };
 
@@ -39,8 +40,9 @@ const EMPTY_SNAPSHOT: UploadQueueSnapshot = {
   totalBytes: 0,
 };
 
-const unavailablePicker: Pick<PhotoPickerSpec, 'pick'> = {
+const unavailablePicker: Pick<PhotoPickerSpec, 'pick' | 'release'> = {
   pick: async () => { throw new Error('NativePhotoPicker is unavailable'); },
+  release: async () => undefined,
 };
 
 function nativeNotificationPermission(): Promise<boolean> {
@@ -84,6 +86,7 @@ export function UploadScreen({
   concurrency = 2,
   cellularUploadEnabled = false,
   lanCIDRs = [],
+  isFocused = true,
   onUploadStarted,
 }: UploadScreenProps) {
   const { t } = useTranslation();
@@ -96,6 +99,42 @@ export function UploadScreen({
   const [notificationPermissionGranted, setNotificationPermissionGranted] = useState(notificationsAllowed);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedRef = useRef<readonly PickedMedia[]>([]);
+  const ownedUrisRef = useRef<Set<string>>(new Set());
+  const mountedRef = useRef(true);
+  const focusedRef = useRef(isFocused);
+  const enqueueInFlightRef = useRef(false);
+  focusedRef.current = isFocused;
+
+  const releaseUris = useCallback(async (uris: readonly string[]) => {
+    if (uris.length === 0) return;
+    await picker.release(uris).catch(() => undefined);
+  }, [picker]);
+
+  const releaseOwnedUris = useCallback(async () => {
+    const uris = Array.from(ownedUrisRef.current);
+    ownedUrisRef.current.clear();
+    selectedRef.current = [];
+    if (mountedRef.current) setSelected([]);
+    await releaseUris(uris);
+  }, [releaseUris]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (!enqueueInFlightRef.current) {
+        releaseOwnedUris().catch(() => undefined);
+      }
+    };
+  }, [releaseOwnedUris]);
+
+  useEffect(() => {
+    if (isFocused) return;
+    if (!enqueueInFlightRef.current) {
+      releaseOwnedUris().catch(() => undefined);
+    }
+  }, [isFocused, releaseOwnedUris]);
 
   useEffect(() => {
     let mounted = true;
@@ -151,13 +190,25 @@ export function UploadScreen({
     setBusy(true);
     try {
       const items = await picker.pick();
-      setSelected(pairPickedMedia(items));
+      const paired = pairPickedMedia(items);
+      if (!mountedRef.current || !focusedRef.current) {
+        await releaseUris(pickedMediaUris(paired));
+        return;
+      }
+      await releaseOwnedUris();
+      if (!mountedRef.current || !focusedRef.current) {
+        await releaseUris(pickedMediaUris(paired));
+        return;
+      }
+      selectedRef.current = paired;
+      ownedUrisRef.current = new Set(pickedMediaUris(paired));
+      setSelected(paired);
       setFolderId(null);
       setFolderName(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('upload.pickerError', '无法读取所选媒体'));
     } finally {
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
     }
   };
 
@@ -183,19 +234,29 @@ export function UploadScreen({
     if (selected.length === 0 || !folderId) return;
     setError(null);
     setBusy(true);
+    let enqueued = false;
     try {
       await ensureNotificationPermission();
+      if (!mountedRef.current || !focusedRef.current) return;
+      enqueueInFlightRef.current = true;
       await queue.enqueue(server.id, deviceId, folderId, selected);
-      await queue.start?.(server.id, server.baseURL, deviceId, concurrency, cellularUploadEnabled, lanCIDRs);
+      enqueueInFlightRef.current = false;
+      enqueued = true;
+      ownedUrisRef.current.clear();
+      selectedRef.current = [];
       setSelected([]);
+      await queue.start?.(server.id, server.baseURL, deviceId, concurrency, cellularUploadEnabled, lanCIDRs);
       setFolderId(null);
       setFolderName(null);
       await refresh();
       await onUploadStarted?.();
     } catch (caught) {
+      enqueueInFlightRef.current = false;
+      if (!enqueued) await releaseOwnedUris();
+      if (!mountedRef.current) return;
       setError(caught instanceof Error ? caught.message : t('upload.startError', '上传无法开始'));
     } finally {
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
     }
   };
 
