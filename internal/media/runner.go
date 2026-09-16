@@ -144,7 +144,9 @@ func (r *commandRunner) RunToFile(ctx context.Context, executable, output string
 			}
 			return nil
 		case <-ctx.Done():
-			_ = command.Process.Kill()
+			if command.Process != nil {
+				_ = command.Process.Kill()
+			}
 			<-done
 			_ = os.Remove(output)
 			return ctx.Err()
@@ -231,6 +233,54 @@ func (t *Tools) ProbeVideo(ctx context.Context, input string) (bool, error) {
 	return strings.TrimSpace(string(output)) == "video", nil
 }
 
+// DecodeStill converts an HEIC/HEIF still to a bounded intermediate image.
+// The intermediate path must be temporary and managed by the caller.
+func (t *Tools) DecodeStill(ctx context.Context, input, output string) error {
+	if strings.TrimSpace(input) == "" || strings.TrimSpace(output) == "" {
+		return errors.New("media input and output paths are required")
+	}
+	ctx, cancel := t.timedContext(ctx)
+	defer cancel()
+	path := t.HeifConvert
+	if strings.TrimSpace(path) == "" {
+		path = "heif-convert"
+	}
+	if err := t.runner().RunToFile(ctx, path, output, input, output); err != nil {
+		return err
+	}
+	return validateToolOutput(output, t.outputLimit())
+}
+
+// ExtractVideoFrame renders a poster frame near the beginning of a video. A
+// second attempt at timestamp zero handles clips shorter than the seek point.
+func (t *Tools) ExtractVideoFrame(ctx context.Context, input, output string) error {
+	if strings.TrimSpace(input) == "" || strings.TrimSpace(output) == "" {
+		return errors.New("media input and output paths are required")
+	}
+	ctx, cancel := t.timedContext(ctx)
+	defer cancel()
+	path := t.FFmpeg
+	if strings.TrimSpace(path) == "" {
+		path = "ffmpeg"
+	}
+	if err := t.runFrame(ctx, path, input, output, true); err == nil {
+		return nil
+	} else if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	_ = os.Remove(output)
+	return t.runFrame(ctx, path, input, output, false)
+}
+
+func (t *Tools) runFrame(ctx context.Context, executable, input, output string, seek bool) error {
+	args := []string{"-v", "error", "-nostdin"}
+	if seek {
+		args = append(args, "-ss", "0.5")
+	}
+	args = append(args, "-i", input, "-frames:v", "1", "-vf", "scale=min(1280,iw):-2", "-f", "image2", output)
+	return t.runner().RunToFile(ctx, executable, output, args...)
+}
+
 // FindEmbeddedMotion validates the bounded trailing ISO-BMFF segment used by
 // JPEG MVIMG files. A segment is returned only after FFprobe sees a video
 // stream in a temporary copy of that segment.
@@ -241,6 +291,17 @@ func (t *Tools) FindEmbeddedMotion(ctx context.Context, input string) (EmbeddedM
 	}
 	if int64(len(data)) > t.inputLimit() {
 		return EmbeddedMotion{}, ErrOutputTooLarge
+	}
+	extension := strings.ToLower(filepath.Ext(input))
+	if extension == ".heic" || extension == ".heif" {
+		video, probeErr := t.ProbeVideo(ctx, input)
+		if probeErr != nil {
+			return EmbeddedMotion{}, probeErr
+		}
+		if video {
+			return EmbeddedMotion{Size: int64(len(data)), MIME: "video/mp4"}, nil
+		}
+		return EmbeddedMotion{}, nil
 	}
 	if !looksLikeJPEG(data) {
 		return EmbeddedMotion{}, nil
@@ -386,7 +447,11 @@ func (t *Tools) atomicFFmpegCopy(ctx context.Context, input, destination string)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("create motion destination: %w", err)
 	}
-	temporaryPath, cleanup, err := newTemporaryOutput(dir, strings.ToLower(filepath.Ext(input)))
+	extension := strings.ToLower(filepath.Ext(input))
+	if extension == ".heic" || extension == ".heif" {
+		extension = ".mp4"
+	}
+	temporaryPath, cleanup, err := newTemporaryOutput(dir, extension)
 	if err != nil {
 		return err
 	}
