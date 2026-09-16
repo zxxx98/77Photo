@@ -31,6 +31,7 @@ const requestIDKey contextKey = "request_id"
 type HealthChecks struct {
 	Database func(context.Context) error
 	Storage  func(context.Context) error
+	Media    func(context.Context) error
 }
 
 // NewHandler builds the public HTTP surface available before the feature
@@ -117,6 +118,7 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 func healthz(w http.ResponseWriter, r *http.Request, checks HealthChecks) {
 	databaseOK := runHealthCheck(r.Context(), checks.Database)
 	storageOK := runHealthCheck(r.Context(), checks.Storage)
+	mediaOK := runHealthCheck(r.Context(), checks.Media)
 	status := "ok"
 	code := http.StatusOK
 	if !databaseOK || !storageOK {
@@ -127,6 +129,7 @@ func healthz(w http.ResponseWriter, r *http.Request, checks HealthChecks) {
 		"status":     status,
 		"database":   availability(databaseOK),
 		"storage":    availability(storageOK),
+		"media":      availability(mediaOK),
 		"request_id": RequestID(r.Context()),
 	})
 }

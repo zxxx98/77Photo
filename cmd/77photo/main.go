@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/httpapi"
 	"github.com/zxxx98/77Photo/internal/importer"
 	"github.com/zxxx98/77Photo/internal/indexer"
+	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/sharelinks"
 	"github.com/zxxx98/77Photo/internal/shares"
@@ -46,6 +48,15 @@ func run(parent context.Context, logger *slog.Logger) error {
 	}
 	if err := cfg.ValidateFilesystem(); err != nil {
 		return fmt.Errorf("validate filesystem: %w", err)
+	}
+	mediaTools := &media.Tools{
+		FFmpeg:         cfg.FFmpegPath,
+		FFprobe:        cfg.FFprobePath,
+		HeifConvert:    cfg.HeifConvertPath,
+		Runner:         media.NewRunner(cfg.MaxUploadSize),
+		Timeout:        cfg.MediaTimeout,
+		MaxOutputBytes: cfg.MaxUploadSize,
+		MaxInputBytes:  cfg.MaxUploadSize,
 	}
 	db, err := database.Open(ctx, cfg.DBPath)
 	if err != nil {
@@ -79,7 +90,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
 	shareLinkService := sharelinks.NewService(db, photoStore, thumbnailService, secureCookies)
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler()})
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db, mediaTools), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler()})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
@@ -112,7 +123,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 	}
 }
 
-func configuredHealthChecks(cfg config.Config, db *sql.DB) httpapi.HealthChecks {
+func configuredHealthChecks(cfg config.Config, db *sql.DB, mediaTools *media.Tools) httpapi.HealthChecks {
 	return httpapi.HealthChecks{
 		Database: func(ctx context.Context) error {
 			if err := db.PingContext(ctx); err != nil {
@@ -127,6 +138,17 @@ func configuredHealthChecks(cfg config.Config, db *sql.DB) httpapi.HealthChecks 
 			}
 			if !info.IsDir() {
 				return fmt.Errorf("photo storage unavailable: path is not a directory")
+			}
+			return nil
+		},
+		Media: func(context.Context) error {
+			if mediaTools == nil {
+				return errors.New("media tools unavailable")
+			}
+			for _, executable := range []string{mediaTools.FFmpeg, mediaTools.FFprobe, mediaTools.HeifConvert} {
+				if _, err := exec.LookPath(executable); err != nil {
+					return fmt.Errorf("media tool %q unavailable: %w", executable, err)
+				}
 			}
 			return nil
 		},

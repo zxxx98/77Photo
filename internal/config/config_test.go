@@ -12,6 +12,7 @@ func clearConfigEnv(t *testing.T) {
 	for _, key := range []string{
 		"PHOTO_DATA_DIR", "PHOTO_CACHE_DIR", "PHOTO_DB_PATH", "PHOTO_LISTEN_ADDR",
 		"PHOTO_THUMBNAIL_WORKERS", "PHOTO_MAX_UPLOAD_SIZE", "PHOTO_SESSION_TTL",
+		"PHOTO_FFMPEG_PATH", "PHOTO_FFPROBE_PATH", "PHOTO_HEIF_CONVERT_PATH", "PHOTO_MEDIA_TIMEOUT",
 	} {
 		t.Setenv(key, "")
 		_ = os.Unsetenv(key)
@@ -27,6 +28,10 @@ func TestLoadFromEnvParsesSupportedSettings(t *testing.T) {
 	t.Setenv("PHOTO_THUMBNAIL_WORKERS", "3")
 	t.Setenv("PHOTO_MAX_UPLOAD_SIZE", "1048576")
 	t.Setenv("PHOTO_SESSION_TTL", "48h")
+	t.Setenv("PHOTO_FFMPEG_PATH", "/opt/bin/ffmpeg")
+	t.Setenv("PHOTO_FFPROBE_PATH", "/opt/bin/ffprobe")
+	t.Setenv("PHOTO_HEIF_CONVERT_PATH", "/opt/bin/heif-convert")
+	t.Setenv("PHOTO_MEDIA_TIMEOUT", "17s")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -40,6 +45,12 @@ func TestLoadFromEnvParsesSupportedSettings(t *testing.T) {
 	}
 	if cfg.SessionTTL != 48*time.Hour {
 		t.Fatalf("SessionTTL = %s, want 48h", cfg.SessionTTL)
+	}
+	if cfg.FFmpegPath != "/opt/bin/ffmpeg" || cfg.FFprobePath != "/opt/bin/ffprobe" || cfg.HeifConvertPath != "/opt/bin/heif-convert" {
+		t.Fatalf("unexpected media tool paths: %+v", cfg)
+	}
+	if cfg.MediaTimeout != 17*time.Second {
+		t.Fatalf("MediaTimeout = %s, want 17s", cfg.MediaTimeout)
 	}
 }
 
@@ -63,6 +74,12 @@ func TestLoadFromEnvRejectsInvalidDurationAndSize(t *testing.T) {
 	if _, err := LoadFromEnv(); err == nil {
 		t.Fatal("LoadFromEnv() error = nil, want invalid duration error")
 	}
+
+	clearConfigEnv(t)
+	t.Setenv("PHOTO_MEDIA_TIMEOUT", "0s")
+	if _, err := LoadFromEnv(); err == nil {
+		t.Fatal("LoadFromEnv() error = nil, want invalid media timeout error")
+	}
 }
 
 func TestValidateFilesystemCreatesAndChecksConfiguredDirectories(t *testing.T) {
@@ -75,6 +92,10 @@ func TestValidateFilesystemCreatesAndChecksConfiguredDirectories(t *testing.T) {
 		ThumbnailWorkers: 1,
 		MaxUploadSize:    1024,
 		SessionTTL:       time.Hour,
+		FFmpegPath:       "ffmpeg",
+		FFprobePath:      "ffprobe",
+		HeifConvertPath:  "heif-convert",
+		MediaTimeout:     time.Second,
 	}
 	if err := cfg.ValidateFilesystem(); err != nil {
 		t.Fatalf("ValidateFilesystem() error = %v", err)
@@ -104,6 +125,10 @@ func TestValidateFilesystemRejectsFileAsDirectory(t *testing.T) {
 		ThumbnailWorkers: 1,
 		MaxUploadSize:    1024,
 		SessionTTL:       time.Hour,
+		FFmpegPath:       "ffmpeg",
+		FFprobePath:      "ffprobe",
+		HeifConvertPath:  "heif-convert",
+		MediaTimeout:     time.Second,
 	}
 	if err := cfg.ValidateFilesystem(); err == nil {
 		t.Fatalf("ValidateFilesystem() error = %v, want an existing-file error", err)

@@ -33,11 +33,12 @@ func TestHealthzReportsDependencyFailureAndRequestID(t *testing.T) {
 		Status   string `json:"status"`
 		Database string `json:"database"`
 		Storage  string `json:"storage"`
+		Media    string `json:"media"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 		t.Fatalf("decode health response: %v", err)
 	}
-	if body.Status != "degraded" || body.Database != "ok" || body.Storage != "unavailable" {
+	if body.Status != "degraded" || body.Database != "ok" || body.Storage != "unavailable" || body.Media != "unavailable" {
 		t.Fatalf("health body = %+v", body)
 	}
 }
@@ -51,6 +52,15 @@ func TestHealthzIsOKWhenDependenciesAreAvailable(t *testing.T) {
 	h.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if res.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", res.Code)
+	}
+	var body struct {
+		Media string `json:"media"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	if body.Media != "unavailable" {
+		t.Fatalf("media = %q, want unavailable when capability is not configured", body.Media)
 	}
 }
 

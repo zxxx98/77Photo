@@ -12,7 +12,7 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/77photo ./cmd/77photo
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates wget \
+RUN apk add --no-cache ca-certificates wget ffmpeg libheif-tools \
     && addgroup -S 77photo \
     && adduser -S -D -H -G 77photo 77photo \
     && mkdir -p /data/photos /data/cache /data/database \

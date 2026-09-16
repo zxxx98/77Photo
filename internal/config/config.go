@@ -18,6 +18,10 @@ const (
 	defaultThumbnailWorkers = 1
 	defaultMaxUploadSize    = int64(10 * 1024 * 1024 * 1024)
 	defaultSessionTTL       = 720 * time.Hour
+	defaultFFmpegPath       = "ffmpeg"
+	defaultFFprobePath      = "ffprobe"
+	defaultHeifConvertPath  = "heif-convert"
+	defaultMediaTimeout     = 30 * time.Second
 	maxThumbnailWorkers     = 64
 )
 
@@ -31,6 +35,10 @@ type Config struct {
 	ThumbnailWorkers int
 	MaxUploadSize    int64
 	SessionTTL       time.Duration
+	FFmpegPath       string
+	FFprobePath      string
+	HeifConvertPath  string
+	MediaTimeout     time.Duration
 }
 
 // LoadFromEnv reads the PHOTO_* settings and validates scalar values. It does
@@ -48,6 +56,10 @@ func LoadFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("PHOTO_SESSION_TTL: %w", err)
 	}
+	mediaTimeout, err := envDuration("PHOTO_MEDIA_TIMEOUT", defaultMediaTimeout)
+	if err != nil {
+		return Config{}, fmt.Errorf("PHOTO_MEDIA_TIMEOUT: %w", err)
+	}
 
 	cfg := Config{
 		DataDir:          envString("PHOTO_DATA_DIR", defaultDataDir),
@@ -57,6 +69,10 @@ func LoadFromEnv() (Config, error) {
 		ThumbnailWorkers: workers,
 		MaxUploadSize:    maxUpload,
 		SessionTTL:       ttl,
+		FFmpegPath:       envString("PHOTO_FFMPEG_PATH", defaultFFmpegPath),
+		FFprobePath:      envString("PHOTO_FFPROBE_PATH", defaultFFprobePath),
+		HeifConvertPath:  envString("PHOTO_HEIF_CONVERT_PATH", defaultHeifConvertPath),
+		MediaTimeout:     mediaTimeout,
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -82,6 +98,12 @@ func (c Config) Validate() error {
 	}
 	if c.SessionTTL <= 0 {
 		return fmt.Errorf("session TTL must be positive")
+	}
+	if strings.TrimSpace(c.FFmpegPath) == "" || strings.TrimSpace(c.FFprobePath) == "" || strings.TrimSpace(c.HeifConvertPath) == "" {
+		return fmt.Errorf("media tool paths must not be empty")
+	}
+	if c.MediaTimeout <= 0 {
+		return fmt.Errorf("media timeout must be positive")
 	}
 	if _, _, err := net.SplitHostPort(c.ListenAddr); err != nil {
 		return fmt.Errorf("listen address %q is invalid: %w", c.ListenAddr, err)

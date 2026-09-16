@@ -14,6 +14,7 @@ services:
       PHOTO_THUMBNAIL_WORKERS: "1"
       PHOTO_MAX_UPLOAD_SIZE: "10737418240"
       PHOTO_SESSION_TTL: 720h
+      PHOTO_MEDIA_TIMEOUT: 30s
       # This compose file is exposed directly over HTTP on port 20001. Set
       # this to "true" only when an HTTPS reverse proxy fronts the service.
       PHOTO_COOKIE_SECURE: "false"
