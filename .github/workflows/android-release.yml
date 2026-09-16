@@ -13,7 +13,6 @@ jobs:
     name: Build signed Android artifacts
     runs-on: ubuntu-latest
     env:
-      ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/77photo-upload.keystore
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -30,6 +29,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Set upload keystore path
+        run: echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/77photo-upload.keystore" >> "$GITHUB_ENV"
 
       - name: Install JavaScript dependencies
         working-directory: mobile

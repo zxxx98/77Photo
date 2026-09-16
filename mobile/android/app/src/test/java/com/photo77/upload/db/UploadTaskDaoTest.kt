@@ -156,6 +156,7 @@ class UploadTaskDaoTest {
     serverId = serverId,
     userId = "user-1",
     deviceId = "device-1",
+    sessionId = null,
     folderId = "folder-1",
     state = UploadTaskState.QUEUED,
     sentBytes = 0L,

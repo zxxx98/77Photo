@@ -35,7 +35,7 @@ class UploadSchedulerTest {
     assertTrue(started.await(5, TimeUnit.SECONDS))
     assertEquals(2, maximum.get())
     release.countDown()
-    run.await(5, TimeUnit.SECONDS)
+    run.get(5, TimeUnit.SECONDS)
     assertEquals(2, maximum.get())
   }
 
@@ -63,7 +63,7 @@ class UploadSchedulerTest {
     assertTrue(firstFour.await(5, TimeUnit.SECONDS))
     scheduler.setConcurrency(1)
     release.countDown()
-    run.await(5, TimeUnit.SECONDS)
+    run.get(5, TimeUnit.SECONDS)
     assertEquals(4, maximum.get())
     assertEquals(6, source.tasks.count { it.state == UploadTaskState.SUCCEEDED })
   }
@@ -88,7 +88,7 @@ class UploadSchedulerTest {
       },
     )
 
-    scheduler.start("server-a", "worker-1", 1).await(5, TimeUnit.SECONDS)
+    scheduler.start("server-a", "worker-1", 1).get(5, TimeUnit.SECONDS)
 
     assertEquals(UploadTaskState.FAILED, source.tasks.single().state)
     assertEquals("URI_ACCESS_DENIED", source.tasks.single().lastErrorCode)
@@ -115,7 +115,7 @@ class UploadSchedulerTest {
       },
     )
 
-    scheduler.start("server-a", "worker-1", 1).await(5, TimeUnit.SECONDS)
+    scheduler.start("server-a", "worker-1", 1).get(5, TimeUnit.SECONDS)
 
     assertEquals(UploadTaskState.SUCCEEDED, source.tasks.single().state)
     assertEquals(listOf("content://media/1", "content://media/1-motion"), released)
@@ -134,7 +134,7 @@ class UploadSchedulerTest {
       },
     )
 
-    scheduler.start("server-a", "worker-1", 1).await(5, TimeUnit.SECONDS)
+    scheduler.start("server-a", "worker-1", 1).get(5, TimeUnit.SECONDS)
 
     assertEquals(UploadTaskState.QUEUED, source.tasks.single().state)
     assertTrue(released.isEmpty())
@@ -153,7 +153,7 @@ class UploadSchedulerTest {
       },
     )
 
-    scheduler.start("server-a", "worker-1", 1).await(5, TimeUnit.SECONDS)
+    scheduler.start("server-a", "worker-1", 1).get(5, TimeUnit.SECONDS)
 
     assertEquals(UploadTaskState.PAUSED, source.tasks.single().state)
     assertTrue(released.isEmpty())
