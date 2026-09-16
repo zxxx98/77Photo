@@ -21,6 +21,18 @@ describe('upload selection', () => {
     ]);
   });
 
+  it('pairs HEIC and HEIF stills with same-basename MOV files', () => {
+    const heic = new File(['photo'], 'IMG_1234.HEIC', { type: 'image/heic' });
+    const heif = new File(['photo'], 'IMG_5678.heif', { type: 'image/heif' });
+    const heicMotion = new File(['motion'], 'img_1234.mov', { type: 'video/quicktime' });
+    const heifMotion = new File(['motion'], 'IMG_5678.MOV', { type: 'video/quicktime' });
+
+    expect(queuedItemsFromFiles([heic, heicMotion, heif, heifMotion])).toEqual([
+      { file: heic, liveVideo: heicMotion, status: 'queued', progress: 0 },
+      { file: heif, liveVideo: heifMotion, status: 'queued', progress: 0 },
+    ]);
+  });
+
   it('keeps unmatched MOV files as standalone uploads', () => {
     const motion = new File(['motion'], 'clip.mov', { type: 'video/quicktime' });
 

@@ -154,6 +154,7 @@ export interface ApiClient {
   getFolder(id: string): Promise<Folder>;
   createFolder(name: string, parentId?: string | null): Promise<Folder>;
   uploadPhoto(file: File, folderId: string, onProgress?: (progress: UploadProgress) => void, signal?: AbortSignal): Promise<Photo>;
+  uploadLivePhoto(file: File, motion: File, folderId: string, onProgress?: (progress: UploadProgress) => void, signal?: AbortSignal): Promise<Photo>;
   uploadLivePhotoMotion(photoId: string, file: File, onProgress?: (progress: UploadProgress) => void, signal?: AbortSignal): Promise<void>;
   renamePhoto(id: string, name: string, conflict?: 'reject' | 'rename'): Promise<Photo>;
   movePhoto(id: string, folderId: string, conflict?: 'reject' | 'rename'): Promise<Photo>;
@@ -225,6 +226,35 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     });
   }
 
+  function uploadLivePhoto(file: File, motion: File, folderId: string, onProgress?: (progress: UploadProgress) => void, signal?: AbortSignal): Promise<Photo> {
+    return new Promise<Photo>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/v1/photos/live-upload');
+      xhr.withCredentials = true;
+      if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+      xhr.upload.onprogress = (event) => onProgress?.({ loaded: event.loaded, total: event.total });
+      xhr.onerror = () => reject(new ApiError(0, 'NETWORK_ERROR', 'Network request failed'));
+      xhr.onabort = () => reject(new ApiError(0, 'ABORTED', 'Upload cancelled'));
+      signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+      xhr.onload = () => {
+        let payload: { error?: { code?: string; message?: string; request_id?: string } } & Partial<Photo> = {};
+        try { payload = JSON.parse(xhr.responseText) as typeof payload; } catch { /* handled below */ }
+        if (xhr.status < 200 || xhr.status >= 300) {
+          const error = payload.error ?? {};
+          reject(new ApiError(xhr.status, error.code ?? 'REQUEST_FAILED', error.message ?? 'Live Photo upload failed', error.request_id ?? ''));
+          return;
+        }
+        resolve(payload as Photo);
+      };
+      const form = new FormData();
+      form.append('folder_id', folderId);
+      form.append('conflict', 'reject');
+      form.append('file', file, file.name);
+      form.append('motion', motion, motion.name);
+      xhr.send(form);
+    });
+  }
+
   return {
     setupStatus: () => request<{ required: boolean }>('/api/v1/setup/status') as Promise<{ required: boolean }>,
     setupAdmin: (username, password) => request<AuthResponse>('/api/v1/setup/admin', { method: 'POST', body: JSON.stringify({ username, password }) }) as Promise<AuthResponse>,
@@ -279,6 +309,7 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
       form.set('file', file, file.name);
       xhr.send(form);
     }),
+    uploadLivePhoto: (file, motion, folderId, onProgress, signal) => uploadLivePhoto(file, motion, folderId, onProgress, signal),
     uploadLivePhotoMotion: (photoId, file, onProgress, signal) => uploadLiveMotion(photoId, file, onProgress, signal),
     renamePhoto: (id, name, conflict = 'reject') => request<Photo>(`/api/v1/photos/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name, conflict }) }) as Promise<Photo>,
     movePhoto: (id, folderId, conflict = 'reject') => request<Photo>(`/api/v1/photos/${encodeURIComponent(id)}/move`, { method: 'POST', body: JSON.stringify({ target_folder_id: folderId, conflict }) }) as Promise<Photo>,

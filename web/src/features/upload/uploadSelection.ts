@@ -21,7 +21,7 @@ function basename(name: string): string {
 }
 
 function isSupportedStill(file: File): boolean {
-  return ['.jpg', '.jpeg', '.png'].includes(extension(file.name));
+  return ['.jpg', '.jpeg', '.png', '.heic', '.heif'].includes(extension(file.name));
 }
 
 function isLiveMotion(file: File): boolean {

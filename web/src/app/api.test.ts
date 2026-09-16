@@ -123,6 +123,44 @@ describe('API client', () => {
     expect(send).toHaveBeenCalledWith(expect.any(FormData));
   });
 
+  it('uploads a still and motion companion in one ordered multipart request', async () => {
+    const open = vi.fn();
+    let submitted: FormData | undefined;
+    const send = vi.fn(function (this: { status: number; responseText: string; onload?: (event: ProgressEvent) => void; upload: { onprogress: (event: ProgressEvent) => void } }, body: FormData) {
+      submitted = body;
+      this.upload.onprogress({ loaded: 10, total: 10 } as ProgressEvent);
+      this.status = 201;
+      this.responseText = JSON.stringify({ id: 'p_live', filename: 'photo.heic' });
+      this.onload?.(undefined as unknown as ProgressEvent);
+    });
+    class FakeXHR {
+      status = 0;
+      responseText = '';
+      upload = { onprogress: (_event: ProgressEvent) => undefined };
+      onload?: (event: ProgressEvent) => void;
+      onerror?: (event: ProgressEvent) => void;
+      onabort?: (event: ProgressEvent) => void;
+      open = open;
+      setRequestHeader = vi.fn();
+      send = send;
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXHR);
+    const client = createApiClient();
+    const still = new File(['still'], 'photo.heic', { type: 'image/heic' });
+    const motion = new File(['motion'], 'photo.mov', { type: 'video/quicktime' });
+    const progress: Array<{ loaded: number; total: number }> = [];
+
+    await expect(client.uploadLivePhoto(still, motion, 'f_1', (value) => progress.push(value))).resolves.toMatchObject({ id: 'p_live' });
+
+    expect(open).toHaveBeenCalledWith('POST', '/api/v1/photos/live-upload');
+    expect([...submitted!.keys()]).toEqual(['folder_id', 'conflict', 'file', 'motion']);
+    expect(submitted!.get('folder_id')).toBe('f_1');
+    expect(submitted!.get('conflict')).toBe('reject');
+    expect((submitted!.get('file') as File).name).toBe('photo.heic');
+    expect((submitted!.get('motion') as File).name).toBe('photo.mov');
+    expect(progress).toEqual([{ loaded: 10, total: 10 }]);
+  });
+
   it('serializes contextual share link requests and public share reads', async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'sl_1', resource_type: 'photo', resource_id: 'p_1', url: '/#/share/token', password_protected: true }), { status: 201, headers: { 'Content-Type': 'application/json' } }))

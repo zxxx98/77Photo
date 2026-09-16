@@ -107,7 +107,7 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
             <LanguageToggle />
             <button className="button button-primary upload-button" onClick={chooseUpload}><Upload size={17} /> <span>{t('common.upload')}</span></button>
           </div>
-          <input ref={pickerRef} className="sr-only" type="file" accept="image/jpeg,image/png,video/mp4,video/webm,video/quicktime,.mov" multiple tabIndex={-1} aria-hidden="true" onChange={handlePickerChange} />
+          <input ref={pickerRef} className="sr-only" type="file" accept="image/jpeg,image/png,image/heic,image/heif,video/mp4,video/webm,video/quicktime,.mov" multiple tabIndex={-1} aria-hidden="true" onChange={handlePickerChange} />
         </header>
         <div className="content-scroll"><Workspace api={api} currentUser={user!} view={view} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} onUpload={chooseUpload} /></div>
       </main>
