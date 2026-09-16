@@ -105,6 +105,38 @@ const storedCredentials: StoredCredentials = {
 };
 
 describe('mobile API client', () => {
+  it('merges live-photo status for at most 100 listed IDs', async () => {
+    const items = Array.from({ length: 101 }, (_, index) => ({
+      id: `photo-${index}`,
+      owner_id: 'user-1',
+      folder_id: 'folder-1',
+      filename: `photo-${index}.heic`,
+      mime_type: 'image/heic',
+      size: 100,
+      captured_at: '2026-09-15T00:00:00Z',
+    }));
+    const transport: ApiTransport = jest.fn(async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/v1/photos') return jsonResponse({ items, next_cursor: null });
+      if (parsed.pathname === '/api/v1/live-photos/status') return jsonResponse({ live_photo_ids: ['photo-1'] });
+      return jsonResponse({ error: { code: 'NOT_FOUND', message: 'not found' } }, 404);
+    });
+    const client = createApiClient({
+      baseURL: 'https://server.test',
+      serverId: 'server-1',
+      transport,
+      credentials: createMemoryCredentials(storedCredentials),
+    });
+
+    const page = await client.listPhotos({ limit: 101 });
+
+    expect(page.items[1]?.is_live_photo).toBe(true);
+    expect(page.items[100]?.is_live_photo).toBeUndefined();
+    const statusURL = new URL((transport as jest.Mock).mock.calls[1][0] as string);
+    expect(statusURL.searchParams.get('ids')?.split(',')).toHaveLength(100);
+    expect(client.livePhotoURL('photo-1')).toBe('https://server.test/api/v1/live-photos/photo-1');
+  });
+
   it('performs one refresh for concurrent 401 responses', async () => {
     const scripted = createScriptedTransport({ protected401Count: 2, refreshedToken: 'access-2' });
     const credentials = createMemoryCredentials(storedCredentials);
@@ -195,7 +227,7 @@ describe('mobile API client', () => {
         status: 302,
         headers: { Location: 'http://192.168.1.9:8080/healthz' },
       }))
-      .mockResolvedValueOnce(jsonResponse({ status: 'ok', database: 'ok', storage: 'ok', request_id: 'req-health' }));
+      .mockResolvedValueOnce(jsonResponse({ status: 'ok', database: 'ok', storage: 'ok', media: 'ok', request_id: 'req-health' }));
     const client = createApiClient({
       baseURL: 'http://192.168.1.8:8080',
       lanCIDRs: ['192.168.1.0/24'],
@@ -223,7 +255,7 @@ describe('mobile API client', () => {
   it('reads a dynamic LAN range provider for every request', async () => {
     let lanCIDRs: readonly string[] = ['192.168.1.0/24'];
     const transport: ApiTransport = jest.fn(() => Promise.resolve(jsonResponse({
-      status: 'ok', database: 'ok', storage: 'ok', request_id: 'req-health',
+      status: 'ok', database: 'ok', storage: 'ok', media: 'ok', request_id: 'req-health',
     })));
     const client = createApiClient({
       baseURL: 'http://192.168.1.8:8080',

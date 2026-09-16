@@ -26,7 +26,7 @@ import { MediaDetailsSheet } from './MediaDetailsSheet';
 import '../../i18n';
 
 export type MediaViewerScreenProps = {
-  api: Pick<ApiClient, 'previewURL' | 'originalURL' | 'downloadOriginal' | 'getAuthHeaders' | 'createShareLink' | 'deletePhoto'> & {
+  api: Pick<ApiClient, 'previewURL' | 'livePhotoURL' | 'originalURL' | 'downloadOriginal' | 'getAuthHeaders' | 'createShareLink' | 'deletePhoto'> & {
     getFolder?: (id: string) => Promise<Folder>;
   };
   photos: readonly Photo[];
@@ -184,7 +184,20 @@ export function MediaViewerScreen({
             <PinchGestureHandler onHandlerStateChange={finishPinch}>
               <Animated.View style={styles.mediaGesture}>
                 <Pressable onPress={onDoubleTap} style={styles.mediaGesture}>
-                  {item.mime_type.startsWith('video/') && isPlayableVideo(item) ? (
+                  {item.is_live_photo ? (
+                    <Video
+                      testID={`media-video-${item.id}`}
+                      source={{ uri: api.livePhotoURL(item.id), headers: authHeaders }}
+                      poster={{
+                        source: { uri: api.previewURL(item.id), headers: authHeaders },
+                        resizeMode: 'contain',
+                      }}
+                      controls
+                      resizeMode="contain"
+                      style={styles.media}
+                      onError={() => setUnsupportedPhotoId(item.id)}
+                    />
+                  ) : item.mime_type.startsWith('video/') && isPlayableVideo(item) ? (
                     <Video
                       testID={`media-video-${item.id}`}
                       source={{ uri: api.previewURL(item.id), headers: authHeaders }}

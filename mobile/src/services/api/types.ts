@@ -40,6 +40,7 @@ export type HealthResponse = {
   status: 'ok' | 'degraded';
   database: 'ok' | 'unavailable';
   storage: 'ok' | 'unavailable';
+  media: 'ok' | 'unavailable';
   request_id: string;
 };
 
@@ -70,6 +71,7 @@ export type Photo = {
   width?: number;
   height?: number;
   captured_at: string;
+  is_live_photo?: boolean;
   [key: string]: unknown;
 };
 

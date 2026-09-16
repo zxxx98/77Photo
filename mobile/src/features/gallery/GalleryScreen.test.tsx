@@ -195,6 +195,15 @@ describe('gallery query helpers', () => {
 });
 
 describe('GalleryScreen', () => {
+  it('marks live photos returned by the status-enriched list', async () => {
+    const live = { ...photo('live'), filename: 'live.heic', mime_type: 'image/heic', is_live_photo: true };
+    const api = createClient({ listPhotos: jest.fn(async () => page([live])) });
+
+    await renderWithQuery(<GalleryScreen api={api} serverId="server-1" userId="user-1" />);
+
+    await waitFor(() => expect(screen.getByText('LIVE')).toBeTruthy());
+  });
+
   it('passes the loaded photo set when opening a viewer so adjacent media can be swiped', async () => {
     const api = createClient({ listPhotos: jest.fn(async () => page([photo('a'), photo('b')])) });
     const onPhotoPress = jest.fn();

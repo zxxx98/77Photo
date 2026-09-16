@@ -421,7 +421,26 @@ export function createApiClient(options: ApiClientOptions) {
       if (query.cursor) params.set('cursor', query.cursor);
       if (query.limit !== undefined) params.set('limit', String(query.limit));
       const suffix = params.toString();
-      return requestJSON<PhotoPage>(`/api/v1/photos${suffix ? `?${suffix}` : ''}`, { signal: query.signal });
+      return requestJSON<PhotoPage>(`/api/v1/photos${suffix ? `?${suffix}` : ''}`, { signal: query.signal }).then(async (page) => {
+        if (page.items.length === 0) return page;
+        try {
+          const ids = page.items.slice(0, 100).map((photo) => photo.id).join(',');
+          const status = await requestJSON<{ live_photo_ids: string[] }>(
+            `/api/v1/live-photos/status?ids=${encodeURIComponent(ids)}`,
+            { signal: query.signal },
+          );
+          const liveIds = new Set(status.live_photo_ids);
+          return {
+            ...page,
+            items: page.items.map((photo, index) => index < 100
+              ? { ...photo, is_live_photo: liveIds.has(photo.id) }
+              : photo),
+          };
+        } catch {
+          // Status is an enhancement; an unavailable status endpoint must not hide the gallery.
+          return page;
+        }
+      });
     },
     listFolders: (parentId?: string): Promise<FolderPage> => {
       const suffix = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : '';
@@ -433,6 +452,8 @@ export function createApiClient(options: ApiClientOptions) {
       guardedMediaURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/thumbnail?size=${size}`, getLANCIDRs()),
     previewURL: (id: string): string =>
       guardedMediaURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/preview`, getLANCIDRs()),
+    livePhotoURL: (id: string): string =>
+      guardedMediaURL(baseURL, `/api/v1/live-photos/${encodeURIComponent(id)}`, getLANCIDRs()),
     originalURL: (id: string): string =>
       guardedMediaURL(baseURL, `/api/v1/photos/${encodeURIComponent(id)}/original`, getLANCIDRs()),
     downloadOriginal: async (id: string, fileName: string): Promise<void> => {

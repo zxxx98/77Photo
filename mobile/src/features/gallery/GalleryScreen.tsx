@@ -83,6 +83,7 @@ export function GalleryScreen({
           resizeMode="cover"
           onError={() => undefined}
         />
+        {item.photo.is_live_photo ? <Text accessibilityLabel="LIVE" style={styles.liveMarker}>LIVE</Text> : null}
         <Pressable
           accessible
           accessibilityRole="button"
@@ -169,4 +170,17 @@ const styles = StyleSheet.create({
   },
   thumbnail: { width: '100%', height: '100%' },
   photoHitTarget: { ...StyleSheet.absoluteFill },
+  liveMarker: {
+    position: 'absolute',
+    top: spacing.xs,
+    left: spacing.xs,
+    color: colors.surface,
+    backgroundColor: 'rgba(32,37,45,0.72)',
+    borderRadius: 999,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
 });
