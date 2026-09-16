@@ -3,15 +3,18 @@ package thumbnails
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/storage"
 )
 
@@ -26,6 +29,37 @@ type testPhoto struct {
 type testLoader struct {
 	mu     sync.Mutex
 	photos map[string]testPhoto
+}
+
+type testRenderer struct {
+	err error
+}
+
+type frameToolRunner struct {
+	args [][]string
+}
+
+func (r *frameToolRunner) Run(context.Context, string, ...string) ([]byte, error) {
+	return nil, nil
+}
+
+func (r *frameToolRunner) RunToFile(_ context.Context, executable, output string, args ...string) error {
+	r.args = append(r.args, append([]string{executable}, args...))
+	return os.WriteFile(output, []byte("frame"), 0o640)
+}
+
+func (r *testRenderer) DecodeStill(context.Context, string, string) (image.Image, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return image.NewRGBA(image.Rect(0, 0, 3, 2)), nil
+}
+
+func (r *testRenderer) ExtractVideoFrame(context.Context, string) (image.Image, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return image.NewRGBA(image.Rect(0, 0, 4, 2)), nil
 }
 
 func (l *testLoader) LoadPhoto(_ context.Context, id string) (Photo, error) {
@@ -92,6 +126,84 @@ func TestWorkerWritesWebPVariants(t *testing.T) {
 		}
 		if !bytes.HasPrefix(data, []byte("RIFF")) || !bytes.Contains(data[:min(len(data), 32)], []byte("WEBP")) {
 			t.Fatalf("variant %d is not WebP", size)
+		}
+	}
+}
+
+func TestEnsureAcceptsHEICHEIFAndVideoAndWritesWebP(t *testing.T) {
+	store, loader, photo := newThumbnailFixture(t, "p_media", "rev-1")
+	service, err := NewService(loader, store, filepath.Join(t.TempDir(), "cache"), 1, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetMediaRenderer(&testRenderer{})
+	loader.mu.Lock()
+	for _, mimeType := range []string{"image/heic", "image/heif", "video/mp4", "video/webm"} {
+		copyPhoto := photo
+		copyPhoto.ID = "p_" + strings.ReplaceAll(mimeType, "/", "_")
+		copyPhoto.MIMEType = mimeType
+		loader.photos[copyPhoto.ID] = copyPhoto
+	}
+	loader.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service.Start(ctx)
+	defer service.Close()
+	for _, mimeType := range []string{"image/heic", "image/heif", "video/mp4", "video/webm"} {
+		id := "p_" + strings.ReplaceAll(mimeType, "/", "_")
+		if state, _, err := service.Ensure(ctx, id, 256); err != nil || state != Pending {
+			t.Fatalf("Ensure(%s) = %v/%v, want pending", mimeType, state, err)
+		}
+	}
+	waitFor(t, func() bool {
+		for _, mimeType := range []string{"image/heic", "image/heif", "video/mp4", "video/webm"} {
+			id := "p_" + strings.ReplaceAll(mimeType, "/", "_")
+			if _, err := os.Stat(service.CachePath(id, photo.SourceRevision, 256)); err != nil {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+func TestFailedMediaRenderLeavesNoWebPVariants(t *testing.T) {
+	store, loader, photo := newThumbnailFixture(t, "p_media_failure", "rev-1")
+	photo.MIMEType = "video/mp4"
+	loader.mu.Lock()
+	loader.photos[photo.ID] = photo
+	loader.mu.Unlock()
+	service, err := NewService(loader, store, filepath.Join(t.TempDir(), "cache"), 1, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetMediaRenderer(&testRenderer{err: errors.New("frame extraction failed")})
+	service.Start(context.Background())
+	defer service.Close()
+	if !service.Enqueue(photo.ID) {
+		t.Fatal("Enqueue() = false, want true")
+	}
+	waitFor(t, func() bool { return service.PendingJobs() == 0 })
+	for _, size := range []int{256, 512, 1280} {
+		if _, err := os.Stat(service.CachePath(photo.ID, photo.SourceRevision, size)); !os.IsNotExist(err) {
+			t.Fatalf("variant %d stat error = %v, want not exists", size, err)
+		}
+	}
+}
+
+func TestVideoFrameToolUsesBoundedSeekAndScale(t *testing.T) {
+	runner := &frameToolRunner{}
+	tools := &media.Tools{FFmpeg: "ffmpeg", Runner: runner, Timeout: time.Second, MaxOutputBytes: 1 << 20}
+	output := filepath.Join(t.TempDir(), "frame.png")
+	if err := tools.ExtractVideoFrame(context.Background(), "input clip.mp4", output); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.args) != 1 {
+		t.Fatalf("ffmpeg calls = %d, want 1", len(runner.args))
+	}
+	joined := strings.Join(runner.args[0], "\x00")
+	for _, needle := range []string{"-ss\x000.5", "-frames:v\x001", "-vf\x00scale=min(1280,iw):-2", "-f\x00image2"} {
+		if !strings.Contains(joined, needle) {
+			t.Fatalf("ffmpeg args = %#v, missing %q", runner.args[0], strings.ReplaceAll(needle, "\x00", " "))
 		}
 	}
 }

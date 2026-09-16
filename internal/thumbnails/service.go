@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	nativewebp "github.com/HugoSmits86/nativewebp"
+	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/storage"
 	"golang.org/x/image/draw"
 )
@@ -56,6 +57,11 @@ type PhotoLoader interface {
 	LoadPhoto(context.Context, string) (Photo, error)
 }
 
+type MediaRenderer interface {
+	DecodeStill(context.Context, string, string) (image.Image, error)
+	ExtractVideoFrame(context.Context, string) (image.Image, error)
+}
+
 type Service struct {
 	loader       PhotoLoader
 	storage      storage.Store
@@ -69,6 +75,7 @@ type Service struct {
 	workerCtx    context.Context
 	workerCancel context.CancelFunc
 	wg           sync.WaitGroup
+	renderer     MediaRenderer
 }
 
 func NewService(loader PhotoLoader, store storage.Store, cacheRoot string, workers, capacity int) (*Service, error) {
@@ -88,6 +95,16 @@ func NewService(loader PhotoLoader, store storage.Store, cacheRoot string, worke
 		return nil, fmt.Errorf("create thumbnail cache: %w", err)
 	}
 	return &Service{loader: loader, storage: store, cacheRoot: cacheRoot, workers: workers, queue: make(chan string, capacity), pending: make(map[string]struct{})}, nil
+}
+
+func (s *Service) SetMediaRenderer(renderer MediaRenderer) { s.renderer = renderer }
+
+func (s *Service) SetMediaTools(tools *media.Tools) {
+	if tools == nil {
+		s.renderer = nil
+		return
+	}
+	s.renderer = &toolRenderer{tools: tools}
 }
 
 // Start launches the fixed worker set. Jobs enqueued before Start remain
@@ -145,7 +162,7 @@ func (s *Service) Ensure(ctx context.Context, photoID string, size int) (State, 
 	if err != nil {
 		return "", "", err
 	}
-	if photo.MIMEType != "image/jpeg" && photo.MIMEType != "image/png" {
+	if !isThumbnailMIME(photo.MIMEType) {
 		return "", "", ErrUnsupported
 	}
 	path := s.CachePath(photo.ID, photo.SourceRevision, size)
@@ -209,24 +226,40 @@ func (s *Service) generate(photoID string) error {
 	if err != nil {
 		return err
 	}
-	if photo.MIMEType != "image/jpeg" && photo.MIMEType != "image/png" {
+	if !isThumbnailMIME(photo.MIMEType) {
 		return ErrUnsupported
 	}
 	sourcePath, err := s.storage.ResolvePath(photo.StoragePath)
 	if err != nil {
 		return err
 	}
-	file, err := os.Open(sourcePath)
-	if err != nil {
-		return fmt.Errorf("open thumbnail source: %w", err)
-	}
-	imageValue, _, decodeErr := image.Decode(io.LimitReader(file, maxSourceBytes))
-	closeErr := file.Close()
-	if decodeErr != nil {
-		return fmt.Errorf("decode thumbnail source: %w", decodeErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close thumbnail source: %w", closeErr)
+	var imageValue image.Image
+	if photo.MIMEType == "image/jpeg" || photo.MIMEType == "image/png" {
+		file, openErr := os.Open(sourcePath)
+		if openErr != nil {
+			return fmt.Errorf("open thumbnail source: %w", openErr)
+		}
+		var decodeErr error
+		imageValue, _, decodeErr = image.Decode(io.LimitReader(file, maxSourceBytes))
+		closeErr := file.Close()
+		if decodeErr != nil {
+			return fmt.Errorf("decode thumbnail source: %w", decodeErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close thumbnail source: %w", closeErr)
+		}
+	} else {
+		if s.renderer == nil {
+			return ErrUnsupported
+		}
+		if strings.HasPrefix(photo.MIMEType, "video/") {
+			imageValue, err = s.renderer.ExtractVideoFrame(s.workerCtx, sourcePath)
+		} else {
+			imageValue, err = s.renderer.DecodeStill(s.workerCtx, sourcePath, photo.MIMEType)
+		}
+		if err != nil {
+			return fmt.Errorf("render thumbnail source: %w", err)
+		}
 	}
 	imageValue = applyOrientation(imageValue, photo.Orientation)
 	for _, size := range []int{256, 512, 1280} {
@@ -241,6 +274,57 @@ func (s *Service) generate(photoID string) error {
 		}
 	}
 	return nil
+}
+
+func isThumbnailMIME(mimeType string) bool {
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/heic", "image/heif", "video/mp4", "video/webm", "video/quicktime":
+		return true
+	default:
+		return false
+	}
+}
+
+type toolRenderer struct {
+	tools *media.Tools
+}
+
+func (r *toolRenderer) DecodeStill(ctx context.Context, input, _ string) (image.Image, error) {
+	return r.renderToImage(ctx, input, r.tools.DecodeStill)
+}
+
+func (r *toolRenderer) ExtractVideoFrame(ctx context.Context, input string) (image.Image, error) {
+	return r.renderToImage(ctx, input, r.tools.ExtractVideoFrame)
+}
+
+func (r *toolRenderer) renderToImage(ctx context.Context, input string, render func(context.Context, string, string) error) (image.Image, error) {
+	temporary, err := os.CreateTemp(filepath.Dir(input), ".77photo-thumbnail-*.png")
+	if err != nil {
+		return nil, err
+	}
+	path := temporary.Name()
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(path)
+		return nil, err
+	}
+	_ = os.Remove(path)
+	defer os.Remove(path)
+	if err := render(ctx, input, path); err != nil {
+		return nil, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	imageValue, _, decodeErr := image.Decode(io.LimitReader(file, maxSourceBytes))
+	closeErr := file.Close()
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return imageValue, nil
 }
 
 func writeVariant(path string, imageValue image.Image) error {

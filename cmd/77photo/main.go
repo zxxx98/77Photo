@@ -71,6 +71,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 	}
 	folderService := folders.NewService(db, photoStore)
 	photoService := photos.NewService(db, photoStore, cfg.MaxUploadSize)
+	photoService.SetMediaTools(mediaTools)
 	authorizer := acl.NewAuthorizer(db)
 	folderService.SetAuthorizer(authorizer)
 	photoService.SetAuthorizer(authorizer)
@@ -83,6 +84,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize thumbnail service: %w", err)
 	}
+	thumbnailService.SetMediaTools(mediaTools)
 	photoService.SetCacheInvalidator(thumbnailService)
 	photoService.SetThumbnailEnqueuer(thumbnailService)
 	thumbnailService.Start(ctx)
