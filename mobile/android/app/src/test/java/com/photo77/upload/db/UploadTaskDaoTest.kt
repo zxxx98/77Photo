@@ -6,7 +6,6 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -34,7 +33,7 @@ class UploadTaskDaoTest {
   }
 
   @Test
-  fun acquireQueuedLeasesOnlyMatchingServerAndOwnerSlots() = runBlocking {
+  fun acquireQueuedLeasesOnlyMatchingServerAndAvailableSlots() = runBlocking {
     dao.insertAll(listOf(
       task("task-1", "server-a", 1000),
       task("task-2", "server-a", 1001),
@@ -51,7 +50,9 @@ class UploadTaskDaoTest {
     )
 
     assertEquals(listOf("task-1", "task-2"), leased.map { it.id })
-    assertTrue(dao.acquireQueued("server-a", "worker-2", 2, 1001, 31001).isEmpty())
+    val otherOwnerLeased = dao.acquireQueued("server-a", "worker-2", 2, 1001, 31001)
+    assertEquals(listOf("task-3"), otherOwnerLeased.map { it.id })
+    assertEquals("worker-2", otherOwnerLeased.single().leaseOwner)
     assertEquals(listOf("task-1", "task-2", "task-3"), dao.findByServer("server-a").map { it.id })
   }
 
