@@ -73,6 +73,22 @@ func TestLivePhotoMotionRejectsInvalidMedia(t *testing.T) {
 	}
 }
 
+func TestLivePhotoMotionRejectsMP4Companion(t *testing.T) {
+	fixture := newUploadFixture(t, 1<<20)
+	ctx := context.Background()
+	photo, err := fixture.service.Upload(ctx, fixture.principal, UploadInput{
+		FolderID: fixture.folderID, Filename: "IMG_0004.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(jpegBytes(t, 2, 2)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.service.AttachLiveVideo(ctx, fixture.principal, photo.ID, LiveVideoInput{
+		Filename: "IMG_0004.mov", DeclaredMIME: "video/quicktime", Body: bytes.NewReader(ftypBytesForPhoto("isom")),
+	}); !errors.Is(err, ErrInvalidMedia) {
+		t.Fatalf("AttachLiveVideo(MP4 companion) error = %v, want ErrInvalidMedia", err)
+	}
+}
+
 func TestLivePhotoMotionUsesUploadSizeLimit(t *testing.T) {
 	fixture := newUploadFixture(t, 1024)
 	ctx := context.Background()

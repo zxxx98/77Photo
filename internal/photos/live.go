@@ -222,7 +222,7 @@ func (s *Service) removeLiveMotionArtifacts(photoID string) error {
 }
 
 func looksLikeQuickTime(head []byte) bool {
-	return len(head) >= 12 && string(head[4:8]) == "ftyp"
+	return len(head) >= 12 && string(head[4:8]) == "ftyp" && string(head[8:12]) == "qt  "
 }
 
 func motionMIME(path string) string {
