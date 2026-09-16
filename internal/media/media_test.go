@@ -1,9 +1,15 @@
 package media
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestInspectBytesRecognizesSupportedMedia(t *testing.T) {
@@ -72,4 +78,169 @@ func ftypBytes(brand string) []byte {
 	copy(data[8:12], brand)
 	copy(data[16:20], brand)
 	return data
+}
+
+type fakeRunner struct {
+	mu       sync.Mutex
+	runArgs  [][]string
+	fileArgs [][]string
+	runOut   []byte
+	runErr   error
+	fileErr  error
+}
+
+func (r *fakeRunner) Run(_ context.Context, executable string, args ...string) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runArgs = append(r.runArgs, append([]string{executable}, args...))
+	return append([]byte(nil), r.runOut...), r.runErr
+}
+
+func (r *fakeRunner) RunToFile(_ context.Context, executable, output string, args ...string) error {
+	r.mu.Lock()
+	r.fileArgs = append(r.fileArgs, append([]string{executable, output}, args...))
+	r.mu.Unlock()
+	if r.fileErr != nil {
+		return r.fileErr
+	}
+	return os.WriteFile(output, []byte("extracted-video"), 0o640)
+}
+
+func TestToolsPassArgumentsSeparately(t *testing.T) {
+	runner := &fakeRunner{runOut: []byte("video\n")}
+	tools := Tools{FFprobe: "/usr/bin/ffprobe", Runner: runner, Timeout: time.Second}
+
+	video, err := tools.ProbeVideo(context.Background(), "/tmp/input with spaces.mov")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !video {
+		t.Fatal("ProbeVideo() = false, want true")
+	}
+	if len(runner.runArgs) != 1 {
+		t.Fatalf("Run calls = %d, want 1", len(runner.runArgs))
+	}
+	want := []string{"/usr/bin/ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1", "/tmp/input with spaces.mov"}
+	if strings.Join(runner.runArgs[0], "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("Run args = %#v, want %#v", runner.runArgs[0], want)
+	}
+}
+
+func TestCommandRunnerContextCancellationStopsCommand(t *testing.T) {
+	runner := NewRunner(1024)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := runner.Run(ctx, "sleep", "10")
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run() did not stop after context cancellation")
+	}
+}
+
+func TestCommandRunnerRemovesOutputAboveLimit(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "oversized.mp4")
+	runner := NewRunner(4)
+	err := runner.RunToFile(context.Background(), "dd", destination, "if=/dev/zero", "of="+destination, "bs=8", "count=1", "status=none")
+	if !errors.Is(err, ErrOutputTooLarge) {
+		t.Fatalf("RunToFile() error = %v, want ErrOutputTooLarge", err)
+	}
+	if _, statErr := os.Stat(destination); !os.IsNotExist(statErr) {
+		t.Fatalf("oversized output stat error = %v, want not exists", statErr)
+	}
+}
+
+func TestFindEmbeddedMotionRequiresVideoStream(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "MVIMG_0001.JPG")
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0xff, 0xd9}
+	video := ftypBytes("isom")
+	if err := os.WriteFile(input, append(jpeg, video...), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{runOut: []byte("video\n")}
+	tools := Tools{FFprobe: "ffprobe", Runner: runner, Timeout: time.Second, MaxOutputBytes: 1 << 20}
+	motion, err := tools.FindEmbeddedMotion(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if motion.Offset != int64(len(jpeg)) || motion.Size != int64(len(video)) {
+		t.Fatalf("motion = %#v, want offset %d size %d", motion, len(jpeg), len(video))
+	}
+
+	runner.runOut = []byte("audio\n")
+	motion, err = tools.FindEmbeddedMotion(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if motion.Offset != 0 || motion.Size != 0 {
+		t.Fatalf("audio-only motion = %#v, want empty", motion)
+	}
+}
+
+func TestFindEmbeddedMotionRejectsForgedBoxBounds(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "MVIMG_0002.jpg")
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xd9}
+	forged := make([]byte, 16)
+	binary.BigEndian.PutUint32(forged[:4], 0xfffffff0)
+	copy(forged[4:8], "ftyp")
+	copy(forged[8:12], "isom")
+	if err := os.WriteFile(input, append(jpeg, forged...), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{runOut: []byte("video\n")}
+	tools := Tools{FFprobe: "ffprobe", Runner: runner, Timeout: time.Second, MaxOutputBytes: 1 << 20}
+	motion, err := tools.FindEmbeddedMotion(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if motion.Offset != 0 || motion.Size != 0 {
+		t.Fatalf("forged motion = %#v, want empty", motion)
+	}
+	if len(runner.runArgs) != 0 {
+		t.Fatalf("Run calls = %d, want 0 for forged box", len(runner.runArgs))
+	}
+}
+
+func TestExtractMotionIsAtomic(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "motion.mov")
+	if err := os.WriteFile(input, []byte("source"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "live", "photo.motion")
+	runner := &fakeRunner{runOut: []byte("video\n")}
+	tools := Tools{FFmpeg: "ffmpeg", FFprobe: "ffprobe", Runner: runner, Timeout: time.Second, MaxOutputBytes: 1 << 20}
+	if err := tools.ExtractMotion(context.Background(), input, destination); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "extracted-video" {
+		t.Fatalf("destination = %q, want extracted video", data)
+	}
+	if len(runner.fileArgs) != 1 || runner.fileArgs[0][1] == destination {
+		t.Fatalf("RunToFile args = %#v, want a temporary output", runner.fileArgs)
+	}
+	if _, err := os.Stat(runner.fileArgs[0][1]); !os.IsNotExist(err) {
+		t.Fatalf("temporary output stat error = %v, want not exists", err)
+	}
+
+	failing := &fakeRunner{runOut: []byte("video\n"), fileErr: errors.New("ffmpeg failed")}
+	failingTools := Tools{FFmpeg: "ffmpeg", FFprobe: "ffprobe", Runner: failing, Timeout: time.Second, MaxOutputBytes: 1 << 20}
+	failedDestination := filepath.Join(t.TempDir(), "live", "failed.motion")
+	if err := failingTools.ExtractMotion(context.Background(), input, failedDestination); err == nil {
+		t.Fatal("ExtractMotion() error = nil, want failure")
+	}
+	if _, err := os.Stat(failedDestination); !os.IsNotExist(err) {
+		t.Fatalf("failed destination stat error = %v, want not exists", err)
+	}
 }
