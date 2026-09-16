@@ -16,6 +16,7 @@
 | Android 12+ Photo Picker 后台上传与通知动作 | ☐ | `cd mobile && maestro test e2e/maestro/background-upload.yaml` |
 | Android LAN HTTP 警告与公网 HTTP 阻断 | ☐ | `cd mobile && maestro test e2e/maestro/lan-http.yaml` |
 | Android 13+ 通知拒绝、电池优化和前台服务超时 | ☐ | 真机/模拟器记录；通知权限拒绝时确认页面提示，恢复后确认队列不丢失 |
+| HEIC/HEIF、MVIMG、MOV companion 与视频缩略图 | ☐ | `bash scripts/check-media-contract.sh`；容器内运行 `ffmpeg -version && ffprobe -version && heif-convert --version`；上传/扫描验收记录原图 hash 未变化 |
 
 发布阻断项包括：任何越权响应、原图丢失或覆盖、备份无法恢复、数据库完整性检查失败、镜像无法启动、或未标记的实机性能缺口。
 

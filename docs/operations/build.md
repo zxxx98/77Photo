@@ -16,6 +16,17 @@ SQLite 使用 `modernc.org/sqlite`，是纯 Go driver；当前服务和 SQLite �
 
 如果后续引入 libvips 或其他本地图片库，必须同时更新 Docker 构建阶段、运行时动态库清单和 ARM64 的 CI 冒烟验证，不能把宿主机上的库默认为发布依赖。
 
+最终镜像额外安装 `ffmpeg`、`ffprobe`（由 ffmpeg 提供）和 `heif-convert`（由 libheif-tools 提供），用于 HEIC/HEIF 解码、MVIMG/视频校验和 WebP poster；健康检查会报告媒体工具是否可用。
+
+媒体依赖冒烟检查：
+
+```bash
+ffmpeg -version
+ffprobe -version
+heif-convert --version
+curl -fsS http://127.0.0.1:8080/healthz
+```
+
 ## 运行时目录
 
 Compose 将照片、缓存和 SQLite 数据库挂载到独立卷：

@@ -590,6 +590,82 @@ paths:
           description: Invalid or unsafe media (including excessive pixel count)
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
 
+  /api/v1/photos/live-upload:
+    post:
+      tags: [photos]
+      summary: Upload one still image and an optional motion companion atomically
+      description: |
+        The still part is required and the motion part is optional. The request
+        creates one Photo row. Supported stills are JPEG, PNG, HEIC and HEIF;
+        an explicit motion companion must be a validated QuickTime MOV. Scalar
+        fields must precede file parts: folder_id, conflict, file, motion.
+        MVIMG and HEIC/HEIF files with embedded motion are accepted as a single
+        still file and are inspected by bytes after storage.
+      operationId: uploadLivePhoto
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, folder_id]
+              properties:
+                folder_id: { $ref: '#/components/schemas/ID' }
+                conflict: { type: string, enum: [reject, rename], default: reject }
+                file: { type: string, format: binary, description: JPEG, PNG, HEIC or HEIF still image }
+                motion: { type: string, format: binary, description: Optional same-basename QuickTime MOV companion }
+      responses:
+        '201':
+          description: One still photo stored and indexed, with a validated motion artifact when supplied
+          content: { application/json: { schema: { $ref: '#/components/schemas/Photo' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '409': { description: Duplicate content or name conflict, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '413': { description: Still or motion part exceeds PHOTO_MAX_UPLOAD_SIZE, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '415': { description: Unsupported, malformed or content-type-mismatched media, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '422': { description: Invalid or unsafe media, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/live-photos/status:
+    get:
+      tags: [photos]
+      summary: Return the visible photo IDs with motion companions
+      operationId: listLivePhotoStatus
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - name: ids
+          in: query
+          required: false
+          schema: { type: string, description: Comma-separated photo IDs, maximum 100 }
+      responses:
+        '200':
+          description: IDs that have a validated motion artifact
+          content: { application/json: { schema: { $ref: '#/components/schemas/LivePhotoStatus' } } }
+        '400': { description: More than 100 IDs or malformed query, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/live-photos/{id}:
+    get:
+      tags: [photos]
+      summary: Stream an authenticated motion-photo companion
+      operationId: getLivePhotoMotion
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+      responses:
+        '200':
+          description: Inline motion bytes; the Content-Type reflects the stored MP4, WebM or QuickTime container
+          content:
+            video/mp4: { schema: { type: string, format: binary } }
+            video/webm: { schema: { type: string, format: binary } }
+            video/quicktime: { schema: { type: string, format: binary } }
+        '206': { description: Partial motion bytes for range playback, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/photos/{id}:
     parameters:
       - $ref: '#/components/parameters/PhotoID'
@@ -1265,7 +1341,7 @@ components:
         owner_id: { $ref: '#/components/schemas/ID' }
         folder_id: { $ref: '#/components/schemas/ID' }
         filename: { type: string, minLength: 1, maxLength: 255 }
-        mime_type: { type: string, enum: [image/jpeg, image/png, video/mp4, video/webm] }
+        mime_type: { type: string, enum: [image/jpeg, image/png, image/heic, image/heif, video/mp4, video/webm] }
         size: { type: integer, format: int64, minimum: 1 }
         width: { type: integer, minimum: 1 }
         height: { type: integer, minimum: 1 }
@@ -1284,6 +1360,7 @@ components:
         gps_longitude: { type: [number, 'null'], minimum: -180, maximum: 180 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        is_live_photo: { type: boolean, description: True when a validated motion companion exists; may be omitted by list endpoints before status enrichment. }
     PhotoPage:
       type: object
       required: [items, next_cursor]
@@ -1301,6 +1378,14 @@ components:
       properties:
         status: { type: string, const: pending }
         retry_after_ms: { type: integer, minimum: 50 }
+    LivePhotoStatus:
+      type: object
+      required: [live_photo_ids]
+      properties:
+        live_photo_ids:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/ID' }
     Share:
       type: object
       required: [id, resource_type, resource_id, user_id, permission, created_at]
@@ -1368,7 +1453,7 @@ components:
         id: { $ref: '#/components/schemas/ID' }
         folder_id: { $ref: '#/components/schemas/ID' }
         filename: { type: string }
-        mime_type: { type: string, enum: [image/jpeg, image/png, video/mp4, video/webm] }
+        mime_type: { type: string, enum: [image/jpeg, image/png, image/heic, image/heif, video/mp4, video/webm] }
         size: { type: integer, format: int64, minimum: 1 }
         captured_at: { type: string, format: date-time }
         width: { type: integer, minimum: 1 }
@@ -1408,11 +1493,12 @@ components:
         error: { type: [string, 'null'] }
     HealthResponse:
       type: object
-      required: [status, database, storage, request_id]
+      required: [status, database, storage, media, request_id]
       properties:
         status: { type: string, enum: [ok, degraded] }
         database: { type: string, enum: [ok, unavailable] }
         storage: { type: string, enum: [ok, unavailable] }
+        media: { type: string, enum: [ok, unavailable], description: Availability of ffmpeg, ffprobe and heif-convert; ordinary health remains OK when only media tools are unavailable. }
         request_id: { type: string }
     ErrorResponse:
       type: object

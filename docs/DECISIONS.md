@@ -7,13 +7,14 @@
 - 图库和时间线使用同一 `GET /api/v1/photos` 入口，文件夹是唯一的相册模型。
 - V1 不实现收藏、虚拟相册、地图、匿名外链分享、全文搜索、AI、人脸识别、在线编辑、后台自动备份、分片上传或视频转码。
 - 批量上传属于 V1；批量移动和批量删除属于 V2。
-- 视频只保存原文件并返回媒体类型；浏览器支持的格式可用原生播放器播放。服务端不转码，也不保证生成 poster。
+- 视频只保存原文件并返回媒体类型；浏览器支持的格式可用原生播放器播放。服务端不转码，但使用 ffmpeg 为视频和动态照片生成可重建的 WebP poster。
 
 ## D-002：媒体格式
 
-- V1 基本图像验收格式为 JPEG（`image/jpeg`）和 PNG（`image/png`）。扩展名和实际内容都必须匹配，不能只相信浏览器提交的 MIME。
-- V1 接受常见浏览器原生播放的视频 `video/mp4` 和 `video/webm`，原文件不变地保存。
-- HEIC/HEIF、RAW、GIF 和其他未知格式在 V1 上传时返回 `415 UNSUPPORTED_MEDIA_TYPE`，不会留下可见索引或临时文件。
+- 基本图像验收格式为 JPEG（`image/jpeg`）、PNG（`image/png`）、HEIC（`image/heic`）和 HEIF（`image/heif`）。扩展名、声明 MIME 和实际内容都必须匹配，不能只相信客户端提交的 MIME。
+- 接受 `video/mp4`、`video/webm` 以及作为动态照片 companion 的 QuickTime MOV；原文件不变地保存。Web/API 通过 `/api/v1/photos/live-upload` 将 still 与 MOV 作为一个逻辑上传。
+- JPEG 中的 MVIMG 尾随 ISO-BMFF 段和 HEIC/HEIF 内嵌视频只在字节边界及 ffprobe 校验通过后提取；派生 motion artifact 可删除并重建，原图永不改写。
+- RAW、GIF 和其他未知格式仍返回 `415 UNSUPPORTED_MEDIA_TYPE`，不会留下可见索引或临时文件。
 - JPEG/PNG 的尺寸、方向和常用 EXIF 在入库时读取；原图永远不被改写。
 
 ## D-003：删除与用户生命周期
