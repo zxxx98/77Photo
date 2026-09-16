@@ -2,7 +2,10 @@ package com.photo77.picker
 
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class NativePhotoPickerPersistenceTest {
   @Test
   fun rejectsAUriWhenItsReadGrantCannotBePersisted() {

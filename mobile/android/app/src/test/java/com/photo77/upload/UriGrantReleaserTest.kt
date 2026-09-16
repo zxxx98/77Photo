@@ -4,7 +4,10 @@ import com.photo77.upload.db.UploadTaskEntity
 import com.photo77.upload.db.UploadTaskState
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class UriGrantReleaserTest {
   @Test
   fun canceledQueuedPausedAndFailedTasksReleaseBothUris() {

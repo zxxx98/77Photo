@@ -8,10 +8,10 @@ import org.junit.Test
 class NetworkSecurityConfigTest {
   @Test
   fun manifestUsesTheDedicatedNetworkSecurityConfigInsteadOfAInlineGlobalFlag() {
-    val manifest = File("app/src/main/AndroidManifest.xml").readText()
+    val manifest = File("src/main/AndroidManifest.xml").readText()
 
     assertTrue(manifest.contains("android:networkSecurityConfig=\"@xml/network_security_config\""))
     assertFalse(manifest.contains("android:usesCleartextTraffic=\"true\""))
-    assertTrue(File("app/src/main/res/xml/network_security_config.xml").isFile)
+    assertTrue(File("src/main/res/xml/network_security_config.xml").isFile)
   }
 }

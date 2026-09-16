@@ -8,7 +8,10 @@ import okhttp3.MediaType.Companion.toMediaType
 import okio.Buffer
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class UploadRequestBodyTest {
   @Test
   fun unavailableContentUriIsReportedAsPermanentMediaAccessFailure() {
