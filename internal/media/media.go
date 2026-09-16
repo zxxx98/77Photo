@@ -6,6 +6,25 @@ import (
 	"strings"
 )
 
+func MIMEForExtension(filename string) string {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(filename))) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".heic":
+		return "image/heic"
+	case ".heif":
+		return "image/heif"
+	case ".mp4":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	default:
+		return ""
+	}
+}
+
 type Kind string
 
 const (
@@ -40,7 +59,7 @@ func InspectBytes(filename, declared string, head []byte) (Inspection, error) {
 		}
 		return Inspection{MIME: "image/png", Kind: KindStill}, nil
 	case ".heic":
-		if declared != "image/heic" || !looksLikeHEIF(head) {
+		if declared != "image/heic" || !looksLikeHEIC(head) {
 			return Inspection{}, ErrUnsupported
 		}
 		return Inspection{MIME: "image/heic", Kind: KindStill}, nil
@@ -82,6 +101,14 @@ func looksLikeHEIF(head []byte) bool {
 		return false
 	}
 	return isHEIFBrand(major) || containsBrand(compatible, isHEIFBrand)
+}
+
+func looksLikeHEIC(head []byte) bool {
+	major, compatible, ok := parseFTYP(head)
+	if !ok {
+		return false
+	}
+	return isHEICBrand(major) || containsBrand(compatible, isHEICBrand)
 }
 
 func looksLikeMP4(head []byte) bool {
@@ -130,7 +157,16 @@ func containsBrand(brands []string, match func(string) bool) bool {
 
 func isHEIFBrand(brand string) bool {
 	switch brand {
-	case "heic", "heix", "hevc", "hevx", "mif1", "msf1":
+	case "mif1", "msf1":
+		return true
+	default:
+		return false
+	}
+}
+
+func isHEICBrand(brand string) bool {
+	switch brand {
+	case "heic", "heix", "hevc", "hevx":
 		return true
 	default:
 		return false

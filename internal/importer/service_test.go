@@ -2,6 +2,7 @@ package importer
 
 import (
 	"context"
+	"encoding/binary"
 	"image"
 	"image/jpeg"
 	"os"
@@ -103,4 +104,53 @@ func TestImportMovesSupportedMediaAndIndexesIt(t *testing.T) {
 	if indexed != 1 {
 		t.Fatalf("indexed migrated photo count = %d, want 1", indexed)
 	}
+}
+
+func TestImportPairsHEIFAndMOVAndSkipsOrphanMOV(t *testing.T) {
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, err := store.ResolvePath(filepath.Join("legacy", "camera"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "IMG_42.HEIF"), heifBytesForImporter("mif1"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "img_42.MOV"), quickTimeBytesForImporter(), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "orphan.MOV"), quickTimeBytesForImporter(), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(nil, store, nil)
+	moves, err := service.collectMoves("legacy", "user-import", &Job{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(moves) != 2 {
+		t.Fatalf("moves = %d, want still and companion", len(moves))
+	}
+	for _, move := range moves {
+		if filepath.Base(move.source) == "orphan.MOV" {
+			t.Fatal("orphan MOV was selected for import")
+		}
+	}
+}
+
+func heifBytesForImporter(brand string) []byte {
+	data := make([]byte, 24)
+	binary.BigEndian.PutUint32(data[:4], uint32(len(data)))
+	copy(data[4:8], "ftyp")
+	copy(data[8:12], brand)
+	copy(data[16:20], brand)
+	return data
+}
+
+func quickTimeBytesForImporter() []byte {
+	return []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'q', 't', ' ', ' ', 0, 0, 0, 0, 'q', 't', ' ', ' ', 'm', 'p', '4', '2'}
 }

@@ -8,10 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/zxxx98/77Photo/internal/media"
 )
 
 // IndexScannedFile indexes a file already present under managed storage. It
@@ -49,15 +50,13 @@ func (s *Service) IndexScannedFile(ctx context.Context, ownerID, folderID, stora
 		return false, err
 	}
 	filename := filepath.Base(storagePath)
-	mimeType := http.DetectContentType(head[:n])
-	if mimeType == "image/jpg" {
-		mimeType = "image/jpeg"
-	}
-	if mimeType != "image/jpeg" && mimeType != "image/png" && mimeType != "video/mp4" && mimeType != "video/webm" {
+	inspection, err := media.InspectBytes(filename, media.MIMEForExtension(filename), head[:n])
+	if err != nil {
 		return false, ErrUnsupportedMedia
 	}
+	mimeType := inspection.MIME
 	checksum := hex.EncodeToString(hasher.Sum(nil))
-	metadata, err := extractMetadata(path, mimeType, stat.Size())
+	metadata, err := extractMetadataWithTools(path, mimeType, stat.Size(), s.mediaTools)
 	if err != nil {
 		return false, err
 	}
@@ -67,6 +66,9 @@ func (s *Service) IndexScannedFile(ctx context.Context, ownerID, folderID, stora
 	if errors.Is(err, sql.ErrNoRows) {
 		photo := Photo{ID: newPhotoID(), OwnerID: ownerID, FolderID: folderID, StoragePath: filepath.ToSlash(storagePath), Filename: filename, MIMEType: mimeType, Size: stat.Size(), Width: metadata.width, Height: metadata.height, Checksum: checksum, CapturedAt: metadata.capturedAt, CapturedAtSource: metadata.capturedAtSource, FileCreatedAt: timePtr(stat.ModTime().UTC()), IndexedAt: now, SourceRevision: checksum, ScanStatus: "indexed", CameraMake: metadata.cameraMake, CameraModel: metadata.cameraModel, Orientation: metadata.orientation, FocalLength: metadata.focalLength, Aperture: metadata.aperture, ISO: metadata.iso, GPSLatitude: metadata.gpsLatitude, GPSLongitude: metadata.gpsLongitude, CreatedAt: now, UpdatedAt: now}
 		_, err := s.db.ExecContext(ctx, `INSERT INTO photos (id, owner_id, folder_id, storage_path, filename, mime_type, size, width, height, checksum, captured_at, captured_at_source, file_created_at, indexed_at, source_revision, scan_status, camera_make, camera_model, orientation, focal_length, aperture, iso, gps_latitude, gps_longitude, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, photo.ID, photo.OwnerID, photo.FolderID, photo.StoragePath, photo.Filename, photo.MIMEType, photo.Size, nullableInt(photo.Width), nullableInt(photo.Height), photo.Checksum, formatTime(photo.CapturedAt), photo.CapturedAtSource, formatOptionalTime(photo.FileCreatedAt), formatTime(photo.IndexedAt), photo.SourceRevision, photo.ScanStatus, nullableString(photo.CameraMake), nullableString(photo.CameraModel), nullableIntPtr(photo.Orientation), nullableFloat(photo.FocalLength), nullableFloat(photo.Aperture), nullableIntPtr(photo.ISO), nullableFloat(photo.GPSLatitude), nullableFloat(photo.GPSLongitude), formatTime(photo.CreatedAt), formatTime(photo.UpdatedAt))
+		if err == nil {
+			_ = s.refreshEmbeddedMotion(ctx, photo.ID, path, mimeType)
+		}
 		return true, err
 	}
 	if err != nil {
@@ -74,13 +76,45 @@ func (s *Service) IndexScannedFile(ctx context.Context, ownerID, folderID, stora
 	}
 	if oldRevision == checksum {
 		_, err = s.db.ExecContext(ctx, "UPDATE photos SET scan_status='indexed', updated_at=? WHERE id=?", formatTime(now), existingID)
+		if err == nil {
+			_ = s.refreshEmbeddedMotion(ctx, existingID, path, mimeType)
+		}
 		return false, err
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE photos SET owner_id=?, folder_id=?, filename=?, mime_type=?, size=?, width=?, height=?, checksum=?, captured_at=?, captured_at_source=?, file_created_at=?, indexed_at=?, source_revision=?, scan_status='indexed', camera_make=?, camera_model=?, orientation=?, focal_length=?, aperture=?, iso=?, gps_latitude=?, gps_longitude=?, updated_at=? WHERE id=?`, ownerID, folderID, filename, mimeType, stat.Size(), nullableInt(metadata.width), nullableInt(metadata.height), checksum, formatTime(metadata.capturedAt), metadata.capturedAtSource, formatOptionalTime(timePtr(stat.ModTime().UTC())), formatTime(now), checksum, nullableString(metadata.cameraMake), nullableString(metadata.cameraModel), nullableIntPtr(metadata.orientation), nullableFloat(metadata.focalLength), nullableFloat(metadata.aperture), nullableIntPtr(metadata.iso), nullableFloat(metadata.gpsLatitude), nullableFloat(metadata.gpsLongitude), formatTime(now), existingID)
 	if err == nil && s.cache != nil {
 		_ = s.cache.Invalidate(ctx, existingID)
 	}
+	if err == nil {
+		_ = s.refreshEmbeddedMotion(ctx, existingID, path, mimeType)
+	}
 	return false, err
+}
+
+func (s *Service) refreshEmbeddedMotion(ctx context.Context, photoID, sourcePath, mimeType string) error {
+	if s.mediaTools == nil || mimeType != "image/jpeg" {
+		return nil
+	}
+	motion, err := s.mediaTools.FindEmbeddedMotion(ctx, sourcePath)
+	if err != nil {
+		return err
+	}
+	if motion.Offset == 0 {
+		return s.removeLiveMotionArtifacts(photoID)
+	}
+	destination, err := s.storage.ResolvePath(liveMotionStoragePath(photoID))
+	if err != nil {
+		return err
+	}
+	return s.mediaTools.ExtractMotion(ctx, sourcePath, destination)
+}
+
+func (s *Service) HasEmbeddedMotion(ctx context.Context, sourcePath, mimeType string) bool {
+	if s.mediaTools == nil || (mimeType != "image/jpeg" && mimeType != "image/heic" && mimeType != "image/heif") {
+		return false
+	}
+	motion, err := s.mediaTools.FindEmbeddedMotion(ctx, sourcePath)
+	return err == nil && motion.Offset > 0
 }
 
 func (s *Service) MarkMissing(ctx context.Context, storagePath string) error {

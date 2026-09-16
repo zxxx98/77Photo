@@ -77,8 +77,10 @@ func run(parent context.Context, logger *slog.Logger) error {
 	photoService.SetAuthorizer(authorizer)
 	shareService := shares.NewService(db)
 	indexerService := indexer.NewServiceWithContext(ctx, db, photoStore, photoService)
+	indexerService.SetMediaTools(mediaTools)
 	defer indexerService.Wait()
 	importerService := importer.NewServiceWithContext(ctx, db, photoStore, indexerService)
+	importerService.SetMediaTools(mediaTools)
 	defer importerService.Wait()
 	thumbnailService, err := thumbnails.NewService(photoService, photoStore, cfg.CacheDir, cfg.ThumbnailWorkers, thumbnails.DefaultQueueCapacity)
 	if err != nil {

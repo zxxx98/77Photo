@@ -1,9 +1,13 @@
 package indexer
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
 	"image"
 	"image/jpeg"
+	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,9 +17,31 @@ import (
 	"github.com/zxxx98/77Photo/internal/auth"
 	dbstore "github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/folders"
+	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/storage"
 )
+
+type scannerMediaRunner struct{}
+
+func (scannerMediaRunner) Run(context.Context, string, ...string) ([]byte, error) {
+	return []byte("video\n"), nil
+}
+
+func (scannerMediaRunner) RunToFile(_ context.Context, executable, output string, _ ...string) error {
+	if filepath.Base(executable) == "heif-convert" {
+		file, err := os.Create(output)
+		if err != nil {
+			return err
+		}
+		err = png.Encode(file, image.NewRGBA(image.Rect(0, 0, 2, 2)))
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
+		return err
+	}
+	return os.WriteFile(output, []byte("motion"), 0o640)
+}
 
 func TestRescanDiscoversFilesAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
@@ -68,6 +94,170 @@ func TestRescanDiscoversFilesAndIsIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT count(*) FROM photos WHERE scan_status='indexed'").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("second indexed photo count = %d, err=%v", count, err)
 	}
+}
+
+func TestRescanPairsHEICAndMOVAndSkipsOrphanMOV(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := folders.NewService(db, store).Create(ctx, principal, folders.CreateInput{Name: "imports"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stillPath, err := store.ResolvePath(filepath.Join(folder.StoragePath, "IMG_100.HEIF"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stillPath, heicBytesForIndexer("mif1"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	motionPath := filepath.Join(filepath.Dir(stillPath), "img_100.MOV")
+	if err := os.WriteFile(motionPath, quickTimeBytesForIndexer(), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(stillPath), "orphan.MOV"), quickTimeBytesForIndexer(), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	photoService := photos.NewService(db, store, 1<<20)
+	photoService.SetMediaTools(&media.Tools{FFprobe: "ffprobe", HeifConvert: "heif-convert", Runner: scannerMediaRunner{}, Timeout: time.Second, MaxOutputBytes: 1 << 20})
+	service := NewService(db, store, photoService)
+	service.SetMediaTools(&media.Tools{FFprobe: "ffprobe", Runner: scannerMediaRunner{}, Timeout: time.Second, MaxOutputBytes: 1 << 20})
+	job, err := service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+	var count int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM photos WHERE scan_status='indexed'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("indexed photo count = %d, want one still/MOV pair", count)
+	}
+	var mimeType string
+	if err := db.QueryRowContext(ctx, "SELECT mime_type FROM photos WHERE scan_status='indexed'").Scan(&mimeType); err != nil {
+		t.Fatal(err)
+	}
+	if mimeType != "image/heif" {
+		t.Fatalf("indexed MIME = %q, want image/heif", mimeType)
+	}
+	var photoID string
+	if err := db.QueryRowContext(ctx, "SELECT id FROM photos WHERE scan_status='indexed'").Scan(&photoID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := photoService.LiveVideoPath(ctx, principal, photoID); err != nil {
+		t.Fatalf("paired motion missing: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM photos WHERE filename='orphan.MOV'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("orphan MOV rows = %d, want 0", count)
+	}
+	if err := os.Remove(motionPath); err != nil {
+		t.Fatal(err)
+	}
+	job, err = service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+	if _, _, err := photoService.LiveVideoPath(ctx, principal, photoID); !errors.Is(err, photos.ErrLiveMotionNotFound) {
+		t.Fatalf("deleted companion error = %v, want motion not found", err)
+	}
+}
+
+func TestRescanRemovesStaleMVIMGMotionAfterSourceChange(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := folders.NewService(db, store).Create(ctx, principal, folders.CreateInput{Name: "imports"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.ResolvePath(filepath.Join(folder.StoragePath, "MVIMG_1.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	video := heicBytesForIndexer("isom")
+	if err := os.WriteFile(path, append(jpegBytesForIndexer(t, 2, 2), video...), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	photoService := photos.NewService(db, store, 1<<20)
+	photoService.SetMediaTools(&media.Tools{FFprobe: "ffprobe", Runner: scannerMediaRunner{}, Timeout: time.Second, MaxOutputBytes: 1 << 20})
+	service := NewService(db, store, photoService)
+	service.SetMediaTools(&media.Tools{FFprobe: "ffprobe", Runner: scannerMediaRunner{}, Timeout: time.Second, MaxOutputBytes: 1 << 20})
+	job, err := service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+	var photoID string
+	if err := db.QueryRowContext(ctx, "SELECT id FROM photos WHERE filename='MVIMG_1.jpg'").Scan(&photoID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := photoService.LiveVideoPath(ctx, principal, photoID); err != nil {
+		t.Fatalf("embedded motion missing = %v", err)
+	}
+	if err := os.WriteFile(path, jpegBytesForIndexer(t, 3, 3), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	job, err = service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+	if _, _, err := photoService.LiveVideoPath(ctx, principal, photoID); !errors.Is(err, photos.ErrLiveMotionNotFound) {
+		t.Fatalf("changed MVIMG error = %v, want motion not found", err)
+	}
+}
+
+func heicBytesForIndexer(brand string) []byte {
+	data := make([]byte, 24)
+	binary.BigEndian.PutUint32(data[:4], uint32(len(data)))
+	copy(data[4:8], "ftyp")
+	copy(data[8:12], brand)
+	copy(data[16:20], brand)
+	return data
+}
+
+func jpegBytesForIndexer(t *testing.T, width, height int) []byte {
+	t.Helper()
+	var body bytes.Buffer
+	if err := jpeg.Encode(&body, image.NewRGBA(image.Rect(0, 0, width, height)), nil); err != nil {
+		t.Fatal(err)
+	}
+	return body.Bytes()
+}
+
+func quickTimeBytesForIndexer() []byte {
+	return []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'q', 't', ' ', ' ', 0, 0, 0, 0, 'q', 't', ' ', ' ', 'm', 'p', '4', '2'}
 }
 
 func TestRescanDiscoversFilesystemFolders(t *testing.T) {

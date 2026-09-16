@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/zxxx98/77Photo/internal/acl"
+	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/storage"
 )
@@ -65,19 +67,29 @@ type scanRoot struct {
 	folderID string
 }
 
+type scanFile struct {
+	storagePath string
+	record      folderRecord
+	inspection  media.Inspection
+	isMOV       bool
+}
+
 type Service struct {
-	db        *sql.DB
-	storage   storage.Store
-	photos    *photos.Service
-	lifecycle context.Context
-	mu        sync.RWMutex
-	job       *Job
-	done      chan struct{}
+	db         *sql.DB
+	storage    storage.Store
+	photos     *photos.Service
+	lifecycle  context.Context
+	mu         sync.RWMutex
+	job        *Job
+	done       chan struct{}
+	mediaTools *media.Tools
 }
 
 func NewService(db *sql.DB, store storage.Store, photoService *photos.Service) *Service {
 	return &Service{db: db, storage: store, photos: photoService}
 }
+
+func (s *Service) SetMediaTools(tools *media.Tools) { s.mediaTools = tools }
 
 // NewServiceWithContext ties asynchronous scans to the process lifecycle. The
 // HTTP request context is still ignored for the scan itself, so returning a
@@ -171,6 +183,7 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 	}
 	seen := make(map[string]struct{})
 	walkedRoots := make(map[string]bool)
+	files := make([]scanFile, 0)
 	for _, rootRecord := range roots {
 		root, err := s.storage.ResolvePath(rootRecord.path)
 		if err != nil {
@@ -222,21 +235,70 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 			}
 			storagePath := filepath.ToSlash(relative)
 			s.increment(job, func(counts *Counts) { counts.Scanned++ })
-			added, indexErr := s.photos.IndexScannedFile(ctx, record.owner, record.id, storagePath)
-			if indexErr != nil {
-				s.increment(job, func(counts *Counts) { counts.Failed++ })
+			inspection, isMOV, inspectErr := s.inspectScanFile(path, storagePath)
+			if inspectErr != nil {
 				return nil
 			}
-			if added {
-				s.increment(job, func(counts *Counts) { counts.Added++ })
-			} else {
-				s.increment(job, func(counts *Counts) { counts.Updated++ })
-			}
-			seen[storagePath] = struct{}{}
+			files = append(files, scanFile{storagePath: storagePath, record: record, inspection: inspection, isMOV: isMOV})
 			return nil
 		})
 		if walkErr != nil {
 			return walkErr
+		}
+	}
+
+	motionByKey := make(map[string][]scanFile)
+	for _, file := range files {
+		if file.isMOV {
+			motionByKey[mediaPairKey(file.storagePath)] = append(motionByKey[mediaPairKey(file.storagePath)], file)
+		}
+	}
+	for _, file := range files {
+		if file.isMOV {
+			continue
+		}
+		added, indexErr := s.photos.IndexScannedFile(ctx, file.record.owner, file.record.id, file.storagePath)
+		if indexErr != nil {
+			s.increment(job, func(counts *Counts) { counts.Failed++ })
+			continue
+		}
+		if added {
+			s.increment(job, func(counts *Counts) { counts.Added++ })
+		} else {
+			s.increment(job, func(counts *Counts) { counts.Updated++ })
+		}
+		seen[file.storagePath] = struct{}{}
+		if file.inspection.Kind != media.KindStill {
+			continue
+		}
+		photoID, idErr := s.photoID(ctx, file.storagePath)
+		if idErr != nil {
+			s.increment(job, func(counts *Counts) { counts.Failed++ })
+			continue
+		}
+		attached := false
+		for _, motion := range motionByKey[mediaPairKey(file.storagePath)] {
+			motionPath, resolveErr := s.storage.ResolvePath(motion.storagePath)
+			if resolveErr != nil {
+				continue
+			}
+			motionFile, openErr := os.Open(motionPath)
+			if openErr != nil {
+				continue
+			}
+			attachErr := s.photos.AttachLiveVideo(ctx, acl.Principal{UserID: file.record.owner, Role: acl.RoleAdmin}, photoID, photos.LiveVideoInput{Filename: filepath.Base(motion.storagePath), DeclaredMIME: "video/quicktime", Body: motionFile})
+			_ = motionFile.Close()
+			if attachErr == nil {
+				seen[motion.storagePath] = struct{}{}
+				attached = true
+				break
+			}
+		}
+		if !attached && s.mediaTools != nil {
+			stillPath, resolveErr := s.storage.ResolvePath(file.storagePath)
+			if resolveErr == nil && !s.photos.HasEmbeddedMotion(ctx, stillPath, file.inspection.MIME) {
+				_ = s.photos.RemoveLiveVideo(ctx, acl.Principal{UserID: file.record.owner, Role: acl.RoleAdmin}, photoID)
+			}
 		}
 	}
 
@@ -263,6 +325,39 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) inspectScanFile(path, storagePath string) (media.Inspection, bool, error) {
+	if strings.EqualFold(filepath.Ext(storagePath), ".mov") {
+		return media.Inspection{}, true, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return media.Inspection{}, false, err
+	}
+	head := make([]byte, 512)
+	n, readErr := file.Read(head)
+	closeErr := file.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return media.Inspection{}, false, fmt.Errorf("read scan media: %w", readErr)
+	}
+	if closeErr != nil {
+		return media.Inspection{}, false, fmt.Errorf("close scan media: %w", closeErr)
+	}
+	inspection, err := media.InspectBytes(filepath.Base(storagePath), media.MIMEForExtension(storagePath), head[:n])
+	return inspection, false, err
+}
+
+func (s *Service) photoID(ctx context.Context, storagePath string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, "SELECT id FROM photos WHERE storage_path=? AND deleted_at IS NULL", storagePath).Scan(&id)
+	return id, err
+}
+
+func mediaPairKey(storagePath string) string {
+	extension := filepath.Ext(storagePath)
+	base := strings.TrimSuffix(storagePath, extension)
+	return strings.ToLower(filepath.ToSlash(base))
 }
 
 func (s *Service) loadFolders(ctx context.Context) (map[string]folderRecord, error) {

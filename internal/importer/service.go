@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/indexer"
+	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/storage"
 )
 
@@ -58,19 +58,30 @@ type fileMove struct {
 	destination string
 }
 
+type importCandidate struct {
+	source      string
+	relative    string
+	storagePath string
+	still       bool
+	MOV         bool
+}
+
 type Service struct {
-	db        *sql.DB
-	storage   storage.Store
-	indexer   *indexer.Service
-	lifecycle context.Context
-	mu        sync.RWMutex
-	job       *Job
-	done      chan struct{}
+	db         *sql.DB
+	storage    storage.Store
+	indexer    *indexer.Service
+	mediaTools *media.Tools
+	lifecycle  context.Context
+	mu         sync.RWMutex
+	job        *Job
+	done       chan struct{}
 }
 
 func NewService(db *sql.DB, store storage.Store, indexerService *indexer.Service) *Service {
 	return &Service{db: db, storage: store, indexer: indexerService}
 }
+
+func (s *Service) SetMediaTools(tools *media.Tools) { s.mediaTools = tools }
 
 func NewServiceWithContext(ctx context.Context, db *sql.DB, store storage.Store, indexerService *indexer.Service) *Service {
 	service := NewService(db, store, indexerService)
@@ -207,7 +218,7 @@ func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove,
 		return nil, ErrInvalidSource
 	}
 
-	moves := make([]fileMove, 0)
+	candidates := make([]importCandidate, 0)
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			s.increment(job, func(c *Counts) { c.Failed++ })
@@ -240,7 +251,19 @@ func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove,
 			return nil
 		}
 		s.increment(job, func(c *Counts) { c.Scanned++ })
-		if !isImportableMedia(path) {
+		isMOV := strings.EqualFold(filepath.Ext(entry.Name()), ".mov")
+		if isMOV {
+			sourceRelative, relErr := filepath.Rel(s.storage.Root(), path)
+			rel, relativeErr := filepath.Rel(root, path)
+			if relErr != nil || relativeErr != nil || rel == "." {
+				s.increment(job, func(c *Counts) { c.Failed++ })
+				return nil
+			}
+			candidates = append(candidates, importCandidate{source: filepath.ToSlash(sourceRelative), relative: filepath.ToSlash(rel), storagePath: filepath.ToSlash(sourceRelative), MOV: true})
+			return nil
+		}
+		inspection, inspectErr := inspectImportMedia(path)
+		if inspectErr != nil {
 			s.increment(job, func(c *Counts) { c.Skipped++ })
 			return nil
 		}
@@ -254,29 +277,54 @@ func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove,
 			s.increment(job, func(c *Counts) { c.Failed++ })
 			return nil
 		}
-		destination := filepath.Join("users", userID, "Imported", rel)
-		moves = append(moves, fileMove{source: filepath.ToSlash(sourceRelative), destination: filepath.ToSlash(destination)})
+		candidates = append(candidates, importCandidate{source: filepath.ToSlash(sourceRelative), relative: filepath.ToSlash(rel), storagePath: filepath.ToSlash(sourceRelative), still: inspection.Kind == media.KindStill})
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	stillKeys := make(map[string]struct{})
+	for _, candidate := range candidates {
+		if candidate.still {
+			stillKeys[mediaPairKey(candidate.relative)] = struct{}{}
+		}
+	}
+	moves := make([]fileMove, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.MOV {
+			if _, ok := stillKeys[mediaPairKey(candidate.relative)]; !ok {
+				s.increment(job, func(c *Counts) { c.Skipped++ })
+				continue
+			}
+		}
+		destination := filepath.Join("users", userID, "Imported", candidate.relative)
+		moves = append(moves, fileMove{source: candidate.source, destination: filepath.ToSlash(destination)})
+	}
 	return moves, nil
 }
 
 func isImportableMedia(path string) bool {
+	_, err := inspectImportMedia(path)
+	return err == nil
+}
+
+func inspectImportMedia(path string) (media.Inspection, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return false
+		return media.Inspection{}, err
 	}
 	defer file.Close()
 	head := make([]byte, 512)
 	n, err := io.ReadFull(file, head)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return false
+		return media.Inspection{}, err
 	}
-	mimeType := http.DetectContentType(head[:n])
-	return mimeType == "image/jpeg" || mimeType == "image/png" || mimeType == "video/mp4" || mimeType == "video/webm"
+	return media.InspectBytes(filepath.Base(path), media.MIMEForExtension(path), head[:n])
+}
+
+func mediaPairKey(relative string) string {
+	extension := filepath.Ext(relative)
+	return strings.ToLower(filepath.ToSlash(strings.TrimSuffix(relative, extension)))
 }
 
 func (s *Service) rescan(ctx context.Context, principal acl.Principal) error {
