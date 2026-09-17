@@ -1,6 +1,13 @@
+export interface UploadDestination {
+  id: string;
+  name: string;
+}
+
 export interface UploadSelection {
   id: number;
   files: File[];
+  destination?: UploadDestination;
+  returnToFolder?: boolean;
 }
 
 export interface QueuedUploadItem {
