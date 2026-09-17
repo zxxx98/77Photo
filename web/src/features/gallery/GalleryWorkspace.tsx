@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ArrowUpRight, Check, CirclePlay, LoaderCircle, RefreshCw, Trash2, X } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
 import type { ApiClient, Photo } from '../../app/api';
@@ -340,8 +340,8 @@ function gallerySelectionCopy(locale: 'zh' | 'en', formatCount: (value: number) 
   };
 }
 
-const selectionBadgeStyle = {
-  position: 'absolute' as const,
+const selectionBadgeStyle: CSSProperties = {
+  position: 'absolute',
   right: 9,
   top: 9,
   width: 24,
@@ -353,19 +353,19 @@ const selectionBadgeStyle = {
   display: 'grid',
   placeItems: 'center',
   boxShadow: '0 1px 5px rgba(0,0,0,.22)',
-  pointerEvents: 'none' as const,
+  pointerEvents: 'none',
 };
 
-const selectedBadgeStyle = { background: '#20252d' };
-const selectedFrameStyle = { boxShadow: 'inset 0 0 0 3px #20252d' };
-const dateActionsStyle = { display: 'flex', alignItems: 'center', gap: 10 };
-const daySelectButtonStyle = { padding: '6px 10px', minHeight: 0, fontSize: 12 };
-const bulkBarStyle = { position: 'sticky' as const, bottom: 18, zIndex: 20, margin: '18px auto 0', width: 'fit-content', maxWidth: 'calc(100% - 24px)', display: 'flex', alignItems: 'center', gap: 18, padding: '10px 12px 10px 18px', borderRadius: 999, background: 'rgba(255,255,255,.96)', boxShadow: '0 12px 40px rgba(20,24,30,.18)', backdropFilter: 'blur(16px)' };
-const bulkDeleteButtonStyle = { border: 0, borderRadius: 999, padding: '10px 16px', background: '#9f2f27', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, font: 'inherit', fontWeight: 700, cursor: 'pointer' };
-const dialogBackdropStyle = { position: 'fixed' as const, inset: 0, zIndex: 80, background: 'rgba(20,24,30,.46)', display: 'grid', placeItems: 'center', padding: 20 };
-const dialogStyle = { width: 'min(460px, 100%)', borderRadius: 22, background: '#fff', padding: 22, display: 'grid', gap: 18, boxShadow: '0 24px 80px rgba(0,0,0,.24)' };
-const dialogHeaderStyle = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 };
-const dialogActionsStyle = { display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' as const };
-const previewRowStyle = { display: 'flex', alignItems: 'center', gap: 8, minHeight: 58 };
-const previewThumbStyle = { width: 58, height: 58, borderRadius: 10, objectFit: 'cover' as const, background: '#eee' };
-const previewMoreStyle = { width: 58, height: 58, borderRadius: 10, display: 'grid', placeItems: 'center', background: '#f1f1ef', fontWeight: 700 };
+const selectedBadgeStyle: CSSProperties = { background: '#20252d' };
+const selectedFrameStyle: CSSProperties = { boxShadow: 'inset 0 0 0 3px #20252d' };
+const dateActionsStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 };
+const daySelectButtonStyle: CSSProperties = { padding: '6px 10px', minHeight: 0, fontSize: 12 };
+const bulkBarStyle: CSSProperties = { position: 'sticky', bottom: 18, zIndex: 20, margin: '18px auto 0', width: 'fit-content', maxWidth: 'calc(100% - 24px)', display: 'flex', alignItems: 'center', gap: 18, padding: '10px 12px 10px 18px', borderRadius: 999, background: 'rgba(255,255,255,.96)', boxShadow: '0 12px 40px rgba(20,24,30,.18)', backdropFilter: 'blur(16px)' };
+const bulkDeleteButtonStyle: CSSProperties = { border: 0, borderRadius: 999, padding: '10px 16px', background: '#9f2f27', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, font: 'inherit', fontWeight: 700, cursor: 'pointer' };
+const dialogBackdropStyle: CSSProperties = { position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(20,24,30,.46)', display: 'grid', placeItems: 'center', padding: 20 };
+const dialogStyle: CSSProperties = { width: 'min(460px, 100%)', borderRadius: 22, background: '#fff', padding: 22, display: 'grid', gap: 18, boxShadow: '0 24px 80px rgba(0,0,0,.24)' };
+const dialogHeaderStyle: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 };
+const dialogActionsStyle: CSSProperties = { display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' };
+const previewRowStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, minHeight: 58 };
+const previewThumbStyle: CSSProperties = { width: 58, height: 58, borderRadius: 10, objectFit: 'cover', background: '#eee' };
+const previewMoreStyle: CSSProperties = { width: 58, height: 58, borderRadius: 10, display: 'grid', placeItems: 'center', background: '#f1f1ef', fontWeight: 700 };
