@@ -55,7 +55,7 @@ describe('GalleryWorkspace LIVE playback', () => {
       await Promise.resolve();
     });
 
-    const video = container.querySelector<HTMLVideoElement>('.viewer-media video');
+    const video = container.querySelector<HTMLVideoElement>('.immersive-viewer__media video');
     expect(video?.getAttribute('src')).toBe('/api/v1/live-photos/photo-1');
     expect(video?.getAttribute('poster')).toBe('/api/v1/photos/photo-1/preview');
   });
