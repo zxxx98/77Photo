@@ -1,6 +1,6 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Folder, Image, LogOut, Menu, Search, Settings, Upload, X } from 'lucide-react';
-import { createApiClient } from './api';
+import { createApiClient, type Folder as FolderRecord } from './api';
 import { SessionStore } from './auth';
 import { useI18n } from './I18nProvider';
 import type { TranslationKey } from './i18n';
@@ -13,12 +13,13 @@ import FoldersWorkspace from '../features/folders/FoldersWorkspace';
 import UploadWorkspace from '../features/upload/UploadWorkspace';
 import PublicSharePage from '../features/sharing/PublicSharePage';
 import SettingsWorkspace from '../features/settings/SettingsWorkspace';
-import type { UploadSelection } from '../features/upload/uploadSelection';
+import type { UploadDestination, UploadSelection } from '../features/upload/uploadSelection';
 import LanguageToggle from '../features/i18n/LanguageToggle';
 import BrandMark from '../features/branding/BrandMark';
 import { AppShellSkeleton } from '../features/loading/LoadingStates';
 
 type View = AppView;
+type FolderLocation = Pick<FolderRecord, 'id' | 'name'>;
 
 const navItems: Array<{ id: View; labelKey: TranslationKey; icon: typeof Image }> = [
   { id: 'gallery', labelKey: 'shell.gallery', icon: Image },
@@ -51,23 +52,48 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
   const { t } = useI18n();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [uploadSelection, setUploadSelection] = useState<UploadSelection | null>(null);
+  const [folderContext, setFolderContext] = useState<FolderLocation | null>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
+  const pendingUploadDestinationRef = useRef<FolderLocation | null>(null);
   const selectionIdRef = useRef(0);
   const user = store.snapshot.user;
-  const chooseUpload = useCallback(() => {
+
+  const chooseUpload = useCallback((destination?: FolderLocation | null) => {
+    const resolvedDestination = destination === undefined && view === 'folders' ? folderContext : destination ?? null;
+    pendingUploadDestinationRef.current = resolvedDestination;
     openUploadPicker(() => onViewChange('upload'), pickerRef.current);
-  }, [onViewChange]);
+  }, [folderContext, onViewChange, view]);
+
   const handlePickerChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
     if (files.length === 0) return;
+    const destination = pendingUploadDestinationRef.current;
+    pendingUploadDestinationRef.current = null;
     const id = selectionIdRef.current;
     selectionIdRef.current += 1;
-    setUploadSelection({ id, files });
+    setUploadSelection({
+      id,
+      files,
+      destination: destination ? { id: destination.id, name: destination.name } : undefined,
+      returnToFolder: Boolean(destination),
+    });
   }, []);
+
   const consumeUploadSelection = useCallback((id: number) => {
     setUploadSelection((current) => current?.id === id ? null : current);
   }, []);
+
+  const handleFolderChange = useCallback((folder: FolderLocation | null) => {
+    setFolderContext(folder);
+  }, []);
+
+  const handleUploadComplete = useCallback((destination: UploadDestination) => {
+    setFolderContext(destination);
+    setUploadSelection(null);
+    onViewChange('folders');
+  }, [onViewChange]);
+
   return (
     <div className="app-frame">
       <button className={`scrim ${sidebarOpen ? 'is-visible' : ''}`} aria-label={t('common.closeNavigation')} onClick={() => setSidebarOpen(false)} />
@@ -105,11 +131,11 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
           </label>
           <div className="topbar-actions">
             <LanguageToggle />
-            <button className="button button-primary upload-button" onClick={chooseUpload}><Upload size={17} /> <span>{t('common.upload')}</span></button>
+            <button className="button button-primary upload-button" onClick={() => chooseUpload()}><Upload size={17} /> <span>{t('common.upload')}</span></button>
           </div>
           <input ref={pickerRef} className="sr-only" type="file" accept="image/jpeg,image/png,image/heic,image/heif,video/mp4,video/webm,video/quicktime,.mov" multiple tabIndex={-1} aria-hidden="true" onChange={handlePickerChange} />
         </header>
-        <div className="content-scroll"><Workspace api={api} currentUser={user!} view={view} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} onUpload={chooseUpload} /></div>
+        <div className="content-scroll"><Workspace api={api} currentUser={user!} view={view} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} folderContext={folderContext} onFolderChange={handleFolderChange} onUpload={chooseUpload} onUploadComplete={handleUploadComplete} /></div>
       </main>
       <nav className="mobile-nav" aria-label={t('common.mobileNavigation')}>
         {navItems.slice(0, 2).map(({ id, labelKey, icon: Icon }) => (
@@ -121,10 +147,10 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
   );
 }
 
-function Workspace({ api, currentUser, view, uploadSelection, onUploadSelectionConsumed, onUpload }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View; uploadSelection: UploadSelection | null; onUploadSelectionConsumed: (id: number) => void; onUpload: () => void }) {
+function Workspace({ api, currentUser, view, uploadSelection, onUploadSelectionConsumed, folderContext, onFolderChange, onUpload, onUploadComplete }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View; uploadSelection: UploadSelection | null; onUploadSelectionConsumed: (id: number) => void; folderContext: FolderLocation | null; onFolderChange: (folder: FolderLocation | null) => void; onUpload: (folder?: FolderLocation | null) => void; onUploadComplete: (destination: UploadDestination) => void }) {
   if (view === 'gallery') return <GalleryWorkspace api={api} />;
-  if (view === 'folders') return <FoldersWorkspace api={api} onUpload={onUpload} />;
-  if (view === 'upload') return <UploadWorkspace api={api} selection={uploadSelection} onSelectionConsumed={onUploadSelectionConsumed} />;
+  if (view === 'folders') return <FoldersWorkspace api={api} initialFolder={folderContext} onFolderChange={onFolderChange} onUpload={onUpload} />;
+  if (view === 'upload') return <UploadWorkspace api={api} selection={uploadSelection} onSelectionConsumed={onUploadSelectionConsumed} onUploadComplete={onUploadComplete} />;
   if (view === 'settings') return <SettingsWorkspace api={api} currentUser={currentUser} />;
   return null;
 }
