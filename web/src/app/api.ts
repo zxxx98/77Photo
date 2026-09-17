@@ -110,6 +110,22 @@ export interface RescanJob {
   error?: string;
 }
 
+export interface ThumbnailRebuildCounts {
+  total: number;
+  processed: number;
+  regenerated: number;
+  failed: number;
+}
+
+export interface ThumbnailRebuildJob {
+  id: string;
+  status: RescanStatus;
+  started_at: string;
+  finished_at?: string;
+  counts: ThumbnailRebuildCounts;
+  error?: string;
+}
+
 export interface ImportCounts {
   scanned: number;
   moved: number;
@@ -173,6 +189,8 @@ export interface ApiClient {
   deleteUser(id: string): Promise<void>;
   startRescan(): Promise<RescanJob>;
   getRescan(id: string): Promise<RescanJob>;
+  startThumbnailRebuild(): Promise<ThumbnailRebuildJob>;
+  getThumbnailRebuild(id: string): Promise<ThumbnailRebuildJob>;
   startImport(input: { source_path: string; user_id: string }): Promise<ImportJob>;
   getImport(id: string): Promise<ImportJob>;
 }
@@ -336,6 +354,8 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     deleteUser: async (id) => { await request(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ photo_action: 'retain' }) }); },
     startRescan: () => request<RescanJob>('/api/v1/admin/rescan', { method: 'POST', body: JSON.stringify({}) }) as Promise<RescanJob>,
     getRescan: (id) => request<RescanJob>(`/api/v1/admin/rescan/${encodeURIComponent(id)}`) as Promise<RescanJob>,
+    startThumbnailRebuild: () => request<ThumbnailRebuildJob>('/api/v1/admin/thumbnails/rebuild', { method: 'POST', body: JSON.stringify({}) }) as Promise<ThumbnailRebuildJob>,
+    getThumbnailRebuild: (id) => request<ThumbnailRebuildJob>(`/api/v1/admin/thumbnails/rebuild/${encodeURIComponent(id)}`) as Promise<ThumbnailRebuildJob>,
     startImport: (input) => request<ImportJob>('/api/v1/admin/imports', { method: 'POST', body: JSON.stringify(input) }) as Promise<ImportJob>,
     getImport: (id) => request<ImportJob>(`/api/v1/admin/imports/${encodeURIComponent(id)}`) as Promise<ImportJob>,
   };
