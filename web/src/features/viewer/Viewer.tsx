@@ -190,71 +190,73 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
         </footer>
       </div>
 
-      <aside className="immersive-viewer__details" aria-hidden={!detailsOpen}>
-        <div className="immersive-viewer__details-header">
-          <h2>{t('viewer.photoDetails')}</h2>
-          <button className="immersive-viewer__details-close" type="button" aria-label={t('common.close')} title={t('common.close')} onClick={() => setDetailsOpen(false)}>
-            <X size={19} />
-          </button>
-        </div>
-
-        <div className="immersive-viewer__details-summary">
-          <img src={previewURL} alt="" />
-          <div>
-            <strong>{photo.filename}</strong>
-            <span>{formatDate(photo.captured_at)}</span>
+      {detailsOpen && (
+        <aside className="immersive-viewer__details">
+          <div className="immersive-viewer__details-header">
+            <h2>{t('viewer.photoDetails')}</h2>
+            <button className="immersive-viewer__details-close" type="button" aria-label={t('common.close')} title={t('common.close')} onClick={() => setDetailsOpen(false)}>
+              <X size={19} />
+            </button>
           </div>
-        </div>
 
-        <dl className="immersive-viewer__metadata">
-          <div><dt>{t('viewer.captured')}</dt><dd>{formatDate(photo.captured_at)}</dd></div>
-          <div><dt>{t('viewer.size')}</dt><dd>{photo.width && photo.height ? `${photo.width} × ${photo.height} · ` : ''}{formatBytes(photo.size)}</dd></div>
-          <div><dt>{t('viewer.folder')}</dt><dd>{currentFolder?.name ?? t('common.unknownFolder')}</dd></div>
-        </dl>
+          <div className="immersive-viewer__details-summary">
+            <img src={previewURL} alt="" />
+            <div>
+              <strong>{photo.filename}</strong>
+              <span>{formatDate(photo.captured_at)}</span>
+            </div>
+          </div>
 
-        <div className="immersive-viewer__details-section">
-          <label className="immersive-viewer__field">
-            <span><Pencil size={15} /> {t('viewer.filename')}</span>
-            <input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <button className="immersive-viewer__action" disabled={busy || !name.trim() || name.trim() === photo.filename} onClick={() => void renamePhoto()}>
-            <Pencil size={17} />
-            <span>{t('viewer.saveName')}</span>
-          </button>
+          <dl className="immersive-viewer__metadata">
+            <div><dt>{t('viewer.captured')}</dt><dd>{formatDate(photo.captured_at)}</dd></div>
+            <div><dt>{t('viewer.size')}</dt><dd>{photo.width && photo.height ? `${photo.width} × ${photo.height} · ` : ''}{formatBytes(photo.size)}</dd></div>
+            <div><dt>{t('viewer.folder')}</dt><dd>{currentFolder?.name ?? t('common.unknownFolder')}</dd></div>
+          </dl>
 
-          <label className="immersive-viewer__field">
-            <span><MoveRight size={15} /> {t('viewer.moveTo')}</span>
-            <select value={moveFolder} onChange={(event) => setMoveFolder(event.target.value)}>
-              <option value="">{t('common.chooseFolder')}</option>
-              {folders.filter((folder) => folder.id !== photo.folder_id).map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-            </select>
-          </label>
-          <button className="immersive-viewer__action" disabled={busy || !moveFolder} onClick={() => void movePhoto()}>
-            <MoveRight size={17} />
-            <span>{t('viewer.move')}</span>
-          </button>
-        </div>
+          <div className="immersive-viewer__details-section">
+            <label className="immersive-viewer__field">
+              <span><Pencil size={15} /> {t('viewer.filename')}</span>
+              <input value={name} onChange={(event) => setName(event.target.value)} />
+            </label>
+            <button className="immersive-viewer__action" disabled={busy || !name.trim() || name.trim() === photo.filename} onClick={() => void renamePhoto()}>
+              <Pencil size={17} />
+              <span>{t('viewer.saveName')}</span>
+            </button>
 
-        {message && <p className="immersive-viewer__message" role="status">{message}</p>}
+            <label className="immersive-viewer__field">
+              <span><MoveRight size={15} /> {t('viewer.moveTo')}</span>
+              <select value={moveFolder} onChange={(event) => setMoveFolder(event.target.value)}>
+                <option value="">{t('common.chooseFolder')}</option>
+                {folders.filter((folder) => folder.id !== photo.folder_id).map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+              </select>
+            </label>
+            <button className="immersive-viewer__action" disabled={busy || !moveFolder} onClick={() => void movePhoto()}>
+              <MoveRight size={17} />
+              <span>{t('viewer.move')}</span>
+            </button>
+          </div>
 
-        <div className="immersive-viewer__details-actions">
-          <a className="immersive-viewer__action" href={`/api/v1/photos/${encodeURIComponent(photo.id)}/original`} download>
-            <Download size={17} />
-            <span>{t('common.downloadOriginal')}</span>
-          </a>
-          <button className="immersive-viewer__action" type="button" onClick={() => setShareOpen(true)}>
-            <Share2 size={17} />
-            <span>{t('viewer.sharePhoto')}</span>
-          </button>
-          <button className={`immersive-viewer__action immersive-viewer__action--danger${confirmDelete ? ' is-confirming' : ''}`} disabled={busy} onClick={() => void deletePhoto()}>
-            <Trash2 size={17} />
-            <span>{confirmDelete ? t('common.confirmDelete') : t('viewer.deletePhoto')}</span>
-          </button>
-          {confirmDelete && (
-            <button className="immersive-viewer__cancel" type="button" onClick={() => setConfirmDelete(false)}>{t('common.cancel')}</button>
-          )}
-        </div>
-      </aside>
+          {message && <p className="immersive-viewer__message" role="status">{message}</p>}
+
+          <div className="immersive-viewer__details-actions">
+            <a className="immersive-viewer__action" href={`/api/v1/photos/${encodeURIComponent(photo.id)}/original`} download>
+              <Download size={17} />
+              <span>{t('common.downloadOriginal')}</span>
+            </a>
+            <button className="immersive-viewer__action" type="button" onClick={() => setShareOpen(true)}>
+              <Share2 size={17} />
+              <span>{t('viewer.sharePhoto')}</span>
+            </button>
+            <button className={`immersive-viewer__action immersive-viewer__action--danger${confirmDelete ? ' is-confirming' : ''}`} disabled={busy} onClick={() => void deletePhoto()}>
+              <Trash2 size={17} />
+              <span>{confirmDelete ? t('common.confirmDelete') : t('viewer.deletePhoto')}</span>
+            </button>
+            {confirmDelete && (
+              <button className="immersive-viewer__cancel" type="button" onClick={() => setConfirmDelete(false)}>{t('common.cancel')}</button>
+            )}
+          </div>
+        </aside>
+      )}
 
       {shareOpen && <ShareDialog api={api} resource={{ type: 'photo', id: photo.id, name: photo.filename }} onClose={() => setShareOpen(false)} />}
     </div>
