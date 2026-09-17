@@ -42,17 +42,18 @@ func NewHandler(checks HealthChecks, logger *slog.Logger) http.Handler {
 }
 
 type Services struct {
-	Auth          *auth.Service
-	Users         *users.Service
-	Folders       *folders.Service
-	Photos        *photos.Service
-	Thumbnails    photos.ThumbnailService
-	Shares        *shares.Service
-	ShareLinks    *sharelinks.Service
-	Indexer       *indexer.Service
-	Importer      *importer.Service
-	SecureCookies bool
-	Static        http.Handler
+	Auth             *auth.Service
+	Users            *users.Service
+	Folders          *folders.Service
+	Photos           *photos.Service
+	Thumbnails       photos.ThumbnailService
+	ThumbnailRebuild http.Handler
+	Shares           *shares.Service
+	ShareLinks       *sharelinks.Service
+	Indexer          *indexer.Service
+	Importer         *importer.Service
+	SecureCookies    bool
+	Static           http.Handler
 }
 
 func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services Services) http.Handler {
@@ -92,6 +93,10 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 	if services.Auth != nil && services.Indexer != nil {
 		mux.Handle("/api/v1/admin/rescan", indexer.NewHTTPHandler(services.Indexer, services.Auth))
 		mux.Handle("/api/v1/admin/rescan/", indexer.NewHTTPHandler(services.Indexer, services.Auth))
+	}
+	if services.Auth != nil && services.ThumbnailRebuild != nil {
+		mux.Handle("/api/v1/admin/thumbnails/rebuild", services.ThumbnailRebuild)
+		mux.Handle("/api/v1/admin/thumbnails/rebuild/", services.ThumbnailRebuild)
 	}
 	if services.Auth != nil && services.Importer != nil {
 		importHandler := importer.NewHTTPHandler(services.Importer, services.Auth)
