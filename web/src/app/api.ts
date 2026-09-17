@@ -45,6 +45,16 @@ export interface PhotoPage {
   next_cursor: string | null;
 }
 
+export interface BulkDeleteFailure {
+  id: string;
+  code: string;
+}
+
+export interface BulkDeleteResult {
+  deleted_ids: string[];
+  failed: BulkDeleteFailure[];
+}
+
 export interface UploadProgress {
   loaded: number;
   total: number;
@@ -175,6 +185,7 @@ export interface ApiClient {
   renamePhoto(id: string, name: string, conflict?: 'reject' | 'rename'): Promise<Photo>;
   movePhoto(id: string, folderId: string, conflict?: 'reject' | 'rename'): Promise<Photo>;
   deletePhoto(id: string): Promise<void>;
+  deletePhotos?(ids: string[]): Promise<BulkDeleteResult>;
   listShares(): Promise<{ items: Share[] }>;
   createShare(input: { folder_id: string; user_id: string; permission: 'read' | 'write' }): Promise<Share>;
   revokeShare(id: string): Promise<void>;
@@ -340,6 +351,7 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
       await request(`/api/v1/live-photos/${encodeURIComponent(id)}`, { method: 'DELETE' });
       await request(`/api/v1/photos/${encodeURIComponent(id)}?confirm=true`, { method: 'DELETE' });
     },
+    deletePhotos: (ids) => request<BulkDeleteResult>('/api/v1/photos/batch-delete', { method: 'POST', body: JSON.stringify({ ids, confirm: true }) }) as Promise<BulkDeleteResult>,
     listShares: () => request<{ items: Share[] }>('/api/v1/shares') as Promise<{ items: Share[] }>,
     createShare: (input) => request<Share>('/api/v1/shares', { method: 'POST', body: JSON.stringify(input) }) as Promise<Share>,
     revokeShare: async (id) => { await request(`/api/v1/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }); },

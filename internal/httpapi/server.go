@@ -107,6 +107,7 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 		photoHandler := photos.NewHTTPHandler(services.Photos, services.Auth)
 		photoHandler.SetThumbnailService(services.Thumbnails)
 		mux.Handle("/api/v1/photos/upload", photoHandler)
+		mux.Handle("/api/v1/photos/batch-delete", photos.NewBulkDeleteHTTPHandler(services.Photos, services.Auth))
 		mux.Handle("/api/v1/photos/", photoHandler)
 		mux.Handle("/api/v1/live-photos/", photos.NewLiveHTTPHandler(services.Photos, services.Auth))
 	}
