@@ -193,16 +193,12 @@
   color: var(--slate);
   background: var(--warm-white);
   box-shadow: 0 24px 70px rgba(0,0,0,.2);
-  transform: translateX(calc(100% + 24px));
-  opacity: 0;
-  pointer-events: none;
-  transition: transform .28s ease, opacity .22s ease;
+  animation: immersive-details-in .28s ease both;
 }
 
-.immersive-viewer.has-details .immersive-viewer__details {
-  transform: translateX(0);
-  opacity: 1;
-  pointer-events: auto;
+@keyframes immersive-details-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 .immersive-viewer__details-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -291,9 +287,12 @@
     width: 100%;
     max-height: 62svh;
     border-radius: 24px 24px 0 0;
-    transform: translateY(102%);
+    animation-name: immersive-details-in-mobile;
   }
-  .immersive-viewer.has-details .immersive-viewer__details { transform: translateY(0); }
+  @keyframes immersive-details-in-mobile {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
 }
 
 @media (max-width: 620px) {
