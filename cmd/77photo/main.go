@@ -92,10 +92,13 @@ func run(parent context.Context, logger *slog.Logger) error {
 	photoService.SetThumbnailEnqueuer(thumbnailService)
 	thumbnailService.Start(ctx)
 	defer thumbnailService.Close()
+	thumbnailRebuildService := thumbnails.NewRebuildServiceWithContext(ctx, db, thumbnailService)
+	defer thumbnailRebuildService.Wait()
+	thumbnailRebuildHandler := thumbnails.NewRebuildHTTPHandler(thumbnailRebuildService, authService)
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
 	shareLinkService := sharelinks.NewService(db, photoStore, thumbnailService, secureCookies)
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db, mediaTools), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler()})
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db, mediaTools), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, ThumbnailRebuild: thumbnailRebuildHandler, Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler()})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
