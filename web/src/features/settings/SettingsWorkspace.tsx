@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { FolderInput, RefreshCw, ShieldCheck, UserRound } from 'lucide-react';
+import { FolderInput, ImageIcon, RefreshCw, ShieldCheck, UserRound } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
-import type { ApiClient, ImportJob, RescanJob, User } from '../../app/api';
+import type { ApiClient, ImportJob, RescanJob, ThumbnailRebuildJob, User } from '../../app/api';
 
 export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient; currentUser: User }) {
   const { locale, t, formatCount } = useI18n();
@@ -13,12 +13,16 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [scanJob, setScanJob] = useState<RescanJob | null>(null);
   const [scanStarting, setScanStarting] = useState(false);
+  const [thumbnailMessage, setThumbnailMessage] = useState<string | null>(null);
+  const [thumbnailJob, setThumbnailJob] = useState<ThumbnailRebuildJob | null>(null);
+  const [thumbnailStarting, setThumbnailStarting] = useState(false);
   const [importSource, setImportSource] = useState('.');
   const [importUserID, setImportUserID] = useState(currentUser.id);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importJob, setImportJob] = useState<ImportJob | null>(null);
   const [importStarting, setImportStarting] = useState(false);
   const scanActive = scanStarting || scanJob?.status === 'queued' || scanJob?.status === 'running';
+  const thumbnailActive = thumbnailStarting || thumbnailJob?.status === 'queued' || thumbnailJob?.status === 'running';
   const importActive = importStarting || importJob?.status === 'queued' || importJob?.status === 'running';
   const copy = locale === 'zh' ? {
     importTitle: '迁移照片',
@@ -37,6 +41,19 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     skipped: '已跳过',
     errors: '失败',
     importWarning: '导入会把文件移动到目标用户的 Imported 文件夹，并保留原有子目录结构；已有同名目标文件不会被覆盖。',
+    thumbnailTitle: '缩略图缓存',
+    rebuildThumbnails: '重新生成缩略图',
+    rebuildingThumbnails: '正在重新生成…',
+    thumbnailQueued: '缩略图重建已排队…',
+    thumbnailComplete: '缩略图重建完成',
+    thumbnailFailed: '缩略图重建失败',
+    thumbnailStartFailed: '无法启动缩略图重建。',
+    thumbnailPollFailed: '无法读取缩略图重建进度，正在重试…',
+    thumbnailWarning: '会逐张删除旧缓存并重新生成 256、512、1280 三档缩略图。原图不会被修改。',
+    thumbnailConfirm: '重新生成全部缩略图可能需要较长时间，确定继续吗？',
+    thumbnailTotal: '总数',
+    thumbnailProcessed: '已处理',
+    thumbnailRegenerated: '已生成',
   } : {
     importTitle: 'Import photos',
     importSource: 'Import directory',
@@ -54,6 +71,19 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     skipped: 'Skipped',
     errors: 'Failed',
     importWarning: 'Import moves files into the target user’s Imported folder while preserving subfolders. Existing destination files are never overwritten.',
+    thumbnailTitle: 'Thumbnail cache',
+    rebuildThumbnails: 'Regenerate thumbnails',
+    rebuildingThumbnails: 'Regenerating…',
+    thumbnailQueued: 'Thumbnail rebuild queued…',
+    thumbnailComplete: 'Thumbnail rebuild complete',
+    thumbnailFailed: 'Thumbnail rebuild failed',
+    thumbnailStartFailed: 'Unable to start the thumbnail rebuild.',
+    thumbnailPollFailed: 'Unable to read thumbnail rebuild progress. Retrying…',
+    thumbnailWarning: 'Rebuilds the 256, 512 and 1280 thumbnail variants one photo at a time. Original media is never modified.',
+    thumbnailConfirm: 'Regenerating every thumbnail can take a while. Continue?',
+    thumbnailTotal: 'Total',
+    thumbnailProcessed: 'Processed',
+    thumbnailRegenerated: 'Regenerated',
   };
 
   useEffect(() => {
@@ -90,6 +120,33 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [api, scanJob?.id, t]);
+
+  useEffect(() => {
+    const id = thumbnailJob?.id ?? '';
+    if (!id) return;
+    let disposed = false;
+    let timer: number | undefined;
+
+    async function poll() {
+      try {
+        const next = await api.getThumbnailRebuild(id);
+        if (disposed) return;
+        setThumbnailJob(next);
+        setThumbnailMessage(null);
+        if (next.status === 'queued' || next.status === 'running') timer = window.setTimeout(() => void poll(), 1000);
+      } catch {
+        if (disposed) return;
+        setThumbnailMessage(copy.thumbnailPollFailed);
+        timer = window.setTimeout(() => void poll(), 1000);
+      }
+    }
+
+    void poll();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [api, thumbnailJob?.id, copy.thumbnailPollFailed]);
 
   useEffect(() => {
     const id = importJob?.id ?? '';
@@ -174,6 +231,20 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     }
   }
 
+  async function rebuildThumbnails() {
+    if (thumbnailActive || !window.confirm(copy.thumbnailConfirm)) return;
+    setThumbnailStarting(true);
+    setThumbnailMessage(null);
+    try {
+      setThumbnailJob(await api.startThumbnailRebuild());
+    } catch {
+      setThumbnailJob(null);
+      setThumbnailMessage(copy.thumbnailStartFailed);
+    } finally {
+      setThumbnailStarting(false);
+    }
+  }
+
   async function startImport(event: FormEvent) {
     event.preventDefault();
     if (importActive || !importUserID) return;
@@ -197,6 +268,17 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
         ? t('settings.scanRunFailed')
         : t('settings.scanQueued');
   const counts = scanJob?.counts;
+  const thumbnailStatusLabel = thumbnailJob?.status === 'running'
+    ? copy.rebuildingThumbnails
+    : thumbnailJob?.status === 'completed'
+      ? copy.thumbnailComplete
+      : thumbnailJob?.status === 'failed'
+        ? copy.thumbnailFailed
+        : copy.thumbnailQueued;
+  const thumbnailCounts = thumbnailJob?.counts;
+  const thumbnailPercent = thumbnailCounts && thumbnailCounts.total > 0
+    ? Math.min(100, Math.round((thumbnailCounts.processed / thumbnailCounts.total) * 100))
+    : thumbnailJob?.status === 'completed' ? 100 : 0;
   const importStatusLabel = importJob?.status === 'running'
     ? copy.importing
     : importJob?.status === 'completed'
@@ -270,6 +352,25 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
           <span>{t('settings.scanUpdated', { count: formatCount(counts.updated) })}</span>
           <span>{t('settings.scanMissing', { count: formatCount(counts.missing) })}</span>
           <span>{t('settings.scanErrors', { count: formatCount(counts.failed) })}</span>
+        </div>
+      </div>}
+
+      <div className="settings-section-heading scan-heading">
+        <h2>{copy.thumbnailTitle}</h2>
+        <button className="button button-secondary" disabled={thumbnailActive} onClick={() => void rebuildThumbnails()}><ImageIcon size={15} /> {thumbnailActive ? copy.rebuildingThumbnails : copy.rebuildThumbnails}</button>
+      </div>
+      <p className="inline-state">{copy.thumbnailWarning}</p>
+      {thumbnailMessage && <p className="inline-state" role="alert">{thumbnailMessage}</p>}
+      {thumbnailJob && thumbnailCounts && <div className="scan-progress" role="status" aria-live="polite">
+        <div className="scan-progress-heading"><span>{thumbnailStatusLabel}</span><span>{thumbnailPercent}%</span></div>
+        <div className={`progress-track scan-progress-track ${thumbnailActive ? 'is-active' : ''}`} role="progressbar" aria-label={thumbnailStatusLabel} aria-valuemin={0} aria-valuemax={100} aria-valuenow={thumbnailPercent}>
+          <span className={thumbnailJob.status === 'completed' ? 'is-complete' : ''} style={{ width: `${thumbnailPercent}%` }} />
+        </div>
+        <div className="scan-progress-counts">
+          <span>{copy.thumbnailTotal}: {formatCount(thumbnailCounts.total)}</span>
+          <span>{copy.thumbnailProcessed}: {formatCount(thumbnailCounts.processed)}</span>
+          <span>{copy.thumbnailRegenerated}: {formatCount(thumbnailCounts.regenerated)}</span>
+          <span>{copy.errors}: {formatCount(thumbnailCounts.failed)}</span>
         </div>
       </div>}
     </>}
