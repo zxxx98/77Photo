@@ -75,7 +75,7 @@ func (s *Service) IndexScannedFile(ctx context.Context, ownerID, folderID, stora
 		return false, err
 	}
 	if oldRevision == checksum {
-		_, err = s.db.ExecContext(ctx, "UPDATE photos SET scan_status='indexed', updated_at=? WHERE id=?", formatTime(now), existingID)
+		_, err = s.db.ExecContext(ctx, `UPDATE photos SET owner_id=?, folder_id=?, filename=?, mime_type=?, size=?, width=?, height=?, captured_at=?, captured_at_source=?, file_created_at=?, indexed_at=?, scan_status='indexed', camera_make=?, camera_model=?, orientation=?, focal_length=?, aperture=?, iso=?, gps_latitude=?, gps_longitude=?, updated_at=? WHERE id=?`, ownerID, folderID, filename, mimeType, stat.Size(), nullableInt(metadata.width), nullableInt(metadata.height), formatTime(metadata.capturedAt), metadata.capturedAtSource, formatOptionalTime(timePtr(stat.ModTime().UTC())), formatTime(now), nullableString(metadata.cameraMake), nullableString(metadata.cameraModel), nullableIntPtr(metadata.orientation), nullableFloat(metadata.focalLength), nullableFloat(metadata.aperture), nullableIntPtr(metadata.iso), nullableFloat(metadata.gpsLatitude), nullableFloat(metadata.gpsLongitude), formatTime(now), existingID)
 		if err == nil {
 			err = s.refreshEmbeddedMotion(ctx, existingID, path, mimeType)
 		}
