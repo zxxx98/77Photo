@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/zxxx98/77Photo/internal/acl"
+	"github.com/zxxx98/77Photo/internal/auth"
 	dbstore "github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/folders"
 	"github.com/zxxx98/77Photo/internal/photos"
@@ -30,7 +32,12 @@ func TestScanAndCleanupOnlyClearlyBrokenOriginals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal := acl.Principal{UserID: "u_admin", Role: acl.RoleAdmin}
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}
 	folderService := folders.NewService(db, store)
 	folder, err := folderService.Create(ctx, principal, folders.CreateInput{Name: "Family"})
 	if err != nil {
