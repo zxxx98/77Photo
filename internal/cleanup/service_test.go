@@ -44,15 +44,15 @@ func TestScanAndCleanupOnlyClearlyBrokenOriginals(t *testing.T) {
 		t.Fatal(err)
 	}
 	photoService := photos.NewService(db, store, 1<<20)
-	first, err := photoService.Upload(ctx, principal, photos.UploadInput{FolderID: folder.ID, Filename: "missing.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(testJPEG(t))})
+	first, err := photoService.Upload(ctx, principal, photos.UploadInput{FolderID: folder.ID, Filename: "missing.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(testJPEG(t, 10))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := photoService.Upload(ctx, principal, photos.UploadInput{FolderID: folder.ID, Filename: "empty.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(testJPEG(t))})
+	second, err := photoService.Upload(ctx, principal, photos.UploadInput{FolderID: folder.ID, Filename: "empty.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(testJPEG(t, 20))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	healthy, err := photoService.Upload(ctx, principal, photos.UploadInput{FolderID: folder.ID, Filename: "healthy.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(testJPEG(t))})
+	healthy, err := photoService.Upload(ctx, principal, photos.UploadInput{FolderID: folder.ID, Filename: "healthy.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(testJPEG(t, 30))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,11 +110,11 @@ func TestCleanupRequiresAdminAndConfirmation(t *testing.T) {
 	}
 }
 
-func testJPEG(t *testing.T) []byte {
+func testJPEG(t *testing.T, red uint8) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
 	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
-	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	img.Set(0, 0, color.RGBA{R: red, A: 255})
 	if err := jpeg.Encode(&buffer, img, nil); err != nil {
 		t.Fatal(err)
 	}
