@@ -106,6 +106,59 @@ func (r *fakeRunner) RunToFile(_ context.Context, executable, output string, arg
 	return os.WriteFile(output, []byte("extracted-video"), 0o640)
 }
 
+func TestProbeCapturedAtPrefersQuickTimeCreationDate(t *testing.T) {
+	runner := &fakeRunner{runOut: []byte(`{
+		"format":{"tags":{"creation_time":"2026-09-18T12:00:00Z","com.apple.quicktime.creationdate":"2024-05-20T10:30:00-07:00"}},
+		"streams":[{"tags":{"creation_time":"2025-01-01T00:00:00Z"}}]
+	}`)}
+	tools := Tools{FFprobe: "/usr/bin/ffprobe", Runner: runner, Timeout: time.Second}
+
+	captured, ok, err := tools.ProbeCapturedAt(context.Background(), "/tmp/photo.heic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ProbeCapturedAt() ok = false, want true")
+	}
+	want := time.Date(2024, 5, 20, 17, 30, 0, 0, time.UTC)
+	if !captured.Equal(want) {
+		t.Fatalf("captured = %v, want %v", captured, want)
+	}
+	if len(runner.runArgs) != 1 {
+		t.Fatalf("Run calls = %d, want 1", len(runner.runArgs))
+	}
+	args := strings.Join(runner.runArgs[0], "\x00")
+	if !strings.Contains(args, "com.apple.quicktime.creationdate") || !strings.Contains(args, "creation_time") {
+		t.Fatalf("ffprobe args = %#v, want capture metadata tags", runner.runArgs[0])
+	}
+}
+
+func TestProbeCapturedAtFallsBackToStreamCreationTime(t *testing.T) {
+	runner := &fakeRunner{runOut: []byte(`{"format":{"tags":{}},"streams":[{"tags":{"creation_time":"2023-02-03T04:05:06.123456Z"}}]}`)}
+	tools := Tools{Runner: runner, Timeout: time.Second}
+
+	captured, ok, err := tools.ProbeCapturedAt(context.Background(), "/tmp/clip.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || captured.UTC().Format(time.RFC3339Nano) != "2023-02-03T04:05:06.123456Z" {
+		t.Fatalf("ProbeCapturedAt() = %v, %v", captured, ok)
+	}
+}
+
+func TestProbeCapturedAtMissingMetadataIsNotAnError(t *testing.T) {
+	runner := &fakeRunner{runOut: []byte(`{"format":{"tags":{}},"streams":[]}`)}
+	tools := Tools{Runner: runner, Timeout: time.Second}
+
+	captured, ok, err := tools.ProbeCapturedAt(context.Background(), "/tmp/photo.heic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || !captured.IsZero() {
+		t.Fatalf("ProbeCapturedAt() = %v, %v; want zero,false", captured, ok)
+	}
+}
+
 func TestToolsPassArgumentsSeparately(t *testing.T) {
 	runner := &fakeRunner{runOut: []byte("video\n")}
 	tools := Tools{FFprobe: "/usr/bin/ffprobe", Runner: runner, Timeout: time.Second}
