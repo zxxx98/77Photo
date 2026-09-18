@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createCopyLinkHandler, durationDetail, durationLabel, selectShareDuration, shareButtonLabel, shareCopy, shareDurations, successMessage } from './shareDialog';
+import { createCopyLinkHandler, durationDetail, durationLabel, resolveShareURL, selectShareDuration, shareButtonLabel, shareCopy, shareDurations, successMessage } from './shareDialog';
 
 describe('share dialog rules', () => {
+  it('resolves server-relative share links against the current host', () => {
+    expect(resolveShareURL('/#/share/token-123', 'http://photos.home:8080/#/gallery')).toBe('http://photos.home:8080/#/share/token-123');
+  });
+
   it('runs the copy action when the copy button is clicked', () => {
     let copyCalls = 0;
     const handleCopy = createCopyLinkHandler(async () => {
