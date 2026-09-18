@@ -326,6 +326,45 @@ func (t *Tools) DecodeStill(ctx context.Context, input, output string) error {
 	return validateToolOutput(output, t.outputLimit())
 }
 
+// DecodeStillWithEXIF converts an HEIC/HEIF still and asks libheif to
+// export its embedded EXIF block beside the decoded image. The returned path is
+// empty when the source has no EXIF metadata. --skip-exif-offset makes the
+// sidecar directly consumable by standard TIFF/EXIF parsers.
+func (t *Tools) DecodeStillWithEXIF(ctx context.Context, input, output string) (string, error) {
+	if strings.TrimSpace(input) == "" || strings.TrimSpace(output) == "" {
+		return "", errors.New("media input and output paths are required")
+	}
+	ctx, cancel := t.timedContext(ctx)
+	defer cancel()
+	path := t.HeifConvert
+	if strings.TrimSpace(path) == "" {
+		path = "heif-convert"
+	}
+	exifPath := output + ".exif"
+	_ = os.Remove(exifPath)
+	if err := t.runner().RunToFile(ctx, path, output, "--with-exif", "--skip-exif-offset", input, output); err != nil {
+		_ = os.Remove(exifPath)
+		return "", err
+	}
+	info, err := os.Stat(exifPath)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		_ = os.Remove(exifPath)
+		return "", fmt.Errorf("inspect HEIF EXIF sidecar: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() < 1 {
+		_ = os.Remove(exifPath)
+		return "", nil
+	}
+	if info.Size() > 16<<20 {
+		_ = os.Remove(exifPath)
+		return "", ErrOutputTooLarge
+	}
+	return exifPath, nil
+}
+
 // ExtractVideoFrame renders a poster frame near the beginning of a video. A
 // second attempt at timestamp zero handles clips shorter than the seek point.
 func (t *Tools) ExtractVideoFrame(ctx context.Context, input, output string) error {
