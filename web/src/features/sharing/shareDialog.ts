@@ -15,6 +15,36 @@ export function createCopyLinkHandler(copyLink: () => Promise<void>): () => void
   return () => void copyLink();
 }
 
+export function resolveShareURL(url: string, baseURL: string): string {
+  return new URL(url, baseURL).toString();
+}
+
+export async function copyTextWithFallback(text: string): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Self-hosted HTTP origins and restrictive browser permissions can reject Clipboard API writes.
+    }
+  }
+  if (typeof document === 'undefined' || !document.body) throw new Error('Clipboard is unavailable');
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+  const copied = typeof document.execCommand === 'function' && document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('Clipboard copy failed');
+}
+
 export function durationLabel(duration: ShareDuration, locale: Locale = 'en'): string {
   const key = duration === '1_day' ? 'sharing.oneDay' : duration === '7_days' ? 'sharing.sevenDays' : 'sharing.forever';
   return translate(locale, key);

@@ -391,7 +391,7 @@ func (t *Tools) runFrame(ctx context.Context, executable, input, output string, 
 	if seek {
 		args = append(args, "-ss", "0.5")
 	}
-	args = append(args, "-i", input, "-frames:v", "1", "-vf", "scale=min(1280,iw):-2", "-f", "image2", output)
+	args = append(args, "-i", input, "-frames:v", "1", "-vf", "scale=min(1280\\,iw):-2", "-f", "image2", output)
 	return t.runner().RunToFile(ctx, executable, output, args...)
 }
 

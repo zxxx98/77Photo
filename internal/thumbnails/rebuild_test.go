@@ -71,6 +71,38 @@ func TestRebuildRegeneratesExistingVariants(t *testing.T) {
 	}
 }
 
+func TestRebuildIncludesSupportedVideoMedia(t *testing.T) {
+	db := newRebuildTestDB(t)
+	for _, item := range []struct {
+		id       string
+		mimeType string
+	}{
+		{id: "p_mp4", mimeType: "video/mp4"},
+		{id: "p_webm", mimeType: "video/webm"},
+		{id: "p_quicktime", mimeType: "video/quicktime"},
+		{id: "p_gif", mimeType: "image/gif"},
+	} {
+		if _, err := db.Exec(`INSERT INTO photos (id, mime_type, scan_status, deleted_at) VALUES (?, ?, 'indexed', NULL)`, item.id, item.mimeType); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	service := NewRebuildServiceWithContext(context.Background(), db, nil)
+	ids, err := service.loadCandidateIDs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"p_mp4", "p_quicktime", "p_webm"}
+	if len(ids) != len(want) {
+		t.Fatalf("candidate ids = %#v, want %#v", ids, want)
+	}
+	for index := range want {
+		if ids[index] != want[index] {
+			t.Fatalf("candidate ids = %#v, want %#v", ids, want)
+		}
+	}
+}
+
 func TestRebuildRequiresAdministrator(t *testing.T) {
 	db := newRebuildTestDB(t)
 	service := NewRebuildServiceWithContext(context.Background(), db, nil)
