@@ -113,8 +113,13 @@ func TestCleanupRequiresAdminAndConfirmation(t *testing.T) {
 func testJPEG(t *testing.T, red uint8) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
-	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
-	img.Set(0, 0, color.RGBA{R: red, A: 255})
+	width := 2 + int(red)/10
+	img := image.NewRGBA(image.Rect(0, 0, width, 2))
+	for y := 0; y < 2; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, color.RGBA{R: red, A: 255})
+		}
+	}
 	if err := jpeg.Encode(&buffer, img, nil); err != nil {
 		t.Fatal(err)
 	}
