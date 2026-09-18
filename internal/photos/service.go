@@ -633,6 +633,7 @@ func extractMetadataWithTools(path, mimeType string, size int64, tools *media.To
 		return metadata, nil
 	}
 	decodePath := path
+	exifSidecar := ""
 	cleanup := func() {}
 	if mimeType == "image/heic" || mimeType == "image/heif" {
 		if tools == nil {
@@ -648,8 +649,15 @@ func extractMetadataWithTools(path, mimeType string, size int64, tools *media.To
 			return imageMetadata{}, fmt.Errorf("close decoded image: %w", closeErr)
 		}
 		_ = os.Remove(decodePath)
-		cleanup = func() { _ = os.Remove(decodePath) }
-		if decodeErr := tools.DecodeStill(context.Background(), path, decodePath); decodeErr != nil {
+		cleanup = func() {
+			_ = os.Remove(decodePath)
+			if exifSidecar != "" {
+				_ = os.Remove(exifSidecar)
+			}
+		}
+		var decodeErr error
+		exifSidecar, decodeErr = tools.DecodeStillWithEXIF(context.Background(), path, decodePath)
+		if decodeErr != nil {
 			cleanup()
 			return imageMetadata{}, fmt.Errorf("%w: decode HEIC image: %v", ErrInvalidMedia, decodeErr)
 		}
@@ -675,6 +683,14 @@ func extractMetadataWithTools(path, mimeType string, size int64, tools *media.To
 		return imageMetadata{}, ErrPixelLimit
 	}
 	metadata.width, metadata.height = config.Width, config.Height
+	if exifSidecar != "" {
+		if sidecar, openErr := os.Open(exifSidecar); openErr == nil {
+			if parsed, exifErr := exif.Decode(sidecar); exifErr == nil {
+				applyEXIF(&metadata, parsed)
+			}
+			_ = sidecar.Close()
+		}
+	}
 	if mimeType != "image/heic" && mimeType != "image/heif" {
 		file, err = os.Open(path)
 		if err == nil {
