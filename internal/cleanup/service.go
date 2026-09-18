@@ -44,9 +44,9 @@ type CleanupResult struct {
 }
 
 type Service struct {
-	db       *sql.DB
-	storage  storage.Store
-	photos   *photos.Service
+	db      *sql.DB
+	storage storage.Store
+	photos  *photos.Service
 }
 
 func NewService(db *sql.DB, store storage.Store, photoService *photos.Service) *Service {
@@ -134,8 +134,8 @@ func (s *Service) Cleanup(ctx context.Context, principal acl.Principal, confirme
 		return CleanupResult{}, err
 	}
 	result := CleanupResult{
-		Scanned: scan.Scanned,
-		Found: len(scan.Items),
+		Scanned:  scan.Scanned,
+		Found:    len(scan.Items),
 		Failures: make([]CleanupFailure, 0),
 	}
 	for _, item := range scan.Items {
