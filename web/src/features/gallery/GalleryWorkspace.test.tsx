@@ -19,9 +19,20 @@ const livePhoto: Photo = {
   is_live_photo: true,
 };
 
-function api(): ApiClient {
+const videoPhoto: Photo = {
+  id: 'video-1',
+  owner_id: 'user-1',
+  folder_id: 'folder-1',
+  filename: 'clip.mp4',
+  mime_type: 'video/mp4',
+  size: 200,
+  captured_at: '2026-09-15T00:00:00Z',
+  captured_at_source: 'mtime',
+};
+
+function api(items: Photo[] = [livePhoto]): ApiClient {
   return {
-    listPhotos: vi.fn().mockResolvedValue({ items: [livePhoto], next_cursor: null }),
+    listPhotos: vi.fn().mockResolvedValue({ items, next_cursor: null }),
     listFolders: vi.fn().mockResolvedValue({ items: [] }),
     getFolder: vi.fn().mockResolvedValue({ id: 'folder-1', name: 'Family', owner_id: 'user-1', parent_id: null, is_shared: false }),
   } as unknown as ApiClient;
@@ -53,6 +64,7 @@ describe('GalleryWorkspace LIVE playback', () => {
 
     let image = container.querySelector<HTMLImageElement>('.photo-tile img');
     expect(image?.getAttribute('src')).toContain('/thumbnail?size=256&retry=0');
+    expect(image?.style.visibility).toBe('hidden');
 
     for (const attempt of [1, 2]) {
       await act(async () => {
@@ -77,6 +89,42 @@ describe('GalleryWorkspace LIVE playback', () => {
     });
     expect(container.querySelector('.photo-tile img')).toBeNull();
     expect(container.textContent).toContain('预览暂不可用');
+  });
+
+  it('keeps thumbnail retries hidden and uses unified artwork when a video thumbnail cannot be generated', async () => {
+    vi.useFakeTimers();
+    await act(async () => {
+      root.render(<I18nProvider><GalleryWorkspace api={api([videoPhoto])} /></I18nProvider>);
+      await Promise.resolve();
+    });
+
+    let image = container.querySelector<HTMLImageElement>('.photo-tile img');
+    expect(image?.style.visibility).toBe('hidden');
+
+    for (const attempt of [1, 2]) {
+      await act(async () => {
+        image?.dispatchEvent(new Event('error'));
+        vi.advanceTimersByTime(1000);
+        await Promise.resolve();
+      });
+      image = container.querySelector<HTMLImageElement>('.photo-tile img');
+      expect(image?.getAttribute('src')).toContain(`retry=${attempt}`);
+      expect(image?.style.visibility).toBe('hidden');
+    }
+
+    await act(async () => {
+      image?.dispatchEvent(new Event('error'));
+      await Promise.resolve();
+    });
+    image = container.querySelector<HTMLImageElement>('.photo-tile img');
+    expect(image?.getAttribute('src')).toBe('/video-placeholder.svg');
+    expect(image?.style.visibility).toBe('hidden');
+
+    await act(async () => {
+      image?.dispatchEvent(new Event('load'));
+      await Promise.resolve();
+    });
+    expect(container.querySelector<HTMLImageElement>('.photo-tile img')?.style.visibility).toBe('');
   });
 
   it('shows the LIVE marker and plays the authenticated motion endpoint with a preview poster', async () => {
