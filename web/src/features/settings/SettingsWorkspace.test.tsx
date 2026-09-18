@@ -36,6 +36,7 @@ describe('settings rescan progress', () => {
     act(() => root.unmount());
     container.remove();
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   async function renderWith(api: ApiClient) {
@@ -103,6 +104,61 @@ describe('settings rescan progress', () => {
 
     expect(trigger?.textContent).toContain('family');
     expect(trigger?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('previews broken photos before confirmed cleanup', async () => {
+    const scanBrokenPhotos = vi.fn()
+      .mockResolvedValueOnce({
+        scanned: 10,
+        broken: 2,
+        items: [
+          { id: 'p1', filename: 'missing.jpg', reason: 'missing' },
+          { id: 'p2', filename: 'empty.jpg', reason: 'empty' },
+        ],
+      })
+      .mockResolvedValueOnce({ scanned: 8, broken: 0, items: [] });
+    const cleanupBrokenPhotos = vi.fn().mockResolvedValue({
+      scanned: 10,
+      found: 2,
+      deleted: 2,
+      failed: 0,
+      failures: [],
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const api = {
+      listUsers: vi.fn().mockResolvedValue({ items: [] }),
+      scanBrokenPhotos,
+      cleanupBrokenPhotos,
+    } as unknown as ApiClient;
+    await renderWith(api);
+
+    const scanButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.includes('扫描坏照片'));
+    await act(async () => {
+      scanButton?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(scanBrokenPhotos).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('missing.jpg');
+    expect(container.textContent).toContain('原文件丢失');
+    expect(container.textContent).toContain('empty.jpg');
+    expect(container.textContent).toContain('0 字节文件');
+
+    const cleanupButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.includes('清理 2 张'));
+    await act(async () => {
+      cleanupButton?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(window.confirm).toHaveBeenCalled();
+    expect(cleanupBrokenPhotos).toHaveBeenCalledTimes(1);
+    expect(scanBrokenPhotos).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('已清理 2 张坏照片');
   });
 
   it('shows a failed terminal status and stops polling', async () => {
