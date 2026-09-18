@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-label="Video preview">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef0ed"/>
+      <stop offset="1" stop-color="#d9ddd8"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="480" fill="url(#bg)"/>
+  <rect x="120" y="92" width="400" height="296" rx="30" fill="#f8f9f7" stroke="#c4cac3" stroke-width="8"/>
+  <path d="M120 148h400M120 332h400" stroke="#d5dad4" stroke-width="8"/>
+  <g fill="#c0c7c0">
+    <rect x="146" y="112" width="44" height="20" rx="7"/><rect x="210" y="112" width="44" height="20" rx="7"/>
+    <rect x="274" y="112" width="44" height="20" rx="7"/><rect x="338" y="112" width="44" height="20" rx="7"/>
+    <rect x="402" y="112" width="44" height="20" rx="7"/><rect x="466" y="112" width="28" height="20" rx="7"/>
+    <rect x="146" y="348" width="44" height="20" rx="7"/><rect x="210" y="348" width="44" height="20" rx="7"/>
+    <rect x="274" y="348" width="44" height="20" rx="7"/><rect x="338" y="348" width="44" height="20" rx="7"/>
+    <rect x="402" y="348" width="44" height="20" rx="7"/><rect x="466" y="348" width="28" height="20" rx="7"/>
+  </g>
+  <circle cx="320" cy="240" r="68" fill="#2f363d" opacity=".9"/>
+  <path d="M298 197c0-9 10-14 17-9l67 43c7 4 7 14 0 19l-67 43c-7 5-17 0-17-9z" fill="#fff"/>
+</svg>
