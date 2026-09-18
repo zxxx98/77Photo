@@ -76,7 +76,7 @@ describe('GalleryWorkspace LIVE playback', () => {
       await Promise.resolve();
     });
     expect(container.querySelector('.photo-tile img')).toBeNull();
-    expect(container.textContent).toContain('预览处理中');
+    expect(container.textContent).toContain('预览暂不可用');
   });
 
   it('shows the LIVE marker and plays the authenticated motion endpoint with a preview poster', async () => {
