@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { Check, Copy, Link as LinkIcon, Share2, X } from 'lucide-react';
 import type { ApiClient, ShareDuration, ShareLink, ShareResourceType } from '../../app/api';
-import { createCopyLinkHandler, durationDetail, durationLabel, selectShareDuration, shareCopy, shareDurations, successMessage } from './shareDialog';
+import { copyTextWithFallback, createCopyLinkHandler, durationDetail, durationLabel, resolveShareURL, selectShareDuration, shareCopy, shareDurations, successMessage } from './shareDialog';
 import { useI18n } from '../../app/I18nProvider';
 
 type ShareResource = { type: ShareResourceType; id: string; name: string };
@@ -15,6 +15,7 @@ export default function ShareDialog({ api, resource, onClose }: { api: ApiClient
   const [link, setLink] = useState<ShareLink | null>(null);
   const [copied, setCopied] = useState(false);
   const copy = shareCopy(resource.type, resource.name, locale);
+  const shareURL = link ? resolveShareURL(link.url, window.location.href) : '';
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -36,10 +37,11 @@ export default function ShareDialog({ api, resource, onClose }: { api: ApiClient
   }
 
   async function copyLink() {
-    if (!link) return;
+    if (!shareURL) return;
     try {
-      await navigator.clipboard.writeText(new URL(link.url, window.location.href).toString());
+      await copyTextWithFallback(shareURL);
       setCopied(true);
+      setError(null);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
       setError(t('sharing.copyFailed'));
@@ -71,7 +73,7 @@ export default function ShareDialog({ api, resource, onClose }: { api: ApiClient
         <button className="button button-primary share-submit" type="submit" disabled={busy}>{busy ? t('sharing.creatingLink') : copy.createLabel}</button>
       </form> : <div className="share-dialog-success">
         <p className="share-success-message" role="status">{successMessage(resource.type, duration, locale)}</p>
-        <label className="share-url-field">{t('sharing.shareLink')}<input value={link.url} readOnly aria-label={t('sharing.shareLink')} /></label>
+        <label className="share-url-field">{t('sharing.shareLink')}<input value={shareURL} readOnly aria-label={t('sharing.shareLink')} /></label>
         <button className="button button-secondary share-copy-button" type="button" onClick={createCopyLinkHandler(copyLink)}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? t('sharing.copied') : t('sharing.copyLink')}</button>
         {error && <p className="form-message" role="alert">{error}</p>}
         <p className="share-dialog-note">{t('sharing.keepLinkPrivate')}</p>
