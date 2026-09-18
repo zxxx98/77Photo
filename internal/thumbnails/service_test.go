@@ -201,7 +201,7 @@ func TestVideoFrameToolUsesBoundedSeekAndScale(t *testing.T) {
 		t.Fatalf("ffmpeg calls = %d, want 1", len(runner.args))
 	}
 	joined := strings.Join(runner.args[0], "\x00")
-	for _, needle := range []string{"-ss\x000.5", "-frames:v\x001", "-vf\x00scale=min(1280,iw):-2", "-f\x00image2"} {
+	for _, needle := range []string{"-ss\x000.5", "-frames:v\x001", "-vf\x00scale=min(1280\\,iw):-2", "-f\x00image2"} {
 		if !strings.Contains(joined, needle) {
 			t.Fatalf("ffmpeg args = %#v, missing %q", runner.args[0], strings.ReplaceAll(needle, "\x00", " "))
 		}
