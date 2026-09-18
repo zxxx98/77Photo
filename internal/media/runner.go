@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -210,6 +211,80 @@ func (t *Tools) timedContext(ctx context.Context) (context.Context, context.Canc
 	return context.WithTimeout(ctx, t.Timeout)
 }
 
+type probeMetadata struct {
+	Format struct {
+		Tags map[string]string `json:"tags"`
+	} `json:"format"`
+	Streams []struct {
+		Tags map[string]string `json:"tags"`
+	} `json:"streams"`
+}
+
+// ProbeCapturedAt returns the best embedded capture timestamp exposed by
+// FFprobe. QuickTime's timezone-aware creation date is preferred over the
+// generic creation_time tag. The boolean is false when the container has no
+// usable timestamp; callers can then fall back to EXIF or filesystem time.
+func (t *Tools) ProbeCapturedAt(ctx context.Context, input string) (time.Time, bool, error) {
+	if strings.TrimSpace(input) == "" {
+		return time.Time{}, false, errors.New("media input path is required")
+	}
+	ctx, cancel := t.timedContext(ctx)
+	defer cancel()
+	path := t.FFprobe
+	if strings.TrimSpace(path) == "" {
+		path = "ffprobe"
+	}
+	output, err := t.runner().Run(ctx, path,
+		"-v", "error",
+		"-show_entries", "format_tags=creation_time,com.apple.quicktime.creationdate,date:stream_tags=creation_time,com.apple.quicktime.creationdate,date",
+		"-of", "json",
+		input,
+	)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	var payload probeMetadata
+	if err := json.Unmarshal(output, &payload); err != nil {
+		return time.Time{}, false, fmt.Errorf("parse ffprobe metadata: %w", err)
+	}
+	for _, key := range []string{"com.apple.quicktime.creationdate", "creation_time", "date"} {
+		if value, ok := parseProbeCaptureTime(payload.Format.Tags[key]); ok {
+			return value.UTC(), true, nil
+		}
+		for _, stream := range payload.Streams {
+			if value, ok := parseProbeCaptureTime(stream.Tags[key]); ok {
+				return value.UTC(), true, nil
+			}
+		}
+	}
+	return time.Time{}, false, nil
+}
+
+func parseProbeCaptureTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05-0700",
+		"2006-01-02 15:04:05Z07:00",
+		"2006:01:02 15:04:05-07:00",
+		"2006:01:02 15:04:05-0700",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, true
+		}
+	}
+	for _, layout := range []string{"2006-01-02 15:04:05", "2006:01:02 15:04:05"} {
+		if parsed, err := time.ParseInLocation(layout, value, time.UTC); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
 func (t *Tools) ProbeVideo(ctx context.Context, input string) (bool, error) {
 	if strings.TrimSpace(input) == "" {
 		return false, errors.New("media input path is required")
@@ -249,6 +324,45 @@ func (t *Tools) DecodeStill(ctx context.Context, input, output string) error {
 		return err
 	}
 	return validateToolOutput(output, t.outputLimit())
+}
+
+// DecodeStillWithEXIF converts an HEIC/HEIF still and asks libheif to
+// export its embedded EXIF block beside the decoded image. The returned path is
+// empty when the source has no EXIF metadata. --skip-exif-offset makes the
+// sidecar directly consumable by standard TIFF/EXIF parsers.
+func (t *Tools) DecodeStillWithEXIF(ctx context.Context, input, output string) (string, error) {
+	if strings.TrimSpace(input) == "" || strings.TrimSpace(output) == "" {
+		return "", errors.New("media input and output paths are required")
+	}
+	ctx, cancel := t.timedContext(ctx)
+	defer cancel()
+	path := t.HeifConvert
+	if strings.TrimSpace(path) == "" {
+		path = "heif-convert"
+	}
+	exifPath := output + ".exif"
+	_ = os.Remove(exifPath)
+	if err := t.runner().RunToFile(ctx, path, output, "--with-exif", "--skip-exif-offset", input, output); err != nil {
+		_ = os.Remove(exifPath)
+		return "", err
+	}
+	info, err := os.Stat(exifPath)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		_ = os.Remove(exifPath)
+		return "", fmt.Errorf("inspect HEIF EXIF sidecar: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() < 1 {
+		_ = os.Remove(exifPath)
+		return "", nil
+	}
+	if info.Size() > 16<<20 {
+		_ = os.Remove(exifPath)
+		return "", ErrOutputTooLarge
+	}
+	return exifPath, nil
 }
 
 // ExtractVideoFrame renders a poster frame near the beginning of a video. A

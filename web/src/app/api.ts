@@ -280,6 +280,7 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
       const form = new FormData();
       form.append('folder_id', folderId);
       form.append('conflict', 'reject');
+      if (file.lastModified > 0) form.append('file_modified_at', new Date(file.lastModified).toISOString());
       form.append('file', file, file.name);
       form.append('motion', motion, motion.name);
       xhr.send(form);
@@ -340,6 +341,7 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
       };
       const form = new FormData();
       form.set('folder_id', folderId);
+      if (file.lastModified > 0) form.set('file_modified_at', new Date(file.lastModified).toISOString());
       form.set('file', file, file.name);
       xhr.send(form);
     }),

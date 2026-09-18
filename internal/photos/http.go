@@ -170,6 +170,7 @@ func (h *HTTPHandler) liveUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	folderID := strings.TrimSpace(r.URL.Query().Get("folder_id"))
 	conflict := ConflictReject
+	var fileModifiedAt *time.Time
 	var photo *Photo
 	fileSeen, motionSeen, partsStarted := false, false, false
 	cleanup := func() {
@@ -191,7 +192,7 @@ func (h *HTTPHandler) liveUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		name := part.FormName()
-		if name == "folder_id" || name == "conflict" {
+		if name == "folder_id" || name == "conflict" || name == "file_modified_at" {
 			if partsStarted {
 				_ = part.Close()
 				cleanup()
@@ -206,8 +207,18 @@ func (h *HTTPHandler) liveUpload(w http.ResponseWriter, r *http.Request) {
 			}
 			if name == "folder_id" {
 				folderID = strings.TrimSpace(string(value))
-			} else if strings.TrimSpace(string(value)) == string(ConflictRename) {
-				conflict = ConflictRename
+			} else if name == "conflict" {
+				if strings.TrimSpace(string(value)) == string(ConflictRename) {
+					conflict = ConflictRename
+				}
+			} else {
+				parsed, parseErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(value)))
+				if parseErr != nil {
+					writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "file_modified_at field is invalid", nil)
+					return
+				}
+				parsed = parsed.UTC()
+				fileModifiedAt = &parsed
 			}
 			continue
 		}
@@ -221,7 +232,7 @@ func (h *HTTPHandler) liveUpload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			fileSeen = true
-			created, uploadErr := h.service.Upload(r.Context(), principal(authenticated.Account), UploadInput{FolderID: folderID, Filename: part.FileName(), DeclaredMIME: part.Header.Get("Content-Type"), Conflict: conflict, Body: part})
+			created, uploadErr := h.service.Upload(r.Context(), principal(authenticated.Account), UploadInput{FolderID: folderID, Filename: part.FileName(), DeclaredMIME: part.Header.Get("Content-Type"), Conflict: conflict, FileModifiedAt: fileModifiedAt, Body: part})
 			_ = part.Close()
 			if uploadErr != nil {
 				h.writeServiceError(w, r, uploadErr)
@@ -341,6 +352,7 @@ func (h *HTTPHandler) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	folderID := strings.TrimSpace(r.URL.Query().Get("folder_id"))
 	conflict := ConflictReject
+	var fileModifiedAt *time.Time
 	fileSeen := false
 	for {
 		part, nextErr := reader.NextPart()
@@ -369,13 +381,26 @@ func (h *HTTPHandler) upload(w http.ResponseWriter, r *http.Request) {
 			if strings.TrimSpace(string(value)) == string(ConflictRename) {
 				conflict = ConflictRename
 			}
+		case "file_modified_at":
+			value, readErr := io.ReadAll(io.LimitReader(part, 64))
+			if readErr != nil {
+				writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "file_modified_at field is invalid", nil)
+				return
+			}
+			parsed, parseErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(value)))
+			if parseErr != nil {
+				writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "file_modified_at field is invalid", nil)
+				return
+			}
+			parsed = parsed.UTC()
+			fileModifiedAt = &parsed
 		case "file":
 			if fileSeen || folderID == "" {
 				writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "folder_id must be provided before file", nil)
 				return
 			}
 			fileSeen = true
-			photo, uploadErr := h.service.Upload(r.Context(), principal(account), UploadInput{FolderID: folderID, Filename: part.FileName(), DeclaredMIME: part.Header.Get("Content-Type"), Conflict: conflict, Body: part})
+			photo, uploadErr := h.service.Upload(r.Context(), principal(account), UploadInput{FolderID: folderID, Filename: part.FileName(), DeclaredMIME: part.Header.Get("Content-Type"), Conflict: conflict, FileModifiedAt: fileModifiedAt, Body: part})
 			if uploadErr != nil {
 				h.writeServiceError(w, r, uploadErr)
 				return

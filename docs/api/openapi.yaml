@@ -564,6 +564,10 @@ paths:
                   type: string
                   enum: [reject, rename]
                   default: reject
+                file_modified_at:
+                  type: string
+                  format: date-time
+                  description: Optional client-side original file modification time used only when embedded capture metadata is unavailable
       responses:
         '201':
           description: File stored and indexed
@@ -598,7 +602,7 @@ paths:
         The still part is required and the motion part is optional. The request
         creates one Photo row. Supported stills are JPEG, PNG, HEIC and HEIF;
         an explicit motion companion must be a validated QuickTime MOV. Scalar
-        fields must precede file parts: folder_id, conflict, file, motion.
+        fields must precede file parts: folder_id, conflict, file_modified_at, file, motion.
         MVIMG and HEIC/HEIF files with embedded motion are accepted as a single
         still file and are inspected by bytes after storage.
       operationId: uploadLivePhoto
@@ -615,6 +619,7 @@ paths:
               properties:
                 folder_id: { $ref: '#/components/schemas/ID' }
                 conflict: { type: string, enum: [reject, rename], default: reject }
+                file_modified_at: { type: string, format: date-time, description: Optional client-side original file modification time used only when embedded capture metadata is unavailable }
                 file: { type: string, format: binary, description: JPEG, PNG, HEIC or HEIF still image }
                 motion: { type: string, format: binary, description: Optional same-basename QuickTime MOV companion }
       responses:

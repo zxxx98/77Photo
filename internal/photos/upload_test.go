@@ -20,6 +20,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/auth"
 	dbstore "github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/folders"
+	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/storage"
 )
 
@@ -93,6 +94,44 @@ func TestUploadStoresOriginalAndIndexesMetadata(t *testing.T) {
 	}
 	if photo.CapturedAtSource != "file_mtime" || photo.CapturedAt.IsZero() {
 		t.Fatalf("captured metadata = %q/%v", photo.CapturedAtSource, photo.CapturedAt)
+	}
+}
+
+func TestUploadUsesClientModifiedTimeWhenEmbeddedTimeIsUnavailable(t *testing.T) {
+	fixture := newUploadFixture(t, 1<<20)
+	modified := time.Date(2022, 7, 8, 9, 10, 11, 0, time.FixedZone("client", 8*60*60))
+	photo, err := fixture.service.Upload(context.Background(), fixture.principal, UploadInput{
+		FolderID: fixture.folderID, Filename: "photo.jpg", DeclaredMIME: "image/jpeg",
+		FileModifiedAt: &modified, Body: bytes.NewReader(jpegBytes(t, 3, 2)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if photo.CapturedAtSource != "file_mtime" {
+		t.Fatalf("captured source = %q, want file_mtime", photo.CapturedAtSource)
+	}
+	if !photo.CapturedAt.Equal(modified.UTC()) {
+		t.Fatalf("captured at = %v, want %v", photo.CapturedAt, modified.UTC())
+	}
+}
+
+func TestUploadPrefersEmbeddedVideoTimeOverClientModifiedTime(t *testing.T) {
+	fixture := newUploadFixture(t, 1<<20)
+	fixture.service.SetMediaTools(&media.Tools{
+		Runner: &captureMetadataRunner{output: []byte(`{"format":{"tags":{"creation_time":"2021-03-04T05:06:07Z"}},"streams":[]}`)},
+		Timeout: time.Second,
+	})
+	modified := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	photo, err := fixture.service.Upload(context.Background(), fixture.principal, UploadInput{
+		FolderID: fixture.folderID, Filename: "clip.mp4", DeclaredMIME: "video/mp4",
+		FileModifiedAt: &modified, Body: bytes.NewReader(testMP4Header()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
+	if photo.CapturedAtSource != "exif" || !photo.CapturedAt.Equal(want) {
+		t.Fatalf("captured metadata = %q/%v, want exif/%v", photo.CapturedAtSource, photo.CapturedAt, want)
 	}
 }
 
@@ -333,6 +372,27 @@ func writePNGChunk(body *bytes.Buffer, kind string, data []byte) {
 	crc := crc32.ChecksumIEEE(append([]byte(kind), data...))
 	binary.BigEndian.PutUint32(length[:], crc)
 	body.Write(length[:])
+}
+
+type captureMetadataRunner struct {
+	output []byte
+}
+
+func (r *captureMetadataRunner) Run(_ context.Context, _ string, _ ...string) ([]byte, error) {
+	return append([]byte(nil), r.output...), nil
+}
+
+func (r *captureMetadataRunner) RunToFile(_ context.Context, _ string, _ string, _ ...string) error {
+	return errors.New("unexpected RunToFile call")
+}
+
+func testMP4Header() []byte {
+	data := make([]byte, 24)
+	binary.BigEndian.PutUint32(data[:4], uint32(len(data)))
+	copy(data[4:8], "ftyp")
+	copy(data[8:12], "isom")
+	copy(data[16:20], "isom")
+	return data
 }
 
 type failingReader struct {

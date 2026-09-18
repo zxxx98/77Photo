@@ -50,11 +50,12 @@ const (
 )
 
 type UploadInput struct {
-	FolderID     string
-	Filename     string
-	DeclaredMIME string
-	Conflict     ConflictStrategy
-	Body         io.Reader
+	FolderID       string
+	Filename       string
+	DeclaredMIME   string
+	Conflict       ConflictStrategy
+	FileModifiedAt *time.Time
+	Body           io.Reader
 }
 
 type RenameInput struct {
@@ -224,6 +225,9 @@ func (s *Service) Upload(ctx context.Context, principal acl.Principal, input Upl
 	if err != nil {
 		_ = os.Remove(temporaryPath)
 		return Photo{}, err
+	}
+	if metadata.capturedAtSource == "file_mtime" && input.FileModifiedAt != nil && !input.FileModifiedAt.IsZero() {
+		metadata.capturedAt = input.FileModifiedAt.UTC()
 	}
 	if existingID, err := s.findDuplicate(ctx, input.FolderID, checksum); err != nil {
 		_ = os.Remove(temporaryPath)
@@ -620,10 +624,16 @@ func extractMetadataWithTools(path, mimeType string, size int64, tools *media.To
 		return imageMetadata{}, fmt.Errorf("stat media: %w", err)
 	}
 	metadata := imageMetadata{capturedAt: stat.ModTime().UTC(), capturedAtSource: "file_mtime"}
+	if tools != nil && (strings.HasPrefix(mimeType, "video/") || mimeType == "image/heic" || mimeType == "image/heif") {
+		if captured, ok, probeErr := tools.ProbeCapturedAt(context.Background(), path); probeErr == nil && ok {
+			metadata.capturedAt, metadata.capturedAtSource = captured.UTC(), "exif"
+		}
+	}
 	if strings.HasPrefix(mimeType, "video/") {
 		return metadata, nil
 	}
 	decodePath := path
+	exifSidecar := ""
 	cleanup := func() {}
 	if mimeType == "image/heic" || mimeType == "image/heif" {
 		if tools == nil {
@@ -639,8 +649,15 @@ func extractMetadataWithTools(path, mimeType string, size int64, tools *media.To
 			return imageMetadata{}, fmt.Errorf("close decoded image: %w", closeErr)
 		}
 		_ = os.Remove(decodePath)
-		cleanup = func() { _ = os.Remove(decodePath) }
-		if decodeErr := tools.DecodeStill(context.Background(), path, decodePath); decodeErr != nil {
+		cleanup = func() {
+			_ = os.Remove(decodePath)
+			if exifSidecar != "" {
+				_ = os.Remove(exifSidecar)
+			}
+		}
+		var decodeErr error
+		exifSidecar, decodeErr = tools.DecodeStillWithEXIF(context.Background(), path, decodePath)
+		if decodeErr != nil {
 			cleanup()
 			return imageMetadata{}, fmt.Errorf("%w: decode HEIC image: %v", ErrInvalidMedia, decodeErr)
 		}
@@ -666,6 +683,14 @@ func extractMetadataWithTools(path, mimeType string, size int64, tools *media.To
 		return imageMetadata{}, ErrPixelLimit
 	}
 	metadata.width, metadata.height = config.Width, config.Height
+	if exifSidecar != "" {
+		if sidecar, openErr := os.Open(exifSidecar); openErr == nil {
+			if parsed, exifErr := exif.Decode(sidecar); exifErr == nil {
+				applyEXIF(&metadata, parsed)
+			}
+			_ = sidecar.Close()
+		}
+	}
 	if mimeType != "image/heic" && mimeType != "image/heif" {
 		file, err = os.Open(path)
 		if err == nil {
@@ -679,11 +704,18 @@ func extractMetadataWithTools(path, mimeType string, size int64, tools *media.To
 }
 
 func applyEXIF(metadata *imageMetadata, parsed *exif.Exif) {
-	if field, err := parsed.Get(exif.DateTimeOriginal); err == nil {
-		if value, err := field.StringVal(); err == nil {
-			if captured, err := time.ParseInLocation("2006:01:02 15:04:05", value, time.UTC); err == nil {
-				metadata.capturedAt, metadata.capturedAtSource = captured, "exif"
-			}
+	for _, name := range []exif.FieldName{exif.DateTimeOriginal, exif.FieldName("DateTimeDigitized"), exif.FieldName("DateTime")} {
+		field, err := parsed.Get(name)
+		if err != nil {
+			continue
+		}
+		value, err := field.StringVal()
+		if err != nil {
+			continue
+		}
+		if captured, err := time.ParseInLocation("2006:01:02 15:04:05", strings.TrimSpace(value), time.UTC); err == nil {
+			metadata.capturedAt, metadata.capturedAtSource = captured, "exif"
+			break
 		}
 	}
 	if field, err := parsed.Get(exif.Make); err == nil {

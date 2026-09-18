@@ -85,6 +85,7 @@ type fakeRunner struct {
 	runArgs  [][]string
 	fileArgs [][]string
 	runOut   []byte
+	exifOut  []byte
 	runErr   error
 	fileErr  error
 }
@@ -103,7 +104,68 @@ func (r *fakeRunner) RunToFile(_ context.Context, executable, output string, arg
 	if r.fileErr != nil {
 		return r.fileErr
 	}
-	return os.WriteFile(output, []byte("extracted-video"), 0o640)
+	if err := os.WriteFile(output, []byte("extracted-video"), 0o640); err != nil {
+		return err
+	}
+	if len(r.exifOut) > 0 {
+		if err := os.WriteFile(output+".exif", r.exifOut, 0o640); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestProbeCapturedAtPrefersQuickTimeCreationDate(t *testing.T) {
+	runner := &fakeRunner{runOut: []byte(`{
+		"format":{"tags":{"creation_time":"2026-09-18T12:00:00Z","com.apple.quicktime.creationdate":"2024-05-20T10:30:00-07:00"}},
+		"streams":[{"tags":{"creation_time":"2025-01-01T00:00:00Z"}}]
+	}`)}
+	tools := Tools{FFprobe: "/usr/bin/ffprobe", Runner: runner, Timeout: time.Second}
+
+	captured, ok, err := tools.ProbeCapturedAt(context.Background(), "/tmp/photo.heic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ProbeCapturedAt() ok = false, want true")
+	}
+	want := time.Date(2024, 5, 20, 17, 30, 0, 0, time.UTC)
+	if !captured.Equal(want) {
+		t.Fatalf("captured = %v, want %v", captured, want)
+	}
+	if len(runner.runArgs) != 1 {
+		t.Fatalf("Run calls = %d, want 1", len(runner.runArgs))
+	}
+	args := strings.Join(runner.runArgs[0], "\x00")
+	if !strings.Contains(args, "com.apple.quicktime.creationdate") || !strings.Contains(args, "creation_time") {
+		t.Fatalf("ffprobe args = %#v, want capture metadata tags", runner.runArgs[0])
+	}
+}
+
+func TestProbeCapturedAtFallsBackToStreamCreationTime(t *testing.T) {
+	runner := &fakeRunner{runOut: []byte(`{"format":{"tags":{}},"streams":[{"tags":{"creation_time":"2023-02-03T04:05:06.123456Z"}}]}`)}
+	tools := Tools{Runner: runner, Timeout: time.Second}
+
+	captured, ok, err := tools.ProbeCapturedAt(context.Background(), "/tmp/clip.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || captured.UTC().Format(time.RFC3339Nano) != "2023-02-03T04:05:06.123456Z" {
+		t.Fatalf("ProbeCapturedAt() = %v, %v", captured, ok)
+	}
+}
+
+func TestProbeCapturedAtMissingMetadataIsNotAnError(t *testing.T) {
+	runner := &fakeRunner{runOut: []byte(`{"format":{"tags":{}},"streams":[]}`)}
+	tools := Tools{Runner: runner, Timeout: time.Second}
+
+	captured, ok, err := tools.ProbeCapturedAt(context.Background(), "/tmp/photo.heic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || !captured.IsZero() {
+		t.Fatalf("ProbeCapturedAt() = %v, %v; want zero,false", captured, ok)
+	}
 }
 
 func TestToolsPassArgumentsSeparately(t *testing.T) {
@@ -123,6 +185,27 @@ func TestToolsPassArgumentsSeparately(t *testing.T) {
 	want := []string{"/usr/bin/ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1", "/tmp/input with spaces.mov"}
 	if strings.Join(runner.runArgs[0], "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("Run args = %#v, want %#v", runner.runArgs[0], want)
+	}
+}
+
+func TestDecodeStillWithEXIFRequestsSidecar(t *testing.T) {
+	runner := &fakeRunner{exifOut: []byte("II*\x00test-exif")}
+	tools := Tools{HeifConvert: "/usr/bin/heif-convert", Runner: runner, Timeout: time.Second}
+	output := filepath.Join(t.TempDir(), "decoded.png")
+
+	exifPath, err := tools.DecodeStillWithEXIF(context.Background(), "/tmp/photo.heic", output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exifPath != output+".exif" {
+		t.Fatalf("EXIF path = %q, want %q", exifPath, output+".exif")
+	}
+	if len(runner.fileArgs) != 1 {
+		t.Fatalf("RunToFile calls = %d, want 1", len(runner.fileArgs))
+	}
+	args := strings.Join(runner.fileArgs[0], "\x00")
+	if !strings.Contains(args, "--with-exif") || !strings.Contains(args, "--skip-exif-offset") {
+		t.Fatalf("heif-convert args = %#v, want EXIF export flags", runner.fileArgs[0])
 	}
 }
 
