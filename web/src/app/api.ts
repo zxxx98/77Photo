@@ -136,6 +136,26 @@ export interface ThumbnailRebuildJob {
   error?: string;
 }
 
+export interface BrokenPhoto {
+  id: string;
+  filename: string;
+  reason: 'missing' | 'empty';
+}
+
+export interface BrokenPhotoScanResult {
+  scanned: number;
+  broken: number;
+  items: BrokenPhoto[];
+}
+
+export interface BrokenPhotoCleanupResult {
+  scanned: number;
+  found: number;
+  deleted: number;
+  failed: number;
+  failures: Array<{ id: string; code: string }>;
+}
+
 export interface ImportCounts {
   scanned: number;
   moved: number;
@@ -202,6 +222,8 @@ export interface ApiClient {
   getRescan(id: string): Promise<RescanJob>;
   startThumbnailRebuild(): Promise<ThumbnailRebuildJob>;
   getThumbnailRebuild(id: string): Promise<ThumbnailRebuildJob>;
+  scanBrokenPhotos(): Promise<BrokenPhotoScanResult>;
+  cleanupBrokenPhotos(): Promise<BrokenPhotoCleanupResult>;
   startImport(input: { source_path: string; user_id: string }): Promise<ImportJob>;
   getImport(id: string): Promise<ImportJob>;
 }
@@ -370,6 +392,8 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     getRescan: (id) => request<RescanJob>(`/api/v1/admin/rescan/${encodeURIComponent(id)}`) as Promise<RescanJob>,
     startThumbnailRebuild: () => request<ThumbnailRebuildJob>('/api/v1/admin/thumbnails/rebuild', { method: 'POST', body: JSON.stringify({}) }) as Promise<ThumbnailRebuildJob>,
     getThumbnailRebuild: (id) => request<ThumbnailRebuildJob>(`/api/v1/admin/thumbnails/rebuild/${encodeURIComponent(id)}`) as Promise<ThumbnailRebuildJob>,
+    scanBrokenPhotos: () => request<BrokenPhotoScanResult>('/api/v1/admin/photos/cleanup') as Promise<BrokenPhotoScanResult>,
+    cleanupBrokenPhotos: () => request<BrokenPhotoCleanupResult>('/api/v1/admin/photos/cleanup', { method: 'POST', body: JSON.stringify({ confirm: true }) }) as Promise<BrokenPhotoCleanupResult>,
     startImport: (input) => request<ImportJob>('/api/v1/admin/imports', { method: 'POST', body: JSON.stringify(input) }) as Promise<ImportJob>,
     getImport: (id) => request<ImportJob>(`/api/v1/admin/imports/${encodeURIComponent(id)}`) as Promise<ImportJob>,
   };

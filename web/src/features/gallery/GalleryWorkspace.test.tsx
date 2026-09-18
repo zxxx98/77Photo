@@ -41,6 +41,42 @@ describe('GalleryWorkspace LIVE playback', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    vi.useRealTimers();
+  });
+
+  it('retries pending thumbnails before falling back to the original image', async () => {
+    vi.useFakeTimers();
+    await act(async () => {
+      root.render(<I18nProvider><GalleryWorkspace api={api()} /></I18nProvider>);
+      await Promise.resolve();
+    });
+
+    let image = container.querySelector<HTMLImageElement>('.photo-tile img');
+    expect(image?.getAttribute('src')).toContain('/thumbnail?size=256&retry=0');
+
+    for (const attempt of [1, 2]) {
+      await act(async () => {
+        image?.dispatchEvent(new Event('error'));
+        vi.advanceTimersByTime(1000);
+        await Promise.resolve();
+      });
+      image = container.querySelector<HTMLImageElement>('.photo-tile img');
+      expect(image?.getAttribute('src')).toContain(`retry=${attempt}`);
+    }
+
+    await act(async () => {
+      image?.dispatchEvent(new Event('error'));
+      await Promise.resolve();
+    });
+    image = container.querySelector<HTMLImageElement>('.photo-tile img');
+    expect(image?.getAttribute('src')).toBe('/api/v1/photos/photo-1/original');
+
+    await act(async () => {
+      image?.dispatchEvent(new Event('error'));
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.photo-tile img')).toBeNull();
+    expect(container.textContent).toContain('预览暂不可用');
   });
 
   it('shows the LIVE marker and plays the authenticated motion endpoint with a preview poster', async () => {
