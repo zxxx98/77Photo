@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useId, useRef, useState } from 'react';
-import { Check, ChevronDown, FolderInput, ImageIcon, RefreshCw, ShieldCheck, UserRound } from 'lucide-react';
+import { Check, ChevronDown, FolderInput, ImageIcon, RefreshCw, ShieldCheck, Trash2, UserRound } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
-import type { ApiClient, ImportJob, RescanJob, ThumbnailRebuildJob, User } from '../../app/api';
+import type { ApiClient, BrokenPhotoScanResult, ImportJob, RescanJob, ThumbnailRebuildJob, User } from '../../app/api';
 
 type UserPickerProps = {
   users: User[];
@@ -152,6 +152,9 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importJob, setImportJob] = useState<ImportJob | null>(null);
   const [importStarting, setImportStarting] = useState(false);
+  const [cleanupScan, setCleanupScan] = useState<BrokenPhotoScanResult | null>(null);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupMessage, setCleanupMessage] = useState<string | null>(null);
   const scanActive = scanStarting || scanJob?.status === 'queued' || scanJob?.status === 'running';
   const thumbnailActive = thumbnailStarting || thumbnailJob?.status === 'queued' || thumbnailJob?.status === 'running';
   const importActive = importStarting || importJob?.status === 'queued' || importJob?.status === 'running';
@@ -185,6 +188,21 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     thumbnailTotal: '总数',
     thumbnailProcessed: '已处理',
     thumbnailRegenerated: '已生成',
+    cleanupTitle: '坏照片清理',
+    scanBroken: '扫描坏照片',
+    scanningBroken: '正在扫描…',
+    cleanupBroken: (count: number) => `清理 ${formatCount(count)} 张`,
+    cleaningBroken: '正在清理…',
+    cleanupWarning: '只会清理原文件已丢失或 0 字节的明确坏照片。缩略图生成失败不会被删除；清理前会先显示扫描结果。',
+    cleanupNone: '未发现可安全清理的坏照片。',
+    cleanupFound: (count: number) => `发现 ${formatCount(count)} 张可安全清理的坏照片。`,
+    cleanupComplete: (count: number) => `已清理 ${formatCount(count)} 张坏照片。`,
+    cleanupPartial: (deleted: number, failed: number) => `已清理 ${formatCount(deleted)} 张，另有 ${formatCount(failed)} 张清理失败。`,
+    cleanupScanFailed: '无法扫描坏照片，请检查存储状态后重试。',
+    cleanupFailed: '清理坏照片失败，请重试。',
+    cleanupConfirm: (count: number) => `将永久删除 ${formatCount(count)} 张已确认损坏的照片及关联缓存，此操作无法撤销。确定继续吗？`,
+    missingReason: '原文件丢失',
+    emptyReason: '0 字节文件',
   } : {
     importTitle: 'Import photos',
     importSource: 'Import directory',
@@ -215,6 +233,21 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     thumbnailTotal: 'Total',
     thumbnailProcessed: 'Processed',
     thumbnailRegenerated: 'Regenerated',
+    cleanupTitle: 'Broken photo cleanup',
+    scanBroken: 'Scan broken photos',
+    scanningBroken: 'Scanning…',
+    cleanupBroken: (count: number) => `Clean ${formatCount(count)}`,
+    cleaningBroken: 'Cleaning…',
+    cleanupWarning: 'Only clearly broken originals that are missing or zero bytes are removed. Thumbnail failures are never treated as broken photos. Results are shown before deletion.',
+    cleanupNone: 'No safely removable broken photos were found.',
+    cleanupFound: (count: number) => `Found ${formatCount(count)} safely removable broken photos.`,
+    cleanupComplete: (count: number) => `Cleaned ${formatCount(count)} broken photos.`,
+    cleanupPartial: (deleted: number, failed: number) => `Cleaned ${formatCount(deleted)} photos; ${formatCount(failed)} could not be removed.`,
+    cleanupScanFailed: 'Unable to scan for broken photos. Check storage health and try again.',
+    cleanupFailed: 'Unable to clean broken photos. Try again.',
+    cleanupConfirm: (count: number) => `Permanently delete ${formatCount(count)} confirmed broken photos and related cache files? This cannot be undone.`,
+    missingReason: 'Original file missing',
+    emptyReason: 'Zero-byte file',
   };
 
   useEffect(() => {
@@ -376,6 +409,37 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     }
   }
 
+  async function scanBrokenPhotos() {
+    if (cleanupBusy) return;
+    setCleanupBusy(true);
+    setCleanupMessage(null);
+    try {
+      const result = await api.scanBrokenPhotos();
+      setCleanupScan(result);
+      setCleanupMessage(result.broken === 0 ? copy.cleanupNone : copy.cleanupFound(result.broken));
+    } catch {
+      setCleanupScan(null);
+      setCleanupMessage(copy.cleanupScanFailed);
+    } finally {
+      setCleanupBusy(false);
+    }
+  }
+
+  async function cleanupBrokenPhotos() {
+    if (cleanupBusy || !cleanupScan?.broken || !window.confirm(copy.cleanupConfirm(cleanupScan.broken))) return;
+    setCleanupBusy(true);
+    setCleanupMessage(null);
+    try {
+      const result = await api.cleanupBrokenPhotos();
+      setCleanupMessage(result.failed > 0 ? copy.cleanupPartial(result.deleted, result.failed) : copy.cleanupComplete(result.deleted));
+      setCleanupScan(await api.scanBrokenPhotos());
+    } catch {
+      setCleanupMessage(copy.cleanupFailed);
+    } finally {
+      setCleanupBusy(false);
+    }
+  }
+
   async function startImport(event: FormEvent) {
     event.preventDefault();
     if (importActive || !importUserID) return;
@@ -506,6 +570,26 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
           <span>{copy.thumbnailProcessed}: {formatCount(thumbnailCounts.processed)}</span>
           <span>{copy.thumbnailRegenerated}: {formatCount(thumbnailCounts.regenerated)}</span>
           <span>{copy.errors}: {formatCount(thumbnailCounts.failed)}</span>
+        </div>
+      </div>}
+
+      <div className="settings-section-heading scan-heading">
+        <h2>{copy.cleanupTitle}</h2>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button className="button button-secondary" disabled={cleanupBusy} onClick={() => void scanBrokenPhotos()}><RefreshCw size={15} /> {cleanupBusy ? copy.scanningBroken : copy.scanBroken}</button>
+          {cleanupScan && cleanupScan.broken > 0 && <button className="button button-secondary" disabled={cleanupBusy} onClick={() => void cleanupBrokenPhotos()}><Trash2 size={15} /> {cleanupBusy ? copy.cleaningBroken : copy.cleanupBroken(cleanupScan.broken)}</button>}
+        </div>
+      </div>
+      <p className="inline-state">{copy.cleanupWarning}</p>
+      {cleanupMessage && <p className="inline-state" role="status">{cleanupMessage}</p>}
+      {cleanupScan && cleanupScan.broken > 0 && <div className="scan-progress" aria-live="polite">
+        <div className="scan-progress-counts">
+          <span>{copy.scanned}: {formatCount(cleanupScan.scanned)}</span>
+          <span>{copy.cleanupTitle}: {formatCount(cleanupScan.broken)}</span>
+        </div>
+        <div className="scan-progress-counts">
+          {cleanupScan.items.slice(0, 8).map((item) => <span key={item.id}>{item.filename} · {item.reason === 'missing' ? copy.missingReason : copy.emptyReason}</span>)}
+          {cleanupScan.items.length > 8 && <span>+{formatCount(cleanupScan.items.length - 8)}</span>}
         </div>
       </div>}
     </>}
