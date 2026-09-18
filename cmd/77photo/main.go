@@ -15,8 +15,8 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
-	"github.com/zxxx98/77Photo/internal/config"
 	"github.com/zxxx98/77Photo/internal/cleanup"
+	"github.com/zxxx98/77Photo/internal/config"
 	"github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/folders"
 	"github.com/zxxx98/77Photo/internal/httpapi"
