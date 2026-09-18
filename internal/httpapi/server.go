@@ -48,7 +48,7 @@ type Services struct {
 	Photos           *photos.Service
 	Thumbnails       photos.ThumbnailService
 	ThumbnailRebuild http.Handler
-	PhotoCleanup      http.Handler
+	PhotoCleanup     http.Handler
 	Shares           *shares.Service
 	ShareLinks       *sharelinks.Service
 	Indexer          *indexer.Service
