@@ -122,9 +122,11 @@ describe('API client', () => {
     expect(page.items.filter((photo) => photo.is_live_photo).map((photo) => photo.id)).toEqual(['p_0', 'p_100', 'p_200']);
   });
 
-  it('uses XMLHttpRequest for upload progress and preserves FormData content type', async () => {
+  it('uses XMLHttpRequest for upload progress and preserves original file modification time', async () => {
     const open = vi.fn();
-    const send = vi.fn(function (this: { status: number; responseText: string; onload?: (event: ProgressEvent) => void }) {
+    let submitted: FormData | undefined;
+    const send = vi.fn(function (this: { status: number; responseText: string; onload?: (event: ProgressEvent) => void }, body: FormData) {
+      submitted = body;
       this.status = 201;
       this.responseText = JSON.stringify({ id: 'p_1', filename: 'photo.jpg' });
       this.onload?.(undefined as unknown as ProgressEvent);
@@ -142,11 +144,13 @@ describe('API client', () => {
     }
     vi.stubGlobal('XMLHttpRequest', FakeXHR);
     const client = createApiClient();
-    const file = new File(['data'], 'photo.jpg', { type: 'image/jpeg' });
+    const lastModified = Date.parse('2022-07-08T09:10:11.000Z');
+    const file = new File(['data'], 'photo.jpg', { type: 'image/jpeg', lastModified });
 
     await expect(client.uploadPhoto(file, 'f_1')).resolves.toMatchObject({ id: 'p_1' });
     expect(open).toHaveBeenCalledWith('POST', '/api/v1/photos/upload');
     expect(send).toHaveBeenCalledWith(expect.any(FormData));
+    expect(submitted!.get('file_modified_at')).toBe('2022-07-08T09:10:11.000Z');
   });
 
   it('uploads a still and motion companion in one ordered multipart request', async () => {
@@ -172,16 +176,17 @@ describe('API client', () => {
     }
     vi.stubGlobal('XMLHttpRequest', FakeXHR);
     const client = createApiClient();
-    const still = new File(['still'], 'photo.heic', { type: 'image/heic' });
+    const still = new File(['still'], 'photo.heic', { type: 'image/heic', lastModified: Date.parse('2024-05-20T17:30:00.000Z') });
     const motion = new File(['motion'], 'photo.mov', { type: 'video/quicktime' });
     const progress: Array<{ loaded: number; total: number }> = [];
 
     await expect(client.uploadLivePhoto(still, motion, 'f_1', (value) => progress.push(value))).resolves.toMatchObject({ id: 'p_live' });
 
     expect(open).toHaveBeenCalledWith('POST', '/api/v1/photos/live-upload');
-    expect([...submitted!.keys()]).toEqual(['folder_id', 'conflict', 'file', 'motion']);
+    expect([...submitted!.keys()]).toEqual(['folder_id', 'conflict', 'file_modified_at', 'file', 'motion']);
     expect(submitted!.get('folder_id')).toBe('f_1');
     expect(submitted!.get('conflict')).toBe('reject');
+    expect(submitted!.get('file_modified_at')).toBe('2024-05-20T17:30:00.000Z');
     expect((submitted!.get('file') as File).name).toBe('photo.heic');
     expect((submitted!.get('motion') as File).name).toBe('photo.mov');
     expect(progress).toEqual([{ loaded: 10, total: 10 }]);
