@@ -75,6 +75,36 @@ describe('settings rescan progress', () => {
     expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100');
   });
 
+  it('uses the project-styled user picker for photo imports', async () => {
+    const member = { id: 'u2', username: 'family', role: 'user' as const, is_active: true };
+    const api = {
+      listUsers: vi.fn().mockResolvedValue({ items: [admin, member] }),
+    } as unknown as ApiClient;
+    await renderWith(api);
+
+    const trigger = container.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="目标用户"]');
+    expect(trigger).not.toBeNull();
+    expect(container.querySelector('select[aria-label="目标用户"]')).toBeNull();
+    expect(trigger?.textContent).toContain('admin');
+
+    await act(async () => {
+      trigger?.click();
+      await Promise.resolve();
+    });
+
+    const options = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+    expect(options.map((option) => option.textContent)).toEqual(expect.arrayContaining([expect.stringContaining('admin'), expect.stringContaining('family')]));
+
+    const familyOption = options.find((option) => option.textContent?.includes('family'));
+    await act(async () => {
+      familyOption?.click();
+      await Promise.resolve();
+    });
+
+    expect(trigger?.textContent).toContain('family');
+    expect(trigger?.getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('shows a failed terminal status and stops polling', async () => {
     const failed: RescanJob = { ...queued, status: 'failed', error: 'storage unavailable' };
     const getRescan = vi.fn().mockResolvedValue(failed);
