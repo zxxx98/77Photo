@@ -253,7 +253,35 @@ function PhotoTile({ photo, selectionMode, selected, onToggle, onSelect, selecte
   deselectedLabel: string;
 }) {
   const { t } = useI18n();
-  const [failed, setFailed] = useState(false);
+  const [previewMode, setPreviewMode] = useState<'thumbnail' | 'original' | 'failed'>('thumbnail');
+  const [thumbnailAttempt, setThumbnailAttempt] = useState(0);
+  const retryTimer = useRef<number | null>(null);
+  const failed = previewMode === 'failed';
+  const previewSource = previewMode === 'original'
+    ? `/api/v1/photos/${encodeURIComponent(photo.id)}/original`
+    : `/api/v1/photos/${encodeURIComponent(photo.id)}/thumbnail?size=256&retry=${thumbnailAttempt}`;
+
+  useEffect(() => () => {
+    if (retryTimer.current !== null) window.clearTimeout(retryTimer.current);
+  }, []);
+
+  function handlePreviewError() {
+    if (previewMode === 'thumbnail') {
+      if (thumbnailAttempt < thumbnailRetryLimit) {
+        if (retryTimer.current === null) {
+          retryTimer.current = window.setTimeout(() => {
+            retryTimer.current = null;
+            setThumbnailAttempt((attempt) => attempt + 1);
+          }, thumbnailRetryDelayMS);
+        }
+        return;
+      }
+      setPreviewMode('original');
+      return;
+    }
+    if (previewMode === 'original') setPreviewMode('failed');
+  }
+
   const activate = () => selectionMode ? onToggle(photo.id) : onSelect(photo);
   return (
     <figure
@@ -271,7 +299,7 @@ function PhotoTile({ photo, selectionMode, selected, onToggle, onSelect, selecte
       aria-pressed={selectionMode ? selected : undefined}
     >
       <div className={`photo-frame ${failed ? 'is-failed' : ''}`} style={selectionMode && selected ? selectedFrameStyle : undefined}>
-        {failed ? <span>{t('gallery.previewPending')}</span> : <img src={`/api/v1/photos/${encodeURIComponent(photo.id)}/thumbnail?size=256`} alt={photo.filename} loading="lazy" onError={() => setFailed(true)} />}
+        {failed ? <span>{t('gallery.previewPending')}</span> : <img src={previewSource} alt={photo.filename} loading="lazy" onError={handlePreviewError} />}
         {photo.is_live_photo && !failed && <span title="Live Photo" style={{ position: 'absolute', left: 9, top: 9, display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 999, padding: '5px 7px', background: 'rgba(32,37,45,.72)', color: '#fff', fontSize: 9, fontWeight: 700, letterSpacing: '.08em', pointerEvents: 'none' }}><CirclePlay size={12} /> LIVE</span>}
         {selectionMode && <span style={{ ...selectionBadgeStyle, ...(selected ? selectedBadgeStyle : {}) }} aria-hidden="true">{selected && <Check size={14} />}</span>}
       </div>
@@ -339,6 +367,9 @@ function gallerySelectionCopy(locale: 'zh' | 'en', formatCount: (value: number) 
     partialFailure: (count: number) => `${formatCount(count)} photos could not be deleted and remain selected.`,
   };
 }
+
+const thumbnailRetryLimit = 2;
+const thumbnailRetryDelayMS = 1000;
 
 const selectionBadgeStyle: CSSProperties = {
   position: 'absolute',
