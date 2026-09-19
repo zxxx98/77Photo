@@ -111,6 +111,17 @@
   object-fit: contain;
 }
 
+.immersive-viewer__live-media,
+.immersive-viewer__live-still {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.immersive-viewer__live-still:focus-visible {
+  outline: 2px solid rgba(255,255,255,.92);
+  outline-offset: -2px;
+}
+
 .immersive-viewer__nav {
   position: absolute;
   z-index: 2;
