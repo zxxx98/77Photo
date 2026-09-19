@@ -14,6 +14,7 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
+	"github.com/zxxx98/77Photo/internal/media"
 )
 
 const livePhotoPathPrefix = "/api/v1/live-photos/"
@@ -83,10 +84,17 @@ func (s *Service) AttachLiveVideo(ctx context.Context, principal acl.Principal, 
 	if photo.MIMEType != "image/jpeg" && photo.MIMEType != "image/png" && photo.MIMEType != "image/heic" && photo.MIMEType != "image/heif" {
 		return ErrInvalidLivePhoto
 	}
-	if !strings.EqualFold(filepath.Ext(strings.TrimSpace(input.Filename)), ".mov") {
-		return ErrUnsupportedMedia
-	}
-	if input.DeclaredMIME != "" && !strings.EqualFold(input.DeclaredMIME, "video/quicktime") && !strings.EqualFold(input.DeclaredMIME, "application/octet-stream") {
+	extension := strings.ToLower(filepath.Ext(strings.TrimSpace(input.Filename)))
+	switch extension {
+	case ".mov":
+		if input.DeclaredMIME != "" && !strings.EqualFold(input.DeclaredMIME, "video/quicktime") && !strings.EqualFold(input.DeclaredMIME, "application/octet-stream") {
+			return ErrUnsupportedMedia
+		}
+	case ".mp4":
+		if input.DeclaredMIME != "" && !strings.EqualFold(input.DeclaredMIME, "video/mp4") && !strings.EqualFold(input.DeclaredMIME, "application/octet-stream") {
+			return ErrUnsupportedMedia
+		}
+	default:
 		return ErrUnsupportedMedia
 	}
 
@@ -114,9 +122,17 @@ func (s *Service) AttachLiveVideo(ctx context.Context, principal acl.Principal, 
 		}
 		return fmt.Errorf("%w: %v", ErrUploadFailed, err)
 	}
-	if !looksLikeQuickTime(head) {
-		cleanup()
-		return ErrInvalidMedia
+	switch extension {
+	case ".mov":
+		if !looksLikeQuickTime(head) {
+			cleanup()
+			return ErrInvalidMedia
+		}
+	case ".mp4":
+		if _, inspectErr := media.InspectBytes(input.Filename, "video/mp4", head); inspectErr != nil {
+			cleanup()
+			return ErrInvalidMedia
+		}
 	}
 	if err := temporary.Sync(); err != nil {
 		cleanup()
@@ -349,8 +365,15 @@ func (h *LiveHTTPHandler) get(w http.ResponseWriter, r *http.Request, photoID st
 		h.writeError(w, r, err)
 		return
 	}
-	motionName := strings.TrimSuffix(photo.Filename, filepath.Ext(photo.Filename)) + ".mov"
-	w.Header().Set("Content-Type", motionMIME(path))
+	contentType := motionMIME(path)
+	motionExtension := ".mov"
+	if contentType == "video/mp4" {
+		motionExtension = ".mp4"
+	} else if contentType == "video/webm" {
+		motionExtension = ".webm"
+	}
+	motionName := strings.TrimSuffix(photo.Filename, filepath.Ext(photo.Filename)) + motionExtension
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": motionName}))
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.Header().Set("Vary", "Cookie, Authorization")
@@ -430,7 +453,7 @@ func (h *LiveHTTPHandler) writeError(w http.ResponseWriter, r *http.Request, err
 	case errors.Is(err, ErrUploadTooLarge):
 		writeError(w, r, http.StatusRequestEntityTooLarge, "UPLOAD_TOO_LARGE", "upload exceeds the configured maximum size", nil)
 	case errors.Is(err, ErrUnsupportedMedia):
-		writeError(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "live photo motion must be a MOV file", nil)
+		writeError(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "live photo motion must be a MOV or MP4 file", nil)
 	case errors.Is(err, ErrInvalidMedia), errors.Is(err, ErrInvalidLivePhoto):
 		writeError(w, r, http.StatusUnprocessableEntity, "INVALID_MEDIA", "live photo pair is invalid", nil)
 	default:
