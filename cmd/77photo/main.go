@@ -89,6 +89,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 		return fmt.Errorf("initialize thumbnail service: %w", err)
 	}
 	thumbnailService.SetMediaTools(mediaTools)
+	indexerService.SetThumbnailResetter(thumbnailService)
 	photoService.SetCacheInvalidator(thumbnailService)
 	photoService.SetThumbnailEnqueuer(thumbnailService)
 	thumbnailService.Start(ctx)
