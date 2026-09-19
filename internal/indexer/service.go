@@ -247,27 +247,48 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 		}
 	}
 
+	stillKeys := make(map[string]struct{})
+	for _, file := range files {
+		if !file.isMOV && file.inspection.Kind == media.KindStill {
+			stillKeys[mediaPairKey(file.storagePath)] = struct{}{}
+		}
+	}
+
+	// Keep MOV compatibility first, then consider same-basename MP4 files as
+	// motion companions only when a still exists in the same directory.
 	motionByKey := make(map[string][]scanFile)
 	for _, file := range files {
 		if file.isMOV {
-			motionByKey[mediaPairKey(file.storagePath)] = append(motionByKey[mediaPairKey(file.storagePath)], file)
+			key := mediaPairKey(file.storagePath)
+			motionByKey[key] = append(motionByKey[key], file)
 		}
 	}
+	mp4Candidates := make(map[string]scanFile)
+	for _, file := range files {
+		if file.isMOV || file.inspection.Kind != media.KindVideo || file.inspection.MIME != "video/mp4" {
+			continue
+		}
+		key := mediaPairKey(file.storagePath)
+		if _, ok := stillKeys[key]; !ok {
+			continue
+		}
+		motionByKey[key] = append(motionByKey[key], file)
+		mp4Candidates[file.storagePath] = file
+	}
+
+	pairedMP4 := make(map[string]struct{})
 	for _, file := range files {
 		if file.isMOV {
 			continue
 		}
-		added, indexErr := s.photos.IndexScannedFile(ctx, file.record.owner, file.record.id, file.storagePath)
-		if indexErr != nil {
-			s.increment(job, func(counts *Counts) { counts.Failed++ })
+		if _, candidate := mp4Candidates[file.storagePath]; candidate {
+			// Delay indexing until we know whether this MP4 is a live-photo
+			// companion. Failed pair validation falls back to a normal video.
 			continue
 		}
-		if added {
-			s.increment(job, func(counts *Counts) { counts.Added++ })
-		} else {
-			s.increment(job, func(counts *Counts) { counts.Updated++ })
+		if !s.indexScanFile(ctx, job, file, seen) {
+			continue
 		}
-		seen[file.storagePath] = struct{}{}
 		if file.inspection.Kind != media.KindStill {
 			continue
 		}
@@ -286,10 +307,20 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 			if openErr != nil {
 				continue
 			}
-			attachErr := s.photos.AttachLiveVideo(ctx, acl.Principal{UserID: file.record.owner, Role: acl.RoleAdmin}, photoID, photos.LiveVideoInput{Filename: filepath.Base(motion.storagePath), DeclaredMIME: "video/quicktime", Body: motionFile})
+			declaredMIME := "video/quicktime"
+			if !motion.isMOV {
+				declaredMIME = motion.inspection.MIME
+			}
+			attachErr := s.photos.AttachLiveVideo(ctx, acl.Principal{UserID: file.record.owner, Role: acl.RoleAdmin}, photoID, photos.LiveVideoInput{Filename: filepath.Base(motion.storagePath), DeclaredMIME: declaredMIME, Body: motionFile})
 			_ = motionFile.Close()
 			if attachErr == nil {
 				seen[motion.storagePath] = struct{}{}
+				if !motion.isMOV {
+					if err := s.markPairedCompanion(ctx, motion.storagePath); err != nil {
+						return fmt.Errorf("mark paired MP4 companion: %w", err)
+					}
+					pairedMP4[motion.storagePath] = struct{}{}
+				}
 				attached = true
 				break
 			}
@@ -300,6 +331,14 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 				_ = s.photos.RemoveLiveVideo(ctx, acl.Principal{UserID: file.record.owner, Role: acl.RoleAdmin}, photoID)
 			}
 		}
+	}
+
+	// A same-basename MP4 that failed motion validation remains a normal video.
+	for storagePath, file := range mp4Candidates {
+		if _, paired := pairedMP4[storagePath]; paired {
+			continue
+		}
+		s.indexScanFile(ctx, job, file, seen)
 	}
 
 	// SQLite is intentionally configured with a single pooled connection. Do
@@ -325,6 +364,30 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) indexScanFile(ctx context.Context, job *Job, file scanFile, seen map[string]struct{}) bool {
+	added, err := s.photos.IndexScannedFile(ctx, file.record.owner, file.record.id, file.storagePath)
+	if err != nil {
+		s.increment(job, func(counts *Counts) { counts.Failed++ })
+		return false
+	}
+	if added {
+		s.increment(job, func(counts *Counts) { counts.Added++ })
+	} else {
+		s.increment(job, func(counts *Counts) { counts.Updated++ })
+	}
+	seen[file.storagePath] = struct{}{}
+	return true
+}
+
+func (s *Service) markPairedCompanion(ctx context.Context, storagePath string) error {
+	_, err := s.db.ExecContext(ctx,
+		"UPDATE photos SET scan_status='paired', updated_at=? WHERE storage_path=? AND deleted_at IS NULL",
+		time.Now().UTC().Format(time.RFC3339Nano),
+		storagePath,
+	)
+	return err
 }
 
 func (s *Service) inspectScanFile(path, storagePath string) (media.Inspection, bool, error) {
