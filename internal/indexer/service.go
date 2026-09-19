@@ -80,13 +80,13 @@ type ThumbnailResetter interface {
 }
 
 type Service struct {
-	db         *sql.DB
-	storage    storage.Store
-	photos     *photos.Service
-	lifecycle  context.Context
-	mu         sync.RWMutex
-	job        *Job
-	done       chan struct{}
+	db               *sql.DB
+	storage          storage.Store
+	photos           *photos.Service
+	lifecycle        context.Context
+	mu               sync.RWMutex
+	job              *Job
+	done             chan struct{}
 	mediaTools       *media.Tools
 	thumbnailResetter ThumbnailResetter
 }
