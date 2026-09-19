@@ -24,6 +24,10 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.start(w, r)
 		return
 	}
+	if r.URL.Path == "/api/v1/admin/rescan/reset" && r.Method == http.MethodPost {
+		h.reset(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/admin/rescan/") && r.Method == http.MethodGet {
 		id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/admin/rescan/"), "/")
 		if id == "" || strings.Contains(id, "/") {
@@ -48,6 +52,25 @@ func (h *HTTPHandler) start(w http.ResponseWriter, r *http.Request) {
 	}
 	account := authenticated.Account
 	job, err := h.service.Start(r.Context(), acl.Principal{UserID: account.ID, Role: account.Role})
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, job)
+}
+
+func (h *HTTPHandler) reset(w http.ResponseWriter, r *http.Request) {
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
+		return
+	}
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
+		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid")
+		return
+	}
+	account := authenticated.Account
+	job, err := h.service.ResetAndStart(r.Context(), acl.Principal{UserID: account.ID, Role: account.Role})
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
