@@ -194,6 +194,10 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     thumbnailTotal: '总数',
     thumbnailProcessed: '已处理',
     thumbnailRegenerated: '已生成',
+    resetIndex: '重置并重新扫描',
+    resetHelp: '清空照片索引、缩略图缓存和 Live Photo 派生文件后，从磁盘原图重新建立图库。原始照片/视频、用户和文件夹不会被删除；已有照片分享链接会失效。',
+    resetConfirm: '这会清空所有照片索引、缩略图缓存和 Live Photo 派生文件，然后从原始文件重新扫描。原始照片和视频不会被删除。已有照片分享链接会失效。确定继续吗？',
+    resetFailed: '无法启动图库重置，请确认当前没有其他扫描任务后重试。',
     cleanupTitle: '坏照片清理',
     scanBroken: '扫描坏照片',
     scanningBroken: '正在扫描…',
@@ -244,6 +248,10 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     thumbnailTotal: 'Total',
     thumbnailProcessed: 'Processed',
     thumbnailRegenerated: 'Regenerated',
+    resetIndex: 'Reset and rescan',
+    resetHelp: 'Clears the photo index, thumbnail cache and Live Photo derived files, then rebuilds the library from originals on disk. Original media, users and folders are preserved; existing photo share links become invalid.',
+    resetConfirm: 'Clear all photo index records, thumbnail caches and Live Photo derived files, then rescan the originals? Original photos and videos will not be deleted. Existing photo share links will become invalid.',
+    resetFailed: 'Unable to start the library reset. Make sure no other scan is running and try again.',
     cleanupTitle: 'Broken photo cleanup',
     scanBroken: 'Scan broken photos',
     scanningBroken: 'Scanning…',
@@ -406,6 +414,22 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     }
   }
 
+  async function resetLibraryIndex() {
+    if (scanActive || thumbnailActive) return;
+    if (!window.confirm(copy.resetConfirm)) return;
+    setScanStarting(true);
+    setScanMessage(null);
+    setCleanupScan(null);
+    try {
+      setScanJob(await api.resetLibraryIndex());
+    } catch {
+      setScanJob(null);
+      setScanMessage(copy.resetFailed);
+    } finally {
+      setScanStarting(false);
+    }
+  }
+
   async function rebuildThumbnails() {
     if (thumbnailActive) return;
     if (thumbnailMode === 'full' && !window.confirm(copy.thumbnailConfirm)) return;
@@ -549,8 +573,12 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
 
       <div className="settings-section-heading scan-heading">
         <h2>{t('settings.libraryIndex')}</h2>
-        <button className="button button-secondary" disabled={scanActive} onClick={() => void rescan()}><RefreshCw size={15} /> {t('settings.rescanFiles')}</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button className="button button-secondary" disabled={scanActive} onClick={() => void rescan()}><RefreshCw size={15} /> {t('settings.rescanFiles')}</button>
+          <button className="button button-secondary" disabled={scanActive || thumbnailActive} onClick={() => void resetLibraryIndex()}><Trash2 size={15} /> {copy.resetIndex}</button>
+        </div>
       </div>
+      <p className="inline-state">{copy.resetHelp}</p>
       {scanMessage && <p className="inline-state" role="alert">{scanMessage}</p>}
       {scanJob && counts && <div className="scan-progress" role="status" aria-live="polite">
         <div className="scan-progress-heading"><span>{scanStatusLabel}</span><span>{formatCount(counts.scanned)}</span></div>
