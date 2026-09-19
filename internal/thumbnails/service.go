@@ -196,7 +196,6 @@ func (s *Service) Invalidate(_ context.Context, photoID string) error {
 	return nil
 }
 
-
 // WaitIdle blocks until queued and in-flight thumbnail work has drained.
 // Reset flows use this after removing photo rows so stale workers cannot
 // recreate cache entries after the cache directory is cleared.
