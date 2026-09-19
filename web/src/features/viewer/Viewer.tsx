@@ -264,18 +264,30 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
 }
 
 function LivePhotoMedia({ photo, previewURL }: { photo: Photo; previewURL: string }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(true);
 
-  function replay() {
-    const video = videoRef.current;
-    if (!video) return;
-    video.currentTime = 0;
-    void video.play().catch(() => undefined);
+  if (!playing) {
+    return (
+      <img
+        className="immersive-viewer__live-still"
+        src={previewURL}
+        alt={photo.filename}
+        role="button"
+        tabIndex={0}
+        title="Live Photo · click to replay"
+        onClick={() => setPlaying(true)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setPlaying(true);
+          }
+        }}
+      />
+    );
   }
 
   return (
     <video
-      ref={videoRef}
       className="immersive-viewer__live-media"
       src={`/api/v1/live-photos/${encodeURIComponent(photo.id)}`}
       poster={previewURL}
@@ -283,9 +295,11 @@ function LivePhotoMedia({ photo, previewURL }: { photo: Photo; previewURL: strin
       muted
       playsInline
       preload="auto"
-      onClick={replay}
+      onEnded={() => setPlaying(false)}
+      onError={() => setPlaying(false)}
+      onClick={() => setPlaying(false)}
       aria-label={photo.filename}
-      title="Live Photo · click to replay"
+      title="Live Photo"
     />
   );
 }
