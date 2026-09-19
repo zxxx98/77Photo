@@ -415,7 +415,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   }
 
   async function resetLibraryIndex() {
-    if (scanActive || thumbnailActive) return;
+    if (scanActive || thumbnailActive || importActive || cleanupBusy) return;
     if (!window.confirm(copy.resetConfirm)) return;
     setScanStarting(true);
     setScanMessage(null);
@@ -431,7 +431,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   }
 
   async function rebuildThumbnails() {
-    if (thumbnailActive) return;
+    if (thumbnailActive || scanActive) return;
     if (thumbnailMode === 'full' && !window.confirm(copy.thumbnailConfirm)) return;
     setThumbnailStarting(true);
     setThumbnailMessage(null);
@@ -545,15 +545,15 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
 
       <div className="settings-section-heading scan-heading"><h2>{copy.importTitle}</h2><FolderInput size={17} /></div>
       <form className="new-user-form" onSubmit={startImport}>
-        <input aria-label={copy.importSource} placeholder="." value={importSource} onChange={(event) => setImportSource(event.target.value)} disabled={importActive} />
+        <input aria-label={copy.importSource} placeholder="." value={importSource} onChange={(event) => setImportSource(event.target.value)} disabled={importActive || scanActive} />
         <UserPicker
           users={users.filter((user) => user.is_active)}
           value={importUserID}
           label={copy.targetUser}
-          disabled={importActive}
+          disabled={importActive || scanActive}
           onChange={setImportUserID}
         />
-        <button className="button button-secondary" disabled={importActive || !importUserID}>{importActive ? copy.importing : copy.startImport}</button>
+        <button className="button button-secondary" disabled={importActive || scanActive || !importUserID}>{importActive ? copy.importing : copy.startImport}</button>
       </form>
       <p className="inline-state">{copy.importSourceHelp}</p>
       <p className="inline-state">{copy.importWarning}</p>
@@ -574,8 +574,8 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
       <div className="settings-section-heading scan-heading">
         <h2>{t('settings.libraryIndex')}</h2>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button className="button button-secondary" disabled={scanActive} onClick={() => void rescan()}><RefreshCw size={15} /> {t('settings.rescanFiles')}</button>
-          <button className="button button-secondary" disabled={scanActive || thumbnailActive} onClick={() => void resetLibraryIndex()}><Trash2 size={15} /> {copy.resetIndex}</button>
+          <button className="button button-secondary" disabled={scanActive || importActive} onClick={() => void rescan()}><RefreshCw size={15} /> {t('settings.rescanFiles')}</button>
+          <button className="button button-secondary" disabled={scanActive || thumbnailActive || importActive || cleanupBusy} onClick={() => void resetLibraryIndex()}><Trash2 size={15} /> {copy.resetIndex}</button>
         </div>
       </div>
       <p className="inline-state">{copy.resetHelp}</p>
@@ -602,18 +602,18 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
               type="button"
               className={`thumbnail-mode-button ${thumbnailMode === 'incremental' ? 'is-selected' : ''}`}
               aria-pressed={thumbnailMode === 'incremental'}
-              disabled={thumbnailActive}
+              disabled={thumbnailActive || scanActive}
               onClick={() => setThumbnailMode('incremental')}
             >{copy.thumbnailIncremental}</button>
             <button
               type="button"
               className={`thumbnail-mode-button ${thumbnailMode === 'full' ? 'is-selected' : ''}`}
               aria-pressed={thumbnailMode === 'full'}
-              disabled={thumbnailActive}
+              disabled={thumbnailActive || scanActive}
               onClick={() => setThumbnailMode('full')}
             >{copy.thumbnailFull}</button>
           </div>
-          <button className="button button-secondary" disabled={thumbnailActive} onClick={() => void rebuildThumbnails()}><ImageIcon size={15} /> {thumbnailActive ? copy.rebuildingThumbnails : copy.rebuildThumbnails}</button>
+          <button className="button button-secondary" disabled={thumbnailActive || scanActive} onClick={() => void rebuildThumbnails()}><ImageIcon size={15} /> {thumbnailActive ? copy.rebuildingThumbnails : copy.rebuildThumbnails}</button>
         </div>
       </div>
       <p className="inline-state">{thumbnailMode === 'incremental' ? copy.thumbnailIncrementalHelp : copy.thumbnailFullHelp}</p>
@@ -635,8 +635,8 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
       <div className="settings-section-heading scan-heading">
         <h2>{copy.cleanupTitle}</h2>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button className="button button-secondary" disabled={cleanupBusy} onClick={() => void scanBrokenPhotos()}><RefreshCw size={15} /> {cleanupBusy ? copy.scanningBroken : copy.scanBroken}</button>
-          {cleanupScan && cleanupScan.broken > 0 && <button className="button button-secondary" disabled={cleanupBusy} onClick={() => void cleanupBrokenPhotos()}><Trash2 size={15} /> {cleanupBusy ? copy.cleaningBroken : copy.cleanupBroken(cleanupScan.broken)}</button>}
+          <button className="button button-secondary" disabled={cleanupBusy || scanActive} onClick={() => void scanBrokenPhotos()}><RefreshCw size={15} /> {cleanupBusy ? copy.scanningBroken : copy.scanBroken}</button>
+          {cleanupScan && cleanupScan.broken > 0 && <button className="button button-secondary" disabled={cleanupBusy || scanActive} onClick={() => void cleanupBrokenPhotos()}><Trash2 size={15} /> {cleanupBusy ? copy.cleaningBroken : copy.cleanupBroken(cleanupScan.broken)}</button>}
         </div>
       </div>
       <p className="inline-state">{copy.cleanupWarning}</p>
