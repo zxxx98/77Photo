@@ -397,7 +397,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
   .menu-button { flex: 0 0 40px; }
   .scrim { position: fixed; z-index: 9; inset: 0; border: 0; background: rgba(61,74,92,.2); opacity: 0; pointer-events: none; }
   .scrim.is-visible { opacity: 1; pointer-events: auto; }
-  .mobile-nav { position: fixed; z-index: 8; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); padding: 8px 10px max(8px, env(safe-area-inset-bottom)); background: rgba(250,249,247,.95); }
+  .mobile-nav { position: fixed; z-index: 8; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); padding: 8px 10px max(8px, env(safe-area-inset-bottom)); background: rgba(250,249,247,.95); }
   .mobile-nav-item { min-height: 44px; display: grid; place-items: center; gap: 3px; border: 0; border-radius: 13px; color: var(--slate-soft); background: transparent; font-size: 10px; }
   .mobile-nav-item.is-active { color: var(--slate); background: rgba(212,165,165,.16); }
   .content-scroll { padding-bottom: 110px; }
