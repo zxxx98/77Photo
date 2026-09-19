@@ -1,22 +1,11 @@
-# Android E2E flows
+# Android acceptance flows
 
-These Maestro flows require an Android 12+ emulator or device and a running
-77Photo server reachable from it. The server fixture used by the login and
-upload flows must contain an administrator account, a writable folder named
-`旅行`, and a media item named `photo-1.jpg`.
+These flows use a running 77Photo fixture server reachable as `photo.test` from
+the Android emulator. Start the server and seed `admin` with the test password
+before running `maestro test e2e/maestro`.
 
-Run from `mobile/`:
-
-```sh
-maestro test e2e/maestro
-```
-
-`login-gallery.yaml` covers server setup, mobile login, gallery navigation and
-the media viewer. `background-upload.yaml` repeats the login setup so it can be
-run independently, then covers the Photo Picker, folder selection, notification
-actions and completion. `lan-http.yaml` is a policy smoke test: a private IP
-displays the explicit unencrypted-LAN warning, while a public HTTP address is
-rejected before credentials or media requests are made.
-
-The flows assume the emulator locale is Simplified Chinese. Run the same
-matrix with English locale before a release because labels are localized.
+The LAN flow uses the emulator's test network. It verifies that HTTP is offered
+only for an IP in the configured private ranges and is rejected for a public IP.
+The background flow also requires an Android 13+ emulator with notification
+permission granted; repeat it once with permission denied to verify the in-app
+limitation message.
