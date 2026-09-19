@@ -71,6 +71,39 @@ func jpegBytes(t *testing.T, width, height int) []byte {
 	return buf.Bytes()
 }
 
+func TestUploadAcceptsGenericMIMEForJPEG(t *testing.T) {
+	fixture := newUploadFixture(t, 1<<20)
+	data := jpegBytes(t, 3, 2)
+	photo, err := fixture.service.Upload(context.Background(), fixture.principal, UploadInput{
+		FolderID: fixture.folderID,
+		Filename: "MVIMG_0001.jpg",
+		DeclaredMIME: "application/octet-stream",
+		Body: bytes.NewReader(data),
+	})
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+	if photo.MIMEType != "image/jpeg" {
+		t.Fatalf("MIMEType = %q, want image/jpeg", photo.MIMEType)
+	}
+}
+
+func TestUploadAcceptsEmptyMIMEForJPEG(t *testing.T) {
+	fixture := newUploadFixture(t, 1<<20)
+	data := jpegBytes(t, 3, 2)
+	photo, err := fixture.service.Upload(context.Background(), fixture.principal, UploadInput{
+		FolderID: fixture.folderID,
+		Filename: "MVIMG_0002.jpg",
+		Body: bytes.NewReader(data),
+	})
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+	if photo.MIMEType != "image/jpeg" {
+		t.Fatalf("MIMEType = %q, want image/jpeg", photo.MIMEType)
+	}
+}
+
 func TestUploadStoresOriginalAndIndexesMetadata(t *testing.T) {
 	fixture := newUploadFixture(t, 1<<20)
 	data := jpegBytes(t, 3, 2)
