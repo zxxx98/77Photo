@@ -106,6 +106,50 @@ describe('settings rescan progress', () => {
     expect(trigger?.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('offers incremental and full thumbnail rebuild modes and defaults to incremental', async () => {
+    const thumbnailJob = {
+      id: 'tr_1',
+      mode: 'incremental' as const,
+      status: 'completed' as const,
+      started_at: '2026-09-18T01:00:00Z',
+      finished_at: '2026-09-18T01:00:01Z',
+      counts: { total: 1, processed: 1, regenerated: 1, failed: 0 },
+    };
+    const startThumbnailRebuild = vi.fn().mockResolvedValue(thumbnailJob);
+    const getThumbnailRebuild = vi.fn().mockResolvedValue(thumbnailJob);
+    const api = {
+      listUsers: vi.fn().mockResolvedValue({ items: [] }),
+      startThumbnailRebuild,
+      getThumbnailRebuild,
+    } as unknown as ApiClient;
+    await renderWith(api);
+
+    const modeGroup = container.querySelector('[role="group"][aria-label="重建方式"]');
+    expect(modeGroup).not.toBeNull();
+    const incremental = Array.from(modeGroup?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+      .find((button) => button.textContent?.includes('增量'));
+    const full = Array.from(modeGroup?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+      .find((button) => button.textContent?.includes('全量'));
+    expect(incremental?.getAttribute('aria-pressed')).toBe('true');
+    expect(full?.getAttribute('aria-pressed')).toBe('false');
+
+    const rebuildButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.includes('重新生成缩略图'));
+    await act(async () => {
+      rebuildButton?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(startThumbnailRebuild).toHaveBeenCalledWith('incremental');
+
+    await act(async () => {
+      full?.click();
+      await Promise.resolve();
+    });
+    expect(full?.getAttribute('aria-pressed')).toBe('true');
+    expect(incremental?.getAttribute('aria-pressed')).toBe('false');
+  });
+
   it('previews broken photos before confirmed cleanup', async () => {
     const scanBrokenPhotos = vi.fn()
       .mockResolvedValueOnce({
