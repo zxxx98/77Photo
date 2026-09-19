@@ -73,19 +73,34 @@ func TestLivePhotoMotionRejectsInvalidMedia(t *testing.T) {
 	}
 }
 
-func TestLivePhotoMotionRejectsMP4Companion(t *testing.T) {
+func TestLivePhotoMotionAcceptsMP4Companion(t *testing.T) {
 	fixture := newUploadFixture(t, 1<<20)
 	ctx := context.Background()
 	photo, err := fixture.service.Upload(ctx, fixture.principal, UploadInput{
-		FolderID: fixture.folderID, Filename: "IMG_0004.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(jpegBytes(t, 2, 2)),
+		FolderID: fixture.folderID, Filename: "MVIMG_0004.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(jpegBytes(t, 2, 2)),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	motion := ftypBytesForPhoto("isom")
 	if err := fixture.service.AttachLiveVideo(ctx, fixture.principal, photo.ID, LiveVideoInput{
-		Filename: "IMG_0004.mov", DeclaredMIME: "video/quicktime", Body: bytes.NewReader(ftypBytesForPhoto("isom")),
-	}); !errors.Is(err, ErrInvalidMedia) {
-		t.Fatalf("AttachLiveVideo(MP4 companion) error = %v, want ErrInvalidMedia", err)
+		Filename: "MVIMG_0004.mp4", DeclaredMIME: "video/mp4", Body: bytes.NewReader(motion),
+	}); err != nil {
+		t.Fatalf("AttachLiveVideo(MP4 companion) error = %v", err)
+	}
+	_, path, err := fixture.service.LiveVideoPath(ctx, fixture.principal, photo.ID)
+	if err != nil {
+		t.Fatalf("LiveVideoPath() error = %v", err)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored, motion) {
+		t.Fatal("stored MP4 live motion differs from upload")
+	}
+	if got := motionMIME(path); got != "video/mp4" {
+		t.Fatalf("motionMIME() = %q, want video/mp4", got)
 	}
 }
 

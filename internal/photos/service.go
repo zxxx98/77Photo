@@ -596,6 +596,10 @@ func streamToFile(destination *os.File, source io.Reader, maxSize int64) ([32]by
 }
 
 func detectAndValidateMIME(declared, filename string, head []byte) string {
+	declared = strings.TrimSpace(declared)
+	if declared == "" || strings.EqualFold(declared, "application/octet-stream") {
+		declared = media.MIMEForExtension(filename)
+	}
 	inspection, err := media.InspectBytes(filename, declared, head)
 	if err != nil {
 		return ""
