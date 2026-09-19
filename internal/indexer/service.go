@@ -249,7 +249,7 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 
 	stillKeys := make(map[string]struct{})
 	for _, file := range files {
-		if !file.isMOV && file.inspection.Kind == media.KindStill {
+		if !file.isMOV && file.inspection.Kind == media.KindStill && supportsMP4MotionPair(file.inspection.MIME) {
 			stillKeys[mediaPairKey(file.storagePath)] = struct{}{}
 		}
 	}
@@ -415,6 +415,15 @@ func (s *Service) photoID(ctx context.Context, storagePath string) (string, erro
 	var id string
 	err := s.db.QueryRowContext(ctx, "SELECT id FROM photos WHERE storage_path=? AND deleted_at IS NULL", storagePath).Scan(&id)
 	return id, err
+}
+
+func supportsMP4MotionPair(mimeType string) bool {
+	switch mimeType {
+	case "image/jpeg", "image/heic", "image/heif":
+		return true
+	default:
+		return false
+	}
 }
 
 func mediaPairKey(storagePath string) string {
