@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	nativewebp "github.com/HugoSmits86/nativewebp"
 	"github.com/zxxx98/77Photo/internal/media"
@@ -191,6 +192,43 @@ func (s *Service) Invalidate(_ context.Context, photoID string) error {
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("invalidate thumbnail cache: %w", err)
 		}
+	}
+	return nil
+}
+
+
+// WaitIdle blocks until queued and in-flight thumbnail work has drained.
+// Reset flows use this after removing photo rows so stale workers cannot
+// recreate cache entries after the cache directory is cleared.
+func (s *Service) WaitIdle(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		s.mu.Lock()
+		pending := len(s.pending)
+		s.mu.Unlock()
+		if pending == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// ResetAll removes all generated thumbnail variants while preserving originals.
+func (s *Service) ResetAll(_ context.Context) error {
+	path := filepath.Join(s.cacheRoot, "thumbnails")
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("reset thumbnail cache: %w", err)
+	}
+	if err := os.MkdirAll(path, 0o750); err != nil {
+		return fmt.Errorf("recreate thumbnail cache: %w", err)
 	}
 	return nil
 }
