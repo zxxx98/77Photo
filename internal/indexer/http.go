@@ -69,6 +69,13 @@ func (h *HTTPHandler) reset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid")
 		return
 	}
+	var input struct {
+		Confirm bool `json:"confirm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil || !input.Confirm {
+		writeError(w, r, http.StatusBadRequest, "RESET_CONFIRM_REQUIRED", "explicit reset confirmation is required")
+		return
+	}
 	account := authenticated.Account
 	job, err := h.service.ResetAndStart(r.Context(), acl.Principal{UserID: account.ID, Role: account.Role})
 	if err != nil {
