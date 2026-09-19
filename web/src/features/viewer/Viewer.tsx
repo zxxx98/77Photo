@@ -157,7 +157,7 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
           <div className="immersive-viewer__media-wrap" onTouchStart={(event) => { touchStart.current = event.touches[0]?.clientX ?? null; }} onTouchEnd={touchEnd}>
             <div className="immersive-viewer__media">
               {photo.is_live_photo ? (
-                <video key={photo.id} src={`/api/v1/live-photos/${encodeURIComponent(photo.id)}`} poster={previewURL} controls playsInline preload="metadata" />
+                <LivePhotoMedia key={photo.id} photo={photo} previewURL={previewURL} />
               ) : photo.mime_type.startsWith('video/') ? (
                 <video key={photo.id} src={previewURL} controls playsInline preload="metadata" />
               ) : (
@@ -260,6 +260,33 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
 
       {shareOpen && <ShareDialog api={api} resource={{ type: 'photo', id: photo.id, name: photo.filename }} onClose={() => setShareOpen(false)} />}
     </div>
+  );
+}
+
+function LivePhotoMedia({ photo, previewURL }: { photo: Photo; previewURL: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  function replay() {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = 0;
+    void video.play().catch(() => undefined);
+  }
+
+  return (
+    <video
+      ref={videoRef}
+      className="immersive-viewer__live-media"
+      src={`/api/v1/live-photos/${encodeURIComponent(photo.id)}`}
+      poster={previewURL}
+      autoPlay
+      muted
+      playsInline
+      preload="auto"
+      onClick={replay}
+      aria-label={photo.filename}
+      title="Live Photo · click to replay"
+    />
   );
 }
 
