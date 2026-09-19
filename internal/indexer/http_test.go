@@ -50,6 +50,47 @@ func TestHTTPRescanRequiresAdminAndReturnsJob(t *testing.T) {
 	}
 }
 
+func TestHTTPResetRequiresExplicitConfirmation(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mobile, err := authService.CreateMobileSession(ctx, admin.ID, auth.MobileDeviceInput{Name: "Pixel", Platform: "android", AppVersion: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(db, store, photos.NewService(db, store, 1<<20))
+	handler := NewHTTPHandler(service, authService)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/rescan/reset", strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer "+mobile.AccessToken)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("unconfirmed reset status = %d: %s", res.Code, res.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/rescan/reset", strings.NewReader(`{"confirm":true}`))
+	req.Header.Set("Authorization", "Bearer "+mobile.AccessToken)
+	res = httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("confirmed reset status = %d: %s", res.Code, res.Body.String())
+	}
+	service.Wait()
+}
+
 func TestHTTPRescanConflictIncludesExistingJobID(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/rescan", nil)
 	response := httptest.NewRecorder()
