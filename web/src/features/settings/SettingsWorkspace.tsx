@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useId, useRef, useState } from 'react';
 import { Check, ChevronDown, FolderInput, ImageIcon, RefreshCw, ShieldCheck, Trash2, UserRound } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
-import type { ApiClient, BrokenPhotoScanResult, ImportJob, RescanJob, ThumbnailRebuildJob, User } from '../../app/api';
+import type { ApiClient, BrokenPhotoScanResult, ImportJob, RescanJob, ThumbnailRebuildJob, ThumbnailRebuildMode, User } from '../../app/api';
 
 type UserPickerProps = {
   users: User[];
@@ -147,6 +147,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   const [thumbnailMessage, setThumbnailMessage] = useState<string | null>(null);
   const [thumbnailJob, setThumbnailJob] = useState<ThumbnailRebuildJob | null>(null);
   const [thumbnailStarting, setThumbnailStarting] = useState(false);
+  const [thumbnailMode, setThumbnailMode] = useState<ThumbnailRebuildMode>('incremental');
   const [importSource, setImportSource] = useState('.');
   const [importUserID, setImportUserID] = useState(currentUser.id);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -178,12 +179,17 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     thumbnailTitle: '缩略图缓存',
     rebuildThumbnails: '重新生成缩略图',
     rebuildingThumbnails: '正在重新生成…',
+    thumbnailModeLabel: '重建方式',
+    thumbnailIncremental: '增量',
+    thumbnailFull: '全量',
+    thumbnailIncrementalHelp: '仅处理缺失缩略图的照片，已有完整缓存会直接跳过。',
+    thumbnailFullHelp: '删除已有缩略图缓存，并为全部支持的照片和视频重新生成三档缩略图。',
     thumbnailQueued: '缩略图重建已排队…',
     thumbnailComplete: '缩略图重建完成',
     thumbnailFailed: '缩略图重建失败',
     thumbnailStartFailed: '无法启动缩略图重建。',
     thumbnailPollFailed: '无法读取缩略图重建进度，正在重试…',
-    thumbnailWarning: '会逐张删除旧缓存并重新生成 256、512、1280 三档缩略图。原图不会被修改。',
+    thumbnailWarning: '原图不会被修改。增量模式适合日常补齐缓存；全量模式适合缩略图规则变更或缓存异常后的彻底重建。',
     thumbnailConfirm: '重新生成全部缩略图可能需要较长时间，确定继续吗？',
     thumbnailTotal: '总数',
     thumbnailProcessed: '已处理',
@@ -223,12 +229,17 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     thumbnailTitle: 'Thumbnail cache',
     rebuildThumbnails: 'Regenerate thumbnails',
     rebuildingThumbnails: 'Regenerating…',
+    thumbnailModeLabel: 'Rebuild mode',
+    thumbnailIncremental: 'Incremental',
+    thumbnailFull: 'Full',
+    thumbnailIncrementalHelp: 'Only repairs photos with missing thumbnail variants. Complete caches are skipped.',
+    thumbnailFullHelp: 'Deletes existing thumbnail caches and rebuilds all three sizes for every supported photo and video.',
     thumbnailQueued: 'Thumbnail rebuild queued…',
     thumbnailComplete: 'Thumbnail rebuild complete',
     thumbnailFailed: 'Thumbnail rebuild failed',
     thumbnailStartFailed: 'Unable to start the thumbnail rebuild.',
     thumbnailPollFailed: 'Unable to read thumbnail rebuild progress. Retrying…',
-    thumbnailWarning: 'Rebuilds the 256, 512 and 1280 thumbnail variants one photo at a time. Original media is never modified.',
+    thumbnailWarning: 'Original media is never modified. Use incremental mode for routine cache repair and full mode after thumbnail rule changes or cache corruption.',
     thumbnailConfirm: 'Regenerating every thumbnail can take a while. Continue?',
     thumbnailTotal: 'Total',
     thumbnailProcessed: 'Processed',
@@ -396,11 +407,12 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   }
 
   async function rebuildThumbnails() {
-    if (thumbnailActive || !window.confirm(copy.thumbnailConfirm)) return;
+    if (thumbnailActive) return;
+    if (thumbnailMode === 'full' && !window.confirm(copy.thumbnailConfirm)) return;
     setThumbnailStarting(true);
     setThumbnailMessage(null);
     try {
-      setThumbnailJob(await api.startThumbnailRebuild());
+      setThumbnailJob(await api.startThumbnailRebuild(thumbnailMode));
     } catch {
       setThumbnailJob(null);
       setThumbnailMessage(copy.thumbnailStartFailed);
@@ -556,8 +568,27 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
 
       <div className="settings-section-heading scan-heading">
         <h2>{copy.thumbnailTitle}</h2>
-        <button className="button button-secondary" disabled={thumbnailActive} onClick={() => void rebuildThumbnails()}><ImageIcon size={15} /> {thumbnailActive ? copy.rebuildingThumbnails : copy.rebuildThumbnails}</button>
+        <div className="thumbnail-actions">
+          <div className="thumbnail-mode-toggle" role="group" aria-label={copy.thumbnailModeLabel}>
+            <button
+              type="button"
+              className={`thumbnail-mode-button ${thumbnailMode === 'incremental' ? 'is-selected' : ''}`}
+              aria-pressed={thumbnailMode === 'incremental'}
+              disabled={thumbnailActive}
+              onClick={() => setThumbnailMode('incremental')}
+            >{copy.thumbnailIncremental}</button>
+            <button
+              type="button"
+              className={`thumbnail-mode-button ${thumbnailMode === 'full' ? 'is-selected' : ''}`}
+              aria-pressed={thumbnailMode === 'full'}
+              disabled={thumbnailActive}
+              onClick={() => setThumbnailMode('full')}
+            >{copy.thumbnailFull}</button>
+          </div>
+          <button className="button button-secondary" disabled={thumbnailActive} onClick={() => void rebuildThumbnails()}><ImageIcon size={15} /> {thumbnailActive ? copy.rebuildingThumbnails : copy.rebuildThumbnails}</button>
+        </div>
       </div>
+      <p className="inline-state">{thumbnailMode === 'incremental' ? copy.thumbnailIncrementalHelp : copy.thumbnailFullHelp}</p>
       <p className="inline-state">{copy.thumbnailWarning}</p>
       {thumbnailMessage && <p className="inline-state" role="alert">{thumbnailMessage}</p>}
       {thumbnailJob && thumbnailCounts && <div className="scan-progress" role="status" aria-live="polite">
