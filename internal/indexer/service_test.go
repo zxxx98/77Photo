@@ -23,6 +23,21 @@ import (
 	"github.com/zxxx98/77Photo/internal/storage"
 )
 
+type resetTrackingThumbnail struct {
+	waited bool
+	reset  bool
+}
+
+func (r *resetTrackingThumbnail) WaitIdle(context.Context) error {
+	r.waited = true
+	return nil
+}
+
+func (r *resetTrackingThumbnail) ResetAll(context.Context) error {
+	r.reset = true
+	return nil
+}
+
 type scannerMediaRunner struct{}
 
 func (scannerMediaRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
@@ -507,6 +522,101 @@ func TestRescanMarksMissingWithoutDeadlock(t *testing.T) {
 	}
 	if status != "missing" {
 		t.Fatalf("scan status = %q, want missing", status)
+	}
+}
+
+func TestResetAndStartRebuildsIndexWithoutDeletingOriginals(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := folders.NewService(db, store).Create(ctx, principal, folders.CreateInput{Name: "imports"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalPath, err := store.ResolvePath(filepath.Join(folder.StoragePath, "keep.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(originalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jpeg.Encode(file, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	photoService := photos.NewService(db, store, 1<<20)
+	service := NewService(db, store, photoService)
+	first, err := service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, first.ID)
+
+	var oldID string
+	if err := db.QueryRowContext(ctx, "SELECT id FROM photos WHERE filename='keep.jpg'").Scan(&oldID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO share_links (id, resource_type, resource_id, token_hash, created_at, updated_at) VALUES ('sl_reset', 'photo', ?, 'reset-token-hash', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')", oldID); err != nil {
+		t.Fatal(err)
+	}
+	livePath, err := store.ResolvePath(filepath.ToSlash(filepath.Join(".77photo", "live", oldID+".motion")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(livePath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(livePath, []byte("stale-motion"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	thumbnailReset := &resetTrackingThumbnail{}
+	service.SetThumbnailResetter(thumbnailReset)
+	resetJob, err := service.ResetAndStart(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, resetJob.ID)
+
+	if _, err := os.Stat(originalPath); err != nil {
+		t.Fatalf("original media must remain on disk: %v", err)
+	}
+	var newID string
+	if err := db.QueryRowContext(ctx, "SELECT id FROM photos WHERE filename='keep.jpg' AND scan_status='indexed'").Scan(&newID); err != nil {
+		t.Fatal(err)
+	}
+	if newID == oldID {
+		t.Fatalf("photo id = %q, want a rebuilt index row", newID)
+	}
+	var shareLinks int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM share_links WHERE resource_type='photo'").Scan(&shareLinks); err != nil {
+		t.Fatal(err)
+	}
+	if shareLinks != 0 {
+		t.Fatalf("photo share links = %d, want 0", shareLinks)
+	}
+	if _, err := os.Stat(livePath); !os.IsNotExist(err) {
+		t.Fatalf("stale live artifact still exists: %v", err)
+	}
+	if !thumbnailReset.waited || !thumbnailReset.reset {
+		t.Fatalf("thumbnail reset calls = waited:%v reset:%v, want both true", thumbnailReset.waited, thumbnailReset.reset)
 	}
 }
 

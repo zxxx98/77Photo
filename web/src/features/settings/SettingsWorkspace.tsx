@@ -194,6 +194,10 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     thumbnailTotal: '总数',
     thumbnailProcessed: '已处理',
     thumbnailRegenerated: '已生成',
+    resetIndex: '重置并重新扫描',
+    resetHelp: '清空照片索引、缩略图缓存和 Live Photo 派生文件后，从磁盘原图重新建立图库。原始照片/视频、用户和文件夹不会被删除；已有照片分享链接会失效。',
+    resetConfirm: '这会清空所有照片索引、缩略图缓存和 Live Photo 派生文件，然后从原始文件重新扫描。原始照片和视频不会被删除。已有照片分享链接会失效。确定继续吗？',
+    resetFailed: '无法启动图库重置，请确认当前没有其他扫描任务后重试。',
     cleanupTitle: '坏照片清理',
     scanBroken: '扫描坏照片',
     scanningBroken: '正在扫描…',
@@ -244,6 +248,10 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     thumbnailTotal: 'Total',
     thumbnailProcessed: 'Processed',
     thumbnailRegenerated: 'Regenerated',
+    resetIndex: 'Reset and rescan',
+    resetHelp: 'Clears the photo index, thumbnail cache and Live Photo derived files, then rebuilds the library from originals on disk. Original media, users and folders are preserved; existing photo share links become invalid.',
+    resetConfirm: 'Clear all photo index records, thumbnail caches and Live Photo derived files, then rescan the originals? Original photos and videos will not be deleted. Existing photo share links will become invalid.',
+    resetFailed: 'Unable to start the library reset. Make sure no other scan is running and try again.',
     cleanupTitle: 'Broken photo cleanup',
     scanBroken: 'Scan broken photos',
     scanningBroken: 'Scanning…',
@@ -393,7 +401,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   }
 
   async function rescan() {
-    if (scanActive) return;
+    if (scanActive || importActive) return;
     setScanStarting(true);
     setScanMessage(null);
     try {
@@ -406,8 +414,24 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     }
   }
 
+  async function resetLibraryIndex() {
+    if (scanActive || thumbnailActive || importActive || cleanupBusy) return;
+    if (!window.confirm(copy.resetConfirm)) return;
+    setScanStarting(true);
+    setScanMessage(null);
+    setCleanupScan(null);
+    try {
+      setScanJob(await api.resetLibraryIndex());
+    } catch {
+      setScanJob(null);
+      setScanMessage(copy.resetFailed);
+    } finally {
+      setScanStarting(false);
+    }
+  }
+
   async function rebuildThumbnails() {
-    if (thumbnailActive) return;
+    if (thumbnailActive || scanActive) return;
     if (thumbnailMode === 'full' && !window.confirm(copy.thumbnailConfirm)) return;
     setThumbnailStarting(true);
     setThumbnailMessage(null);
@@ -422,7 +446,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   }
 
   async function scanBrokenPhotos() {
-    if (cleanupBusy) return;
+    if (cleanupBusy || scanActive) return;
     setCleanupBusy(true);
     setCleanupMessage(null);
     try {
@@ -438,7 +462,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   }
 
   async function cleanupBrokenPhotos() {
-    if (cleanupBusy || !cleanupScan?.broken || !window.confirm(copy.cleanupConfirm(cleanupScan.broken))) return;
+    if (cleanupBusy || scanActive || !cleanupScan?.broken || !window.confirm(copy.cleanupConfirm(cleanupScan.broken))) return;
     setCleanupBusy(true);
     setCleanupMessage(null);
     try {
@@ -454,7 +478,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
 
   async function startImport(event: FormEvent) {
     event.preventDefault();
-    if (importActive || !importUserID) return;
+    if (importActive || scanActive || !importUserID) return;
     setImportStarting(true);
     setImportMessage(null);
     try {
@@ -521,15 +545,15 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
 
       <div className="settings-section-heading scan-heading"><h2>{copy.importTitle}</h2><FolderInput size={17} /></div>
       <form className="new-user-form" onSubmit={startImport}>
-        <input aria-label={copy.importSource} placeholder="." value={importSource} onChange={(event) => setImportSource(event.target.value)} disabled={importActive} />
+        <input aria-label={copy.importSource} placeholder="." value={importSource} onChange={(event) => setImportSource(event.target.value)} disabled={importActive || scanActive} />
         <UserPicker
           users={users.filter((user) => user.is_active)}
           value={importUserID}
           label={copy.targetUser}
-          disabled={importActive}
+          disabled={importActive || scanActive}
           onChange={setImportUserID}
         />
-        <button className="button button-secondary" disabled={importActive || !importUserID}>{importActive ? copy.importing : copy.startImport}</button>
+        <button className="button button-secondary" disabled={importActive || scanActive || !importUserID}>{importActive ? copy.importing : copy.startImport}</button>
       </form>
       <p className="inline-state">{copy.importSourceHelp}</p>
       <p className="inline-state">{copy.importWarning}</p>
@@ -549,8 +573,12 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
 
       <div className="settings-section-heading scan-heading">
         <h2>{t('settings.libraryIndex')}</h2>
-        <button className="button button-secondary" disabled={scanActive} onClick={() => void rescan()}><RefreshCw size={15} /> {t('settings.rescanFiles')}</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button className="button button-secondary" disabled={scanActive || importActive} onClick={() => void rescan()}><RefreshCw size={15} /> {t('settings.rescanFiles')}</button>
+          <button className="button button-secondary" disabled={scanActive || thumbnailActive || importActive || cleanupBusy} onClick={() => void resetLibraryIndex()}><Trash2 size={15} /> {copy.resetIndex}</button>
+        </div>
       </div>
+      <p className="inline-state">{copy.resetHelp}</p>
       {scanMessage && <p className="inline-state" role="alert">{scanMessage}</p>}
       {scanJob && counts && <div className="scan-progress" role="status" aria-live="polite">
         <div className="scan-progress-heading"><span>{scanStatusLabel}</span><span>{formatCount(counts.scanned)}</span></div>
@@ -574,18 +602,18 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
               type="button"
               className={`thumbnail-mode-button ${thumbnailMode === 'incremental' ? 'is-selected' : ''}`}
               aria-pressed={thumbnailMode === 'incremental'}
-              disabled={thumbnailActive}
+              disabled={thumbnailActive || scanActive}
               onClick={() => setThumbnailMode('incremental')}
             >{copy.thumbnailIncremental}</button>
             <button
               type="button"
               className={`thumbnail-mode-button ${thumbnailMode === 'full' ? 'is-selected' : ''}`}
               aria-pressed={thumbnailMode === 'full'}
-              disabled={thumbnailActive}
+              disabled={thumbnailActive || scanActive}
               onClick={() => setThumbnailMode('full')}
             >{copy.thumbnailFull}</button>
           </div>
-          <button className="button button-secondary" disabled={thumbnailActive} onClick={() => void rebuildThumbnails()}><ImageIcon size={15} /> {thumbnailActive ? copy.rebuildingThumbnails : copy.rebuildThumbnails}</button>
+          <button className="button button-secondary" disabled={thumbnailActive || scanActive} onClick={() => void rebuildThumbnails()}><ImageIcon size={15} /> {thumbnailActive ? copy.rebuildingThumbnails : copy.rebuildThumbnails}</button>
         </div>
       </div>
       <p className="inline-state">{thumbnailMode === 'incremental' ? copy.thumbnailIncrementalHelp : copy.thumbnailFullHelp}</p>
@@ -607,8 +635,8 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
       <div className="settings-section-heading scan-heading">
         <h2>{copy.cleanupTitle}</h2>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button className="button button-secondary" disabled={cleanupBusy} onClick={() => void scanBrokenPhotos()}><RefreshCw size={15} /> {cleanupBusy ? copy.scanningBroken : copy.scanBroken}</button>
-          {cleanupScan && cleanupScan.broken > 0 && <button className="button button-secondary" disabled={cleanupBusy} onClick={() => void cleanupBrokenPhotos()}><Trash2 size={15} /> {cleanupBusy ? copy.cleaningBroken : copy.cleanupBroken(cleanupScan.broken)}</button>}
+          <button className="button button-secondary" disabled={cleanupBusy || scanActive} onClick={() => void scanBrokenPhotos()}><RefreshCw size={15} /> {cleanupBusy ? copy.scanningBroken : copy.scanBroken}</button>
+          {cleanupScan && cleanupScan.broken > 0 && <button className="button button-secondary" disabled={cleanupBusy || scanActive} onClick={() => void cleanupBrokenPhotos()}><Trash2 size={15} /> {cleanupBusy ? copy.cleaningBroken : copy.cleanupBroken(cleanupScan.broken)}</button>}
         </div>
       </div>
       <p className="inline-state">{copy.cleanupWarning}</p>

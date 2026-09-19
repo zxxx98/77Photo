@@ -69,6 +69,9 @@ func (s *Service) IndexScannedFile(ctx context.Context, ownerID, folderID, stora
 		if err == nil {
 			err = s.refreshEmbeddedMotion(ctx, photo.ID, path, mimeType)
 		}
+		if err == nil {
+			err = s.enqueueScannedThumbnail(ctx, photo.ID)
+		}
 		return true, err
 	}
 	if err != nil {
@@ -88,7 +91,28 @@ func (s *Service) IndexScannedFile(ctx context.Context, ownerID, folderID, stora
 	if err == nil {
 		err = s.refreshEmbeddedMotion(ctx, existingID, path, mimeType)
 	}
+	if err == nil {
+		err = s.enqueueScannedThumbnail(ctx, existingID)
+	}
 	return false, err
+}
+
+func (s *Service) enqueueScannedThumbnail(ctx context.Context, photoID string) error {
+	if s.queue == nil {
+		return nil
+	}
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if s.queue.Enqueue(photoID) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *Service) refreshEmbeddedMotion(ctx context.Context, photoID, sourcePath, mimeType string) error {

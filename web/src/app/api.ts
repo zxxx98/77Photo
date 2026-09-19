@@ -222,6 +222,7 @@ export interface ApiClient {
   updateUser(id: string, input: Partial<Pick<User, 'username' | 'role' | 'is_active'>> & { password?: string }): Promise<User>;
   deleteUser(id: string): Promise<void>;
   startRescan(): Promise<RescanJob>;
+  resetLibraryIndex(): Promise<RescanJob>;
   getRescan(id: string): Promise<RescanJob>;
   startThumbnailRebuild(mode?: ThumbnailRebuildMode): Promise<ThumbnailRebuildJob>;
   getThumbnailRebuild(id: string): Promise<ThumbnailRebuildJob>;
@@ -392,6 +393,7 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     updateUser: (id, input) => request<User>(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }) as Promise<User>,
     deleteUser: async (id) => { await request(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ photo_action: 'retain' }) }); },
     startRescan: () => request<RescanJob>('/api/v1/admin/rescan', { method: 'POST', body: JSON.stringify({}) }) as Promise<RescanJob>,
+    resetLibraryIndex: () => request<RescanJob>('/api/v1/admin/rescan/reset', { method: 'POST', body: JSON.stringify({ confirm: true }) }) as Promise<RescanJob>,
     getRescan: (id) => request<RescanJob>(`/api/v1/admin/rescan/${encodeURIComponent(id)}`) as Promise<RescanJob>,
     startThumbnailRebuild: (mode = 'full') => request<ThumbnailRebuildJob>('/api/v1/admin/thumbnails/rebuild', { method: 'POST', body: JSON.stringify({ mode }) }) as Promise<ThumbnailRebuildJob>,
     getThumbnailRebuild: (id) => request<ThumbnailRebuildJob>(`/api/v1/admin/thumbnails/rebuild/${encodeURIComponent(id)}`) as Promise<ThumbnailRebuildJob>,

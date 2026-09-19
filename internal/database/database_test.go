@@ -51,8 +51,8 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 4 {
-		t.Fatalf("schema migration count = %d, want 4", migrationCount)
+	if migrationCount != 5 {
+		t.Fatalf("schema migration count = %d, want 5", migrationCount)
 	}
 }
 
@@ -87,8 +87,8 @@ VALUES ('u-restart', 'restart', 'hash', 'user', '2026-01-01T00:00:00Z', '2026-01
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 4 {
-		t.Fatalf("schema migration count = %d, want 4", migrationCount)
+	if migrationCount != 5 {
+		t.Fatalf("schema migration count = %d, want 5", migrationCount)
 	}
 }
 
@@ -143,6 +143,32 @@ func TestPhotoSchemaContainsMetadataAndScanFields(t *testing.T) {
 	}
 	if csrfColumns != 1 {
 		t.Fatal("sessions csrf_token_hash column missing")
+	}
+}
+
+func TestPhotoScanStatusAllowsPairedCompanions(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, "INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES ('u-paired', 'paired-user', 'hash', 'user', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO folders (id, owner_id, name, storage_path, created_at, updated_at) VALUES ('f-paired', 'u-paired', 'photos', 'users/u-paired/photos', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"); err != nil {
+		t.Fatal(err)
+	}
+	checksum := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if _, err := db.ExecContext(ctx, "INSERT INTO photos (id, owner_id, folder_id, storage_path, filename, mime_type, size, checksum, captured_at, captured_at_source, indexed_at, source_revision, scan_status, created_at, updated_at) VALUES ('p-paired', 'u-paired', 'f-paired', 'users/u-paired/photos/live.mp4', 'live.mp4', 'video/mp4', 16, ?, '2026-01-01T00:00:00Z', 'file_mtime', '2026-01-01T00:00:00Z', ?, 'paired', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')", checksum, checksum); err != nil {
+		t.Fatalf("insert paired photo row: %v", err)
+	}
+	var status string
+	if err := db.QueryRowContext(ctx, "SELECT scan_status FROM photos WHERE id='p-paired'").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "paired" {
+		t.Fatalf("scan_status = %q, want paired", status)
 	}
 }
 
