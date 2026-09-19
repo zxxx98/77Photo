@@ -73,6 +73,32 @@ func (l *testLoader) LoadPhoto(_ context.Context, id string) (Photo, error) {
 	return Photo{ID: p.ID, StoragePath: p.StoragePath, SourceRevision: p.SourceRevision, MIMEType: p.MIMEType, Orientation: &orientation}, nil
 }
 
+func TestResetAllRemovesGeneratedThumbnailCache(t *testing.T) {
+	store, loader, _ := newThumbnailFixture(t, "p_reset", "rev-1")
+	cacheRoot := filepath.Join(t.TempDir(), "cache")
+	service, err := NewService(loader, store, cacheRoot, 1, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(cacheRoot, "thumbnails", "256", "p_reset", "stale.webp")
+	if err := os.MkdirAll(filepath.Dir(stale), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("stale"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.ResetAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale thumbnail still exists: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(cacheRoot, "thumbnails")); err != nil || !info.IsDir() {
+		t.Fatalf("thumbnail cache root was not recreated: info=%v err=%v", info, err)
+	}
+}
+
 func TestEnsureQueuesMissingThumbnailAndDeduplicates(t *testing.T) {
 	store, loader, photo := newThumbnailFixture(t, "p_one", "rev-1")
 	service, err := NewService(loader, store, filepath.Join(t.TempDir(), "cache"), 1, 4)
