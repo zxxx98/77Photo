@@ -67,6 +67,31 @@ describe('API client', () => {
     expect(new Headers(logoutInit.headers).get('X-CSRF-Token')).toBe('restored-csrf');
   });
 
+  it('starts a confirmed library reset and rescan', async () => {
+    const job = {
+      id: 'scan_reset',
+      status: 'queued',
+      started_at: '2026-09-19T12:00:00Z',
+      counts: { scanned: 0, added: 0, updated: 0, missing: 0, failed: 0 },
+    };
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(job), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    const client = createApiClient(fetcher as typeof fetch);
+
+    await expect(client.resetLibraryIndex()).resolves.toEqual(job);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/v1/admin/rescan/reset',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({ confirm: true }),
+      }),
+    );
+  });
+
   it('loads a rescan job status by id', async () => {
     const job = {
       id: 'scan_1',
