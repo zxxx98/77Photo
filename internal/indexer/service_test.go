@@ -187,6 +187,113 @@ func TestRescanPairsHEICAndMOVAndSkipsOrphanMOV(t *testing.T) {
 	}
 }
 
+func TestRescanPromotesSameBasenameMP4ToLivePhotoAndRetiresVideoIndex(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := folders.NewService(db, store).Create(ctx, principal, folders.CreateInput{Name: "imports"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	motionPath, err := store.ResolvePath(filepath.Join(folder.StoragePath, "MVIMG_200.mp4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(motionPath, heicBytesForIndexer("isom"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	tools := &media.Tools{FFprobe: "ffprobe", Runner: scannerMediaRunner{}, Timeout: time.Second, MaxOutputBytes: 1 << 20}
+	photoService := photos.NewService(db, store, 1<<20)
+	photoService.SetMediaTools(tools)
+	service := NewService(db, store, photoService)
+	service.SetMediaTools(tools)
+
+	// With no matching still yet, the MP4 remains a normal standalone video.
+	job, err := service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+	var status string
+	if err := db.QueryRowContext(ctx, "SELECT scan_status FROM photos WHERE filename='MVIMG_200.mp4'").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "indexed" {
+		t.Fatalf("standalone MP4 status = %q, want indexed", status)
+	}
+
+	stillPath, err := store.ResolvePath(filepath.Join(folder.StoragePath, "MVIMG_200.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stillPath, jpegBytesForIndexer(t, 3, 2), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	// Once the same-basename still appears, rescan should merge the pair into
+	// one logical Live Photo and retire the old standalone MP4 index row.
+	job, err = service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+
+	var indexedCount int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM photos WHERE scan_status='indexed'").Scan(&indexedCount); err != nil {
+		t.Fatal(err)
+	}
+	if indexedCount != 1 {
+		t.Fatalf("indexed photo count = %d, want one logical live photo", indexedCount)
+	}
+	if err := db.QueryRowContext(ctx, "SELECT scan_status FROM photos WHERE filename='MVIMG_200.mp4'").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "paired" {
+		t.Fatalf("paired MP4 status = %q, want paired", status)
+	}
+	var stillID string
+	if err := db.QueryRowContext(ctx, "SELECT id FROM photos WHERE filename='MVIMG_200.jpg' AND scan_status='indexed'").Scan(&stillID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := photoService.LiveVideoPath(ctx, principal, stillID); err != nil {
+		t.Fatalf("paired MP4 motion missing: %v", err)
+	}
+	if _, err := os.Stat(motionPath); err != nil {
+		t.Fatalf("original MP4 companion must remain on disk: %v", err)
+	}
+
+	// If the still later disappears, the MP4 becomes a standalone video again.
+	if err := os.Remove(stillPath); err != nil {
+		t.Fatal(err)
+	}
+	job, err = service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+	if err := db.QueryRowContext(ctx, "SELECT scan_status FROM photos WHERE filename='MVIMG_200.mp4'").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "indexed" {
+		t.Fatalf("unpaired MP4 status = %q, want indexed", status)
+	}
+}
+
 func TestRescanRemovesStaleMVIMGMotionAfterSourceChange(t *testing.T) {
 	ctx := context.Background()
 	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
