@@ -76,6 +76,37 @@ describe('settings rescan progress', () => {
     expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100');
   });
 
+  it('requires confirmation before resetting the library index', async () => {
+    const resetLibraryIndex = vi.fn().mockResolvedValue(queued);
+    const getRescan = vi.fn().mockResolvedValue(completed);
+    const api = {
+      listUsers: vi.fn().mockResolvedValue({ items: [] }),
+      resetLibraryIndex,
+      getRescan,
+    } as unknown as ApiClient;
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    await renderWith(api);
+
+    const resetButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.includes('重置并重新扫描'));
+    expect(resetButton).not.toBeUndefined();
+
+    await act(async () => {
+      resetButton?.click();
+      await Promise.resolve();
+    });
+    expect(resetLibraryIndex).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resetButton?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(resetLibraryIndex).toHaveBeenCalledTimes(1);
+    expect(getRescan).toHaveBeenCalledWith('scan_1');
+  });
+
   it('uses the project-styled user picker for photo imports', async () => {
     const member = { id: 'u2', username: 'family', role: 'user' as const, is_active: true };
     const api = {
