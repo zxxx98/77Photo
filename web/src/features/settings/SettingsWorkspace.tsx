@@ -401,7 +401,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   }
 
   async function rescan() {
-    if (scanActive) return;
+    if (scanActive || importActive) return;
     setScanStarting(true);
     setScanMessage(null);
     try {
@@ -446,7 +446,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   }
 
   async function scanBrokenPhotos() {
-    if (cleanupBusy) return;
+    if (cleanupBusy || scanActive) return;
     setCleanupBusy(true);
     setCleanupMessage(null);
     try {
@@ -462,7 +462,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   }
 
   async function cleanupBrokenPhotos() {
-    if (cleanupBusy || !cleanupScan?.broken || !window.confirm(copy.cleanupConfirm(cleanupScan.broken))) return;
+    if (cleanupBusy || scanActive || !cleanupScan?.broken || !window.confirm(copy.cleanupConfirm(cleanupScan.broken))) return;
     setCleanupBusy(true);
     setCleanupMessage(null);
     try {
@@ -478,7 +478,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
 
   async function startImport(event: FormEvent) {
     event.preventDefault();
-    if (importActive || !importUserID) return;
+    if (importActive || scanActive || !importUserID) return;
     setImportStarting(true);
     setImportMessage(null);
     try {
