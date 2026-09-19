@@ -71,6 +71,98 @@ func TestRebuildRegeneratesExistingVariants(t *testing.T) {
 	}
 }
 
+func TestIncrementalRebuildOnlyRepairsMissingVariants(t *testing.T) {
+	store, loader, photo := newThumbnailFixture(t, "p_incremental", "rev-1")
+	thumbnailService, err := NewService(loader, store, filepath.Join(t.TempDir(), "cache"), 1, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	thumbnailService.Start(ctx)
+	defer thumbnailService.Close()
+
+	if _, _, err := thumbnailService.Ensure(ctx, photo.ID, 256); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		_, err := os.Stat(thumbnailService.CachePath(photo.ID, photo.SourceRevision, 1280))
+		return err == nil
+	})
+
+	path256 := thumbnailService.CachePath(photo.ID, photo.SourceRevision, 256)
+	path512 := thumbnailService.CachePath(photo.ID, photo.SourceRevision, 512)
+	path1280 := thumbnailService.CachePath(photo.ID, photo.SourceRevision, 1280)
+	before256, err := os.ReadFile(path256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before1280, err := os.ReadFile(path1280)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path512); err != nil {
+		t.Fatal(err)
+	}
+
+	db := newRebuildTestDB(t)
+	if _, err := db.Exec(`INSERT INTO photos (id, mime_type, scan_status, deleted_at) VALUES (?, ?, 'indexed', NULL)`, photo.ID, photo.MIMEType); err != nil {
+		t.Fatal(err)
+	}
+
+	rebuild := NewRebuildServiceWithContext(ctx, db, thumbnailService)
+	started, err := rebuild.StartWithMode(ctx, acl.Principal{UserID: "u_admin", Role: acl.RoleAdmin}, RebuildModeIncremental)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.Mode != RebuildModeIncremental {
+		t.Fatalf("mode = %q, want %q", started.Mode, RebuildModeIncremental)
+	}
+	rebuild.Wait()
+	job, err := rebuild.Get(ctx, acl.Principal{UserID: "u_admin", Role: acl.RoleAdmin}, started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != RebuildCompleted {
+		t.Fatalf("status = %q, want %q (error=%v)", job.Status, RebuildCompleted, job.Error)
+	}
+	if job.Counts.Total != 1 || job.Counts.Processed != 1 || job.Counts.Regenerated != 1 || job.Counts.Failed != 0 {
+		t.Fatalf("counts = %+v, want total=1 processed=1 regenerated=1 failed=0", job.Counts)
+	}
+
+	after256, err := os.ReadFile(path256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after1280, err := os.ReadFile(path1280)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before256, after256) || !bytes.Equal(before1280, after1280) {
+		t.Fatal("incremental rebuild replaced an existing thumbnail variant")
+	}
+	data512, err := os.ReadFile(path512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data512, []byte("RIFF")) {
+		t.Fatal("missing 512 variant was not regenerated as WebP")
+	}
+
+	second, err := rebuild.StartWithMode(ctx, acl.Principal{UserID: "u_admin", Role: acl.RoleAdmin}, RebuildModeIncremental)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuild.Wait()
+	secondJob, err := rebuild.Get(ctx, acl.Principal{UserID: "u_admin", Role: acl.RoleAdmin}, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.Counts.Total != 0 || secondJob.Counts.Processed != 0 {
+		t.Fatalf("second incremental counts = %+v, want no candidates", secondJob.Counts)
+	}
+}
+
 func TestRebuildIncludesSupportedVideoMedia(t *testing.T) {
 	db := newRebuildTestDB(t)
 	for _, item := range []struct {
