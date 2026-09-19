@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -14,18 +15,23 @@ import (
 )
 
 type RebuildStatus string
+type RebuildMode string
 
 const (
 	RebuildQueued    RebuildStatus = "queued"
 	RebuildRunning   RebuildStatus = "running"
 	RebuildCompleted RebuildStatus = "completed"
 	RebuildFailed    RebuildStatus = "failed"
+
+	RebuildModeFull        RebuildMode = "full"
+	RebuildModeIncremental RebuildMode = "incremental"
 )
 
 var (
-	ErrRebuildForbidden = errors.New("thumbnail rebuild requires administrator access")
-	ErrRebuildConflict  = errors.New("a thumbnail rebuild is already queued or running")
-	ErrRebuildNotFound  = errors.New("thumbnail rebuild job not found")
+	ErrRebuildForbidden   = errors.New("thumbnail rebuild requires administrator access")
+	ErrRebuildConflict    = errors.New("a thumbnail rebuild is already queued or running")
+	ErrRebuildNotFound    = errors.New("thumbnail rebuild job not found")
+	ErrRebuildInvalidMode = errors.New("thumbnail rebuild mode must be full or incremental")
 )
 
 type RebuildConflictError struct {
@@ -45,6 +51,7 @@ type RebuildCounts struct {
 
 type RebuildJob struct {
 	ID         string         `json:"id"`
+	Mode       RebuildMode    `json:"mode"`
 	Status     RebuildStatus  `json:"status"`
 	StartedAt  time.Time      `json:"started_at"`
 	FinishedAt *time.Time     `json:"finished_at,omitempty"`
@@ -66,8 +73,15 @@ func NewRebuildServiceWithContext(ctx context.Context, db *sql.DB, thumbnailServ
 }
 
 func (s *RebuildService) Start(ctx context.Context, principal acl.Principal) (RebuildJob, error) {
+	return s.StartWithMode(ctx, principal, RebuildModeFull)
+}
+
+func (s *RebuildService) StartWithMode(ctx context.Context, principal acl.Principal, mode RebuildMode) (RebuildJob, error) {
 	if principal.Role != acl.RoleAdmin {
 		return RebuildJob{}, ErrRebuildForbidden
+	}
+	if mode != RebuildModeFull && mode != RebuildModeIncremental {
+		return RebuildJob{}, ErrRebuildInvalidMode
 	}
 	s.mu.Lock()
 	if s.job != nil && (s.job.Status == RebuildQueued || s.job.Status == RebuildRunning) {
@@ -76,7 +90,7 @@ func (s *RebuildService) Start(ctx context.Context, principal acl.Principal) (Re
 		return RebuildJob{}, &RebuildConflictError{JobID: jobID}
 	}
 	now := time.Now().UTC()
-	job := &RebuildJob{ID: newRebuildJobID(), Status: RebuildQueued, StartedAt: now}
+	job := &RebuildJob{ID: newRebuildJobID(), Mode: mode, Status: RebuildQueued, StartedAt: now}
 	s.job = job
 	done := make(chan struct{})
 	s.done = done
@@ -136,7 +150,7 @@ func (s *RebuildService) rebuild(ctx context.Context, job *RebuildJob) error {
 	if s.db == nil || s.thumbnails == nil {
 		return errors.New("thumbnail rebuild service is not initialized")
 	}
-	ids, err := s.loadCandidateIDs(ctx)
+	ids, err := s.loadCandidateIDsForMode(ctx, job.Mode)
 	if err != nil {
 		return err
 	}
@@ -148,7 +162,7 @@ func (s *RebuildService) rebuild(ctx context.Context, job *RebuildJob) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		err := s.regenerate(ctx, id)
+		err := s.regenerate(ctx, id, job.Mode)
 		s.mu.Lock()
 		job.Counts.Processed++
 		if err != nil {
@@ -183,7 +197,43 @@ func (s *RebuildService) loadCandidateIDs(ctx context.Context) ([]string, error)
 	return ids, nil
 }
 
-func (s *RebuildService) regenerate(ctx context.Context, photoID string) error {
+func (s *RebuildService) loadCandidateIDsForMode(ctx context.Context, mode RebuildMode) ([]string, error) {
+	ids, err := s.loadCandidateIDs(ctx)
+	if err != nil || mode == RebuildModeFull {
+		return ids, err
+	}
+
+	candidates := make([]string, 0, len(ids))
+	for _, id := range ids {
+		needsRebuild, err := s.needsRegeneration(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("inspect thumbnail rebuild candidate %s: %w", id, err)
+		}
+		if needsRebuild {
+			candidates = append(candidates, id)
+		}
+	}
+	return candidates, nil
+}
+
+func (s *RebuildService) needsRegeneration(ctx context.Context, photoID string) (bool, error) {
+	photo, err := s.thumbnails.loader.LoadPhoto(ctx, photoID)
+	if err != nil {
+		return false, err
+	}
+	for _, size := range []int{256, 512, 1280} {
+		_, err := os.Stat(s.thumbnails.CachePath(photo.ID, photo.SourceRevision, size))
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+func (s *RebuildService) regenerate(ctx context.Context, photoID string, mode RebuildMode) error {
 	if err := s.reserve(ctx, photoID); err != nil {
 		return err
 	}
@@ -191,8 +241,10 @@ func (s *RebuildService) regenerate(ctx context.Context, photoID string) error {
 	if s.thumbnails.workerCtx == nil {
 		return errors.New("thumbnail worker service is not started")
 	}
-	if err := s.thumbnails.Invalidate(ctx, photoID); err != nil {
-		return err
+	if mode == RebuildModeFull {
+		if err := s.thumbnails.Invalidate(ctx, photoID); err != nil {
+			return err
+		}
 	}
 	var lastErr error
 	for attempt := 1; attempt <= MaxAttempts; attempt++ {

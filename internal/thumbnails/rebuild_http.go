@@ -3,6 +3,7 @@ package thumbnails
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -47,8 +48,19 @@ func (h *RebuildHTTPHandler) start(w http.ResponseWriter, r *http.Request) {
 		rebuildWriteError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	var input struct {
+		Mode RebuildMode `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+		rebuildWriteError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "request body must be valid JSON", nil)
+		return
+	}
+	if input.Mode == "" {
+		input.Mode = RebuildModeFull
+	}
+
 	account := authenticated.Account
-	job, err := h.service.Start(r.Context(), acl.Principal{UserID: account.ID, Role: account.Role})
+	job, err := h.service.StartWithMode(r.Context(), acl.Principal{UserID: account.ID, Role: account.Role}, input.Mode)
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
@@ -84,6 +96,8 @@ func (h *RebuildHTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Re
 		rebuildWriteError(w, r, http.StatusConflict, "THUMBNAIL_REBUILD_IN_PROGRESS", "another thumbnail rebuild is already queued or running", details)
 	case errors.Is(err, ErrRebuildNotFound):
 		rebuildWriteError(w, r, http.StatusNotFound, "NOT_FOUND", "thumbnail rebuild job not found", nil)
+	case errors.Is(err, ErrRebuildInvalidMode):
+		rebuildWriteError(w, r, http.StatusBadRequest, "INVALID_REBUILD_MODE", "thumbnail rebuild mode must be full or incremental", nil)
 	default:
 		rebuildWriteError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "thumbnail rebuild could not be completed", nil)
 	}

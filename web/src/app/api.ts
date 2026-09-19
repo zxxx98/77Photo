@@ -120,6 +120,8 @@ export interface RescanJob {
   error?: string;
 }
 
+export type ThumbnailRebuildMode = 'full' | 'incremental';
+
 export interface ThumbnailRebuildCounts {
   total: number;
   processed: number;
@@ -129,6 +131,7 @@ export interface ThumbnailRebuildCounts {
 
 export interface ThumbnailRebuildJob {
   id: string;
+  mode: ThumbnailRebuildMode;
   status: RescanStatus;
   started_at: string;
   finished_at?: string;
@@ -220,7 +223,7 @@ export interface ApiClient {
   deleteUser(id: string): Promise<void>;
   startRescan(): Promise<RescanJob>;
   getRescan(id: string): Promise<RescanJob>;
-  startThumbnailRebuild(): Promise<ThumbnailRebuildJob>;
+  startThumbnailRebuild(mode?: ThumbnailRebuildMode): Promise<ThumbnailRebuildJob>;
   getThumbnailRebuild(id: string): Promise<ThumbnailRebuildJob>;
   scanBrokenPhotos(): Promise<BrokenPhotoScanResult>;
   cleanupBrokenPhotos(): Promise<BrokenPhotoCleanupResult>;
@@ -390,7 +393,7 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     deleteUser: async (id) => { await request(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ photo_action: 'retain' }) }); },
     startRescan: () => request<RescanJob>('/api/v1/admin/rescan', { method: 'POST', body: JSON.stringify({}) }) as Promise<RescanJob>,
     getRescan: (id) => request<RescanJob>(`/api/v1/admin/rescan/${encodeURIComponent(id)}`) as Promise<RescanJob>,
-    startThumbnailRebuild: () => request<ThumbnailRebuildJob>('/api/v1/admin/thumbnails/rebuild', { method: 'POST', body: JSON.stringify({}) }) as Promise<ThumbnailRebuildJob>,
+    startThumbnailRebuild: (mode = 'full') => request<ThumbnailRebuildJob>('/api/v1/admin/thumbnails/rebuild', { method: 'POST', body: JSON.stringify({ mode }) }) as Promise<ThumbnailRebuildJob>,
     getThumbnailRebuild: (id) => request<ThumbnailRebuildJob>(`/api/v1/admin/thumbnails/rebuild/${encodeURIComponent(id)}`) as Promise<ThumbnailRebuildJob>,
     scanBrokenPhotos: () => request<BrokenPhotoScanResult>('/api/v1/admin/photos/cleanup') as Promise<BrokenPhotoScanResult>,
     cleanupBrokenPhotos: () => request<BrokenPhotoCleanupResult>('/api/v1/admin/photos/cleanup', { method: 'POST', body: JSON.stringify({ confirm: true }) }) as Promise<BrokenPhotoCleanupResult>,
