@@ -1,3 +1,6 @@
+DROP TRIGGER IF EXISTS share_links_resource_insert;
+DROP TRIGGER IF EXISTS share_links_resource_update;
+
 CREATE TABLE photos_new (
     id TEXT PRIMARY KEY NOT NULL,
     owner_id TEXT NOT NULL REFERENCES users(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
@@ -50,3 +53,25 @@ CREATE INDEX photos_owner_captured_idx ON photos (owner_id, captured_at DESC, id
 CREATE INDEX photos_folder_captured_idx ON photos (folder_id, captured_at DESC, id DESC);
 CREATE INDEX photos_checksum_idx ON photos (checksum);
 CREATE INDEX photos_scan_status_idx ON photos (scan_status);
+
+CREATE TRIGGER share_links_resource_insert
+BEFORE INSERT ON share_links
+WHEN (NEW.resource_type = 'photo' AND NOT EXISTS (
+    SELECT 1 FROM photos WHERE id = NEW.resource_id AND deleted_at IS NULL
+)) OR (NEW.resource_type = 'folder' AND NOT EXISTS (
+    SELECT 1 FROM folders WHERE id = NEW.resource_id
+))
+BEGIN
+    SELECT RAISE(ABORT, 'share link resource does not exist');
+END;
+
+CREATE TRIGGER share_links_resource_update
+BEFORE UPDATE OF resource_type, resource_id ON share_links
+WHEN (NEW.resource_type = 'photo' AND NOT EXISTS (
+    SELECT 1 FROM photos WHERE id = NEW.resource_id AND deleted_at IS NULL
+)) OR (NEW.resource_type = 'folder' AND NOT EXISTS (
+    SELECT 1 FROM folders WHERE id = NEW.resource_id
+))
+BEGIN
+    SELECT RAISE(ABORT, 'share link resource does not exist');
+END;
