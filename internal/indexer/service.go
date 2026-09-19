@@ -180,6 +180,9 @@ func (s *Service) run(ctx context.Context, job *Job, done chan struct{}, reset b
 	if err == nil {
 		err = s.scan(ctx, job)
 	}
+	if err == nil && reset && s.thumbnailResetter != nil {
+		err = s.thumbnailResetter.WaitIdle(ctx)
+	}
 	s.mu.Lock()
 	if err != nil {
 		job.Status = StatusFailed
