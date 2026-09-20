@@ -9,14 +9,17 @@ import {
   type TextInputProps,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing } from './theme';
 
 export function Screen({ children }: PropsWithChildren) {
   return (
-    <ScrollView contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
-      {children}
-    </ScrollView>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <ScrollView contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
+        {children}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -68,6 +71,7 @@ export function Message({ children, warning = false }: PropsWithChildren<{ warni
 }
 
 const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: colors.background },
   screen: {
     flexGrow: 1,
     backgroundColor: colors.background,
