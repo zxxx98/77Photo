@@ -1,6 +1,7 @@
 name: Android CI
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - '**'
@@ -69,7 +70,7 @@ jobs:
           fi
 
           changed=false
-          if [ -z "$previous_version" ] || [ "$current_version" != "$previous_version" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ -z "$previous_version" ] || [ "$current_version" != "$previous_version" ]; then
             changed=true
           fi
 
@@ -83,7 +84,7 @@ jobs:
         env:
           ANDROID_VERSION_NAME: ${{ steps.version.outputs.current }}
           ANDROID_VERSION_CODE: ${{ github.run_number }}
-        run: ./android/gradlew assembleDebug
+        run: ./android/gradlew -p android assembleDebug
 
       - name: Upload versioned debug APK
         if: steps.version.outputs.changed == 'true'
