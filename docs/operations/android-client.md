@@ -71,6 +71,6 @@ cd android
 
 `.github/workflows/android-ci.yml` 独立处理 `mobile/**` 改动。它会运行 JavaScript、TypeScript、Lint 和 Kotlin 检查；当 `mobile/package.json` 的 `version` 相对目标分支发生变化时，额外构建并上传带该版本号的 debug APK。正式 tag 仍由 Android Release workflow 生成签名 AAB 与 APK。
 
-真实 release 由 `android-v*.*.*` tag 触发。CI 从 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS` 和 `ANDROID_KEY_PASSWORD` secrets 恢复签名材料，生成 AAB 与 APK。密钥文件只写入 runner 临时目录，构建日志不得输出密码或 key material。
+真实 release 由 `android-v*.*.*` tag 触发。CI 从 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS` 和 `ANDROID_KEY_PASSWORD` secrets 恢复签名材料，生成 AAB 与 APK，并创建带这两个附件的 GitHub Release。密钥文件只写入 runner 临时目录，构建日志不得输出密码或 key material。
 
 按 [Android E2E 说明](../../mobile/e2e/README.md) 在 Android 12、Android 13 和当前稳定版设备上运行 Maestro；额外记录通知拒绝、网络切换、进程终止、前台服务超时、并发 1/4、HTTPS 域名/IP、允许的 LAN HTTP 和公网 HTTP 阻断结果。

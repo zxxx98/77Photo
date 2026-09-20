@@ -6,7 +6,7 @@ on:
       - 'android-v*.*.*'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   android:
@@ -64,9 +64,25 @@ jobs:
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: 77photo-android-${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           if-no-files-found: error
           retention-days: 14
           path: |
             mobile/android/app/build/outputs/bundle/release/app-release.aab
             mobile/android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk='mobile/android/app/build/outputs/apk/release/app-release.apk'
+          aab='mobile/android/app/build/outputs/bundle/release/app-release.aab'
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$apk" "$aab" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$apk" "$aab" \
+              --verify-tag \
+              --title "77Photo Android ${GITHUB_REF_NAME#android-v}" \
+              --generate-notes
+          fi
