@@ -23,7 +23,7 @@ photos.example.test {
 | `PHOTO_CACHE_DIR` | `./data/cache` | WebP 缩略图缓存 |
 | `PHOTO_DB_PATH` | `./data/database/77photo.db` | SQLite 文件（含 WAL） |
 | `PHOTO_LISTEN_ADDR` | `:8080` | 监听地址 |
-| `PHOTO_THUMBNAIL_WORKERS` | `1` | 固定缩略图 worker，范围 1–64 |
+| `PHOTO_THUMBNAIL_WORKERS` | `2` | 固定缩略图 worker，范围 1–64 |
 | `PHOTO_MAX_UPLOAD_SIZE` | `10737418240` | 单文件字节上限 |
 | `PHOTO_FFMPEG_PATH` | `ffmpeg` | FFmpeg 可执行文件路径；用于视频帧和 motion 提取 |
 | `PHOTO_FFPROBE_PATH` | `ffprobe` | FFprobe 可执行文件路径；用于视频流校验 |
