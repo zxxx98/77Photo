@@ -97,22 +97,15 @@ func (s *Service) IndexScannedFile(ctx context.Context, ownerID, folderID, stora
 	return false, err
 }
 
-func (s *Service) enqueueScannedThumbnail(ctx context.Context, photoID string) error {
+func (s *Service) enqueueScannedThumbnail(_ context.Context, photoID string) error {
 	if s.queue == nil {
 		return nil
 	}
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if s.queue.Enqueue(photoID) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
+	// Thumbnail generation is best-effort during scans. A saturated thumbnail
+	// queue must never throttle indexing; missing variants are generated lazily
+	// by Ensure when the gallery requests them.
+	_ = s.queue.Enqueue(photoID)
+	return nil
 }
 
 func (s *Service) refreshEmbeddedMotion(ctx context.Context, photoID, sourcePath, mimeType string) error {
