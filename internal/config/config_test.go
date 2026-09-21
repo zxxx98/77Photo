@@ -54,6 +54,17 @@ func TestLoadFromEnvParsesSupportedSettings(t *testing.T) {
 	}
 }
 
+func TestLoadFromEnvUsesTwoThumbnailWorkersByDefault(t *testing.T) {
+	clearConfigEnv(t)
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv() error = %v", err)
+	}
+	if cfg.ThumbnailWorkers != 2 {
+		t.Fatalf("ThumbnailWorkers = %d, want 2", cfg.ThumbnailWorkers)
+	}
+}
+
 func TestLoadFromEnvRejectsInvalidWorkerCount(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("PHOTO_THUMBNAIL_WORKERS", "0")
