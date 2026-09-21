@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -230,6 +231,19 @@ func TestVideoFrameToolUsesBoundedSeekAndScale(t *testing.T) {
 	for _, needle := range []string{"-ss\x000.5", "-frames:v\x001", "-vf\x00scale=min(1280\\,iw):-2", "-f\x00image2"} {
 		if !strings.Contains(joined, needle) {
 			t.Fatalf("ffmpeg args = %#v, missing %q", runner.args[0], strings.ReplaceAll(needle, "\x00", " "))
+		}
+	}
+}
+
+func TestDefaultQueueCapacityAbsorbsLargeScanBurst(t *testing.T) {
+	store, loader, _ := newThumbnailFixture(t, "p_capacity", "rev-1")
+	service, err := NewService(loader, store, filepath.Join(t.TempDir(), "cache"), 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 500; i++ {
+		if ok := service.Enqueue(fmt.Sprintf("p_%d", i)); !ok {
+			t.Fatalf("Enqueue(%d) = false, default queue filled too early", i)
 		}
 	}
 }
