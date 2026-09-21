@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	DefaultQueueCapacity = 128
+	DefaultQueueCapacity = 2048
 	MaxAttempts          = 3
 	maxSourceBytes       = 256 << 20
 )
@@ -299,14 +299,18 @@ func (s *Service) generate(photoID string) error {
 		}
 	}
 	imageValue = applyOrientation(imageValue, photo.Orientation)
-	for _, size := range []int{256, 512, 1280} {
+	// Build variants from largest to smallest so each resize works from an
+	// already-downscaled image instead of repeatedly scaling the full source.
+	variantSource := imageValue
+	for _, size := range []int{1280, 512, 256} {
+		variantSource = resize(variantSource, size)
 		path := s.CachePath(photo.ID, photo.SourceRevision, size)
 		if _, statErr := os.Stat(path); statErr == nil {
 			continue
 		} else if !os.IsNotExist(statErr) {
 			return statErr
 		}
-		if err := writeVariant(path, resize(imageValue, size)); err != nil {
+		if err := writeVariant(path, variantSource); err != nil {
 			return err
 		}
 	}
