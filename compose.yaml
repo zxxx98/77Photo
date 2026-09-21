@@ -11,7 +11,7 @@ services:
       PHOTO_CACHE_DIR: /data/cache
       PHOTO_DB_PATH: /data/database/77photo.db
       PHOTO_LISTEN_ADDR: :8080
-      PHOTO_THUMBNAIL_WORKERS: "1"
+      PHOTO_THUMBNAIL_WORKERS: "2"
       PHOTO_MAX_UPLOAD_SIZE: "10737418240"
       PHOTO_SESSION_TTL: 720h
       PHOTO_MEDIA_TIMEOUT: 30s

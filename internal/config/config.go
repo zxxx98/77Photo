@@ -15,7 +15,7 @@ const (
 	defaultCacheDir         = "./data/cache"
 	defaultDBPath           = "./data/database/77photo.db"
 	defaultListenAddr       = ":8080"
-	defaultThumbnailWorkers = 1
+	defaultThumbnailWorkers = 2
 	defaultMaxUploadSize    = int64(10 * 1024 * 1024 * 1024)
 	defaultSessionTTL       = 720 * time.Hour
 	defaultFFmpegPath       = "ffmpeg"
