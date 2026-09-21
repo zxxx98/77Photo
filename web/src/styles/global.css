@@ -450,3 +450,6 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
   .memory-card-back { width: 58%; }
   .memory-stamp { right: 3%; }
 }
+
+.import-organize-option { display: flex; align-items: center; gap: 10px; margin: 16px 0 8px; cursor: pointer; }
+.import-organize-option input { width: 16px; height: 16px; accent-color: var(--slate); }

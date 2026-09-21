@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestUserRootAndSafePathStayInsideConfiguredRoot(t *testing.T) {
@@ -60,5 +61,34 @@ func TestValidateNameRejectsUnsafeNames(t *testing.T) {
 	}
 	if err := ValidateName("宝宝 2026"); err != nil {
 		t.Fatalf("valid Unicode name rejected: %v", err)
+	}
+}
+
+func TestCopyAndRemovePreservesTimelineFallbackTime(t *testing.T) {
+	root := t.TempDir()
+	source, destination := filepath.Join(root, "source.jpg"), filepath.Join(root, "destination.jpg")
+	if err := os.WriteFile(source, []byte("original"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Date(2020, 5, 6, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(source, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyAndRemove(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(stamp) {
+		t.Fatalf("mtime = %v, want %v", info.ModTime(), stamp)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil || string(data) != "original" {
+		t.Fatalf("copied content = %q, %v", data, err)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("source still present: %v", err)
 	}
 }

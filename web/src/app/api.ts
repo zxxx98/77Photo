@@ -112,6 +112,9 @@ export interface RescanCounts {
 }
 
 export interface RescanJob {
+  phase?: 'resetting' | 'discovering' | 'indexing' | 'reconciling' | 'thumbnails';
+  total?: number;
+  processed?: number;
   id: string;
   status: RescanStatus;
   started_at: string;
@@ -167,6 +170,7 @@ export interface ImportCounts {
 }
 
 export interface ImportJob {
+  organize_by_date?: boolean;
   id: string;
   status: RescanStatus;
   source_path: string;
@@ -228,7 +232,7 @@ export interface ApiClient {
   getThumbnailRebuild(id: string): Promise<ThumbnailRebuildJob>;
   scanBrokenPhotos(): Promise<BrokenPhotoScanResult>;
   cleanupBrokenPhotos(): Promise<BrokenPhotoCleanupResult>;
-  startImport(input: { source_path: string; user_id: string }): Promise<ImportJob>;
+  startImport(input: { source_path: string; user_id: string; organize_by_date?: boolean }): Promise<ImportJob>;
   getImport(id: string): Promise<ImportJob>;
 }
 

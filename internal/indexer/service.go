@@ -52,6 +52,9 @@ type Counts struct {
 }
 
 type Job struct {
+	Phase      string     `json:"phase,omitempty"`
+	Total      int        `json:"total"`
+	Processed  int        `json:"processed"`
 	ID         string     `json:"id"`
 	Status     Status     `json:"status"`
 	StartedAt  time.Time  `json:"started_at"`
@@ -80,14 +83,14 @@ type ThumbnailResetter interface {
 }
 
 type Service struct {
-	db               *sql.DB
-	storage          storage.Store
-	photos           *photos.Service
-	lifecycle        context.Context
-	mu               sync.RWMutex
-	job              *Job
-	done             chan struct{}
-	mediaTools       *media.Tools
+	db                *sql.DB
+	storage           storage.Store
+	photos            *photos.Service
+	lifecycle         context.Context
+	mu                sync.RWMutex
+	job               *Job
+	done              chan struct{}
+	mediaTools        *media.Tools
 	thumbnailResetter ThumbnailResetter
 }
 
@@ -175,12 +178,14 @@ func (s *Service) run(ctx context.Context, job *Job, done chan struct{}, reset b
 	s.mu.Unlock()
 	var err error
 	if reset {
+		s.setPhase(job, "resetting")
 		err = s.resetLibraryIndex(ctx)
 	}
 	if err == nil {
 		err = s.scan(ctx, job)
 	}
 	if err == nil && reset && s.thumbnailResetter != nil {
+		s.setPhase(job, "thumbnails")
 		err = s.thumbnailResetter.WaitIdle(ctx)
 	}
 	s.mu.Lock()
@@ -244,6 +249,7 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 	if s.photos == nil {
 		return errors.New("photo service is required")
 	}
+	s.setPhase(job, "discovering")
 	folders, err := s.loadFolders(ctx)
 	if err != nil {
 		return err
@@ -265,6 +271,9 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 		}
 		walkedRoots[rootRecord.path] = true
 		walkErr := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if walkErr != nil {
 				s.increment(job, func(counts *Counts) { counts.Failed++ })
 				return nil
@@ -318,6 +327,15 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 		}
 	}
 
+	s.mu.Lock()
+	job.Phase = "indexing"
+	for _, file := range files {
+		if !file.isMOV {
+			job.Total++
+		}
+	}
+	s.mu.Unlock()
+
 	stillKeys := make(map[string]struct{})
 	for _, file := range files {
 		if !file.isMOV && file.inspection.Kind == media.KindStill && supportsMP4MotionPair(file.inspection.MIME) {
@@ -349,6 +367,9 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 
 	pairedMP4 := make(map[string]struct{})
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if file.isMOV {
 			continue
 		}
@@ -390,6 +411,9 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 					if err := s.markPairedCompanion(ctx, motion.storagePath); err != nil {
 						return fmt.Errorf("mark paired MP4 companion: %w", err)
 					}
+					if _, already := pairedMP4[motion.storagePath]; !already {
+						s.processed(job)
+					}
 					pairedMP4[motion.storagePath] = struct{}{}
 				}
 				attached = true
@@ -416,6 +440,7 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 	// not hold a query cursor open while calling MarkMissing, which performs a
 	// write through the same *sql.DB and would otherwise wait forever for the
 	// connection currently owned by rows.
+	s.setPhase(job, "reconciling")
 	indexedPaths, err := s.loadIndexedPhotoPaths(ctx)
 	if err != nil {
 		return err
@@ -438,6 +463,7 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 }
 
 func (s *Service) indexScanFile(ctx context.Context, job *Job, file scanFile, seen map[string]struct{}) bool {
+	defer s.processed(job)
 	added, err := s.photos.IndexScannedFile(ctx, file.record.owner, file.record.id, file.storagePath)
 	if err != nil {
 		s.increment(job, func(counts *Counts) { counts.Failed++ })
@@ -642,3 +668,15 @@ func newFolderID() string {
 }
 
 func newJobID() string { return fmt.Sprintf("scan_%d", time.Now().UnixNano()) }
+
+func (s *Service) setPhase(job *Job, phase string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job.Phase = phase
+}
+
+func (s *Service) processed(job *Job) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job.Processed++
+}

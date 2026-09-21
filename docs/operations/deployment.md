@@ -35,3 +35,17 @@ photos.example.test {
 发布镜像由 `.github/workflows/release.yml` 在 `vMAJOR.MINOR.PATCH` 标签上构建并推送 `linux/arm64` 镜像，同时上传带嵌入 Web 资源的 CGO-free ARM64 二进制。二进制运行时需要能写入配置的照片、缓存和数据库目录；不依赖 libvips 或系统图像库。
 
 升级时先备份原图和数据库，执行 `docker compose pull && docker compose up -d`，再检查 `/healthz` 和管理员 rescan。不要在升级过程中复用旧的缓存目录作为数据库卷。部署后应确认 `ffmpeg -version`、`ffprobe -version`、`heif-convert --version` 和 `curl -fsS http://127.0.0.1:8080/healthz` 均成功。
+
+### Import folder organization
+
+The settings page offers **Organize folders by timeline date**, disabled by default.
+The import endpoint (`POST /api/v1/admin/imports`) accepts the optional boolean
+`organize_by_date`; omitting it preserves source folders under `Imported`.
+
+When enabled, originals are moved into `Imported/YYYY/MM/DD` using the same UTC
+capture timestamp as the timeline (embedded metadata first, file modification
+time as fallback). A Live Photo's still image determines the directory for both
+files. Colliding basenames receive a shared numeric suffix, including when an
+existing file has a different extension, so unrelated files cannot become false
+Live pairs. Files whose metadata cannot be read are counted as failed and left
+at their source. This option applies only to this import, not existing library files.

@@ -682,6 +682,9 @@ func waitForJob(t *testing.T, service *Service, principal acl.Principal, id stri
 			if job.Status == StatusFailed {
 				t.Fatalf("rescan failed: %v", job.Error)
 			}
+			if job.Processed != job.Total {
+				t.Fatalf("completed scan progress = %d/%d", job.Processed, job.Total)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

@@ -47,15 +47,16 @@ func (h *HTTPHandler) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		SourcePath string `json:"source_path"`
-		UserID     string `json:"user_id"`
+		OrganizeByDate bool   `json:"organize_by_date"`
+		SourcePath     string `json:"source_path"`
+		UserID         string `json:"user_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, r, http.StatusBadRequest, "INVALID_JSON", "request body is invalid")
 		return
 	}
 	account := authenticated.Account
-	job, err := h.service.Start(r.Context(), acl.Principal{UserID: account.ID, Role: account.Role}, input.SourcePath, input.UserID)
+	job, err := h.service.StartWithOptions(r.Context(), acl.Principal{UserID: account.ID, Role: account.Role}, input.SourcePath, input.UserID, input.OrganizeByDate)
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return

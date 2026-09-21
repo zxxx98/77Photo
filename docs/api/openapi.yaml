@@ -1482,6 +1482,17 @@ components:
       properties:
         id: { $ref: '#/components/schemas/ID' }
         status: { type: string, enum: [queued, running, completed, failed] }
+        phase:
+          type: string
+          enum: [resetting, discovering, indexing, reconciling, thumbnails]
+        total:
+          type: integer
+          minimum: 0
+          description: Supported non-MOV files to process after discovery; MOV companions are processed with their still image.
+        processed:
+          type: integer
+          minimum: 0
+          description: Files indexed, failed, or paired as MP4 companions. Thumbnail completion is tracked by the job status.
         started_at:
           anyOf:
             - type: string

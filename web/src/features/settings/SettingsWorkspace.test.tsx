@@ -76,6 +76,25 @@ describe('settings rescan progress', () => {
     expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100');
   });
 
+  it('shows processing progress and the thumbnail phase before completion', async () => {
+    const getRescan = vi.fn()
+      .mockResolvedValueOnce({ ...running, phase: 'indexing', total: 12, processed: 6 })
+      .mockResolvedValueOnce({ ...running, phase: 'thumbnails', total: 12, processed: 12 })
+      .mockResolvedValueOnce({ ...completed, total: 12, processed: 12 });
+    await renderWith({ listUsers: vi.fn().mockResolvedValue({ items: [] }),
+      startRescan: vi.fn().mockResolvedValue(queued), getRescan } as unknown as ApiClient);
+    await act(async () => { container.querySelector<HTMLButtonElement>('.scan-heading button')?.click(); });
+    expect(container.textContent).toContain('6 / 12');
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('50');
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(container.textContent).toContain('正在生成缩略图');
+    expect(container.textContent).toContain('12 / 12');
+    expect(container.querySelector('[role="progressbar"]')?.hasAttribute('aria-valuenow')).toBe(false);
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(container.textContent).toContain('扫描完成');
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100');
+  });
+
   it('requires confirmation before resetting the library index', async () => {
     const resetLibraryIndex = vi.fn().mockResolvedValue(queued);
     const getRescan = vi.fn().mockResolvedValue(completed);
@@ -135,6 +154,21 @@ describe('settings rescan progress', () => {
 
     expect(trigger?.textContent).toContain('family');
     expect(trigger?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('defaults to preserving folders and sends the selected date organization option', async () => {
+    const job = { id: 'import_1', status: 'completed', counts: { scanned: 0, moved: 0, skipped: 0, failed: 0 } };
+    const startImport = vi.fn().mockResolvedValue(job);
+    await renderWith({ listUsers: vi.fn().mockResolvedValue({ items: [admin] }), startImport,
+      getImport: vi.fn().mockResolvedValue(job) } as unknown as ApiClient);
+    const option = container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(option.checked).toBe(false);
+    const form = container.querySelector('input[aria-label="导入目录"]')!.closest('form')!;
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    expect(startImport).toHaveBeenLastCalledWith({ source_path: '.', user_id: 'u1', organize_by_date: false });
+    await act(async () => { option.click(); });
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    expect(startImport).toHaveBeenLastCalledWith({ source_path: '.', user_id: 'u1', organize_by_date: true });
   });
 
   it('offers incremental and full thumbnail rebuild modes and defaults to incremental', async () => {

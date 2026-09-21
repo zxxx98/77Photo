@@ -149,6 +149,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   const [thumbnailStarting, setThumbnailStarting] = useState(false);
   const [thumbnailMode, setThumbnailMode] = useState<ThumbnailRebuildMode>('incremental');
   const [importSource, setImportSource] = useState('.');
+  const [organizeByDate, setOrganizeByDate] = useState(false);
   const [importUserID, setImportUserID] = useState(currentUser.id);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importJob, setImportJob] = useState<ImportJob | null>(null);
@@ -163,6 +164,8 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     importTitle: '迁移照片',
     importSource: '导入目录',
     importSourceHelp: '填写原图根目录下的相对路径。填写 . 会导入根目录中除 users、shared、隐藏目录之外的文件。',
+    organizeByDate: '按时间线重建文件夹结构',
+    organizeHelp: '开启后按拍摄日期（与时间线一致，UTC）整理为 Imported/年/月/日；缺少拍摄时间时使用文件修改时间。Live 图成对移动，同名文件自动加序号。关闭则保留原目录结构。',
     targetUser: '目标用户',
     startImport: '开始导入',
     importing: '正在导入…',
@@ -217,6 +220,8 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     importTitle: 'Import photos',
     importSource: 'Import directory',
     importSourceHelp: 'Enter a path relative to the photo root. Use . to import root files except users, shared and hidden directories.',
+    organizeByDate: 'Organize folders by timeline date',
+    organizeHelp: 'Organize into Imported/year/month/day using the timeline capture date (UTC), falling back to file modification time. Live pairs stay together; duplicate names receive a suffix. Leave off to preserve source folders.',
     targetUser: 'Target user',
     startImport: 'Start import',
     importing: 'Importing…',
@@ -482,7 +487,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     setImportStarting(true);
     setImportMessage(null);
     try {
-      setImportJob(await api.startImport({ source_path: importSource.trim() || '.', user_id: importUserID }));
+      setImportJob(await api.startImport({ source_path: importSource.trim() || '.', user_id: importUserID, organize_by_date: organizeByDate }));
     } catch {
       setImportJob(null);
       setImportMessage(copy.startFailed);
@@ -492,13 +497,16 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   }
 
   const scanStatusLabel = scanJob?.status === 'running'
-    ? t('settings.scanRunning')
+    ? t(`settings.scanPhase.${scanJob.phase ?? 'discovering'}`)
     : scanJob?.status === 'completed'
       ? t('settings.scanCompleted')
       : scanJob?.status === 'failed'
         ? t('settings.scanRunFailed')
         : t('settings.scanQueued');
   const counts = scanJob?.counts;
+  const scanPercent = scanJob?.status === 'completed' ? 100
+    : scanJob?.phase === 'indexing' && (scanJob.total ?? 0) > 0
+      ? Math.min(99, Math.round(((scanJob.processed ?? 0) / scanJob.total!) * 100)) : undefined;
   const thumbnailStatusLabel = thumbnailJob?.status === 'running'
     ? copy.rebuildingThumbnails
     : thumbnailJob?.status === 'completed'
@@ -544,6 +552,11 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
       </div>
 
       <div className="settings-section-heading scan-heading"><h2>{copy.importTitle}</h2><FolderInput size={17} /></div>
+      <label className="import-organize-option">
+        <input type="checkbox" checked={organizeByDate} onChange={(event) => setOrganizeByDate(event.target.checked)} disabled={importActive || scanActive} aria-describedby="import-organize-help" />
+        <span>{copy.organizeByDate}</span>
+      </label>
+      <p id="import-organize-help" className="inline-state">{copy.organizeHelp}</p>
       <form className="new-user-form" onSubmit={startImport}>
         <input aria-label={copy.importSource} placeholder="." value={importSource} onChange={(event) => setImportSource(event.target.value)} disabled={importActive || scanActive} />
         <UserPicker
@@ -581,9 +594,9 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
       <p className="inline-state">{copy.resetHelp}</p>
       {scanMessage && <p className="inline-state" role="alert">{scanMessage}</p>}
       {scanJob && counts && <div className="scan-progress" role="status" aria-live="polite">
-        <div className="scan-progress-heading"><span>{scanStatusLabel}</span><span>{formatCount(counts.scanned)}</span></div>
-        <div className={`progress-track scan-progress-track ${scanActive ? 'is-active' : ''}`} role="progressbar" aria-label={scanStatusLabel} aria-valuemin={0} aria-valuemax={100} {...(scanJob.status === 'completed' ? { 'aria-valuenow': 100 } : {})}>
-          <span className={scanJob.status === 'completed' ? 'is-complete' : ''} />
+        <div className="scan-progress-heading"><span>{scanStatusLabel}</span><span>{scanJob.total !== undefined && scanJob.phase !== 'discovering' && scanJob.phase !== 'resetting' ? `${formatCount(scanJob.processed ?? 0)} / ${formatCount(scanJob.total)}` : formatCount(counts.scanned)}</span></div>
+        <div className={`progress-track scan-progress-track ${scanActive && scanPercent === undefined ? 'is-active' : ''}`} role="progressbar" aria-label={scanStatusLabel} aria-valuemin={0} aria-valuemax={100} {...(scanPercent !== undefined ? { 'aria-valuenow': scanPercent } : {})}>
+          <span style={scanPercent !== undefined ? { width: `${scanPercent}%` } : undefined} className={scanJob.status === 'completed' ? 'is-complete' : ''} />
         </div>
         <div className="scan-progress-counts">
           <span>{t('settings.scanScanned', { count: formatCount(counts.scanned) })}</span>

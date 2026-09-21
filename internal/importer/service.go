@@ -43,14 +43,15 @@ type Counts struct {
 }
 
 type Job struct {
-	ID         string     `json:"id"`
-	Status     Status     `json:"status"`
-	SourcePath string     `json:"source_path"`
-	UserID     string     `json:"user_id"`
-	StartedAt  time.Time  `json:"started_at"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Counts     Counts     `json:"counts"`
-	Error      *string    `json:"error,omitempty"`
+	OrganizeByDate bool       `json:"organize_by_date"`
+	ID             string     `json:"id"`
+	Status         Status     `json:"status"`
+	SourcePath     string     `json:"source_path"`
+	UserID         string     `json:"user_id"`
+	StartedAt      time.Time  `json:"started_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	Counts         Counts     `json:"counts"`
+	Error          *string    `json:"error,omitempty"`
 }
 
 type fileMove struct {
@@ -65,6 +66,7 @@ type importCandidate struct {
 	storagePath string
 	still       bool
 	MOV         bool
+	MP4         bool
 }
 
 type Service struct {
@@ -91,6 +93,10 @@ func NewServiceWithContext(ctx context.Context, db *sql.DB, store storage.Store,
 }
 
 func (s *Service) Start(ctx context.Context, principal acl.Principal, sourcePath, userID string) (Job, error) {
+	return s.StartWithOptions(ctx, principal, sourcePath, userID, false)
+}
+
+func (s *Service) StartWithOptions(ctx context.Context, principal acl.Principal, sourcePath, userID string, organizeByDate bool) (Job, error) {
 	if principal.Role != acl.RoleAdmin {
 		return Job{}, ErrForbidden
 	}
@@ -111,7 +117,7 @@ func (s *Service) Start(ctx context.Context, principal acl.Principal, sourcePath
 		return Job{}, ErrConflict
 	}
 	now := time.Now().UTC()
-	job := &Job{ID: fmt.Sprintf("import_%d", now.UnixNano()), Status: StatusQueued, SourcePath: filepath.ToSlash(sourcePath), UserID: userID, StartedAt: now}
+	job := &Job{ID: fmt.Sprintf("import_%d", now.UnixNano()), Status: StatusQueued, SourcePath: filepath.ToSlash(sourcePath), UserID: userID, StartedAt: now, OrganizeByDate: organizeByDate}
 	s.job = job
 	done := make(chan struct{})
 	s.done = done
@@ -176,9 +182,16 @@ func (s *Service) importFiles(ctx context.Context, principal acl.Principal, job 
 		return fmt.Errorf("prepare target user directory: %w", err)
 	}
 
+	reserved := make(map[string]map[string]bool)
 	for _, group := range groupMoves(moves) {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if job.OrganizeByDate {
+			if err := s.organizeGroup(ctx, job.UserID, group, reserved); err != nil {
+				s.increment(job, func(c *Counts) { c.Failed += len(group) })
+				continue
+			}
 		}
 		s.moveGroup(job, group)
 	}
@@ -258,7 +271,7 @@ func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove,
 			s.increment(job, func(c *Counts) { c.Failed++ })
 			return nil
 		}
-		candidates = append(candidates, importCandidate{source: filepath.ToSlash(sourceRelative), relative: filepath.ToSlash(rel), storagePath: filepath.ToSlash(sourceRelative), still: inspection.Kind == media.KindStill})
+		candidates = append(candidates, importCandidate{source: filepath.ToSlash(sourceRelative), relative: filepath.ToSlash(rel), storagePath: filepath.ToSlash(sourceRelative), still: inspection.Kind == media.KindStill, MP4: inspection.Kind == media.KindVideo && inspection.MIME == "video/mp4"})
 		return nil
 	})
 	if err != nil {
@@ -269,7 +282,7 @@ func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove,
 	for _, candidate := range candidates {
 		if candidate.still {
 			stillKeys[mediaPairKey(candidate.relative)] = struct{}{}
-		} else if candidate.MOV {
+		} else if candidate.MOV || candidate.MP4 {
 			motionKeys[mediaPairKey(candidate.relative)] = struct{}{}
 		}
 	}
@@ -285,7 +298,7 @@ func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove,
 		pairKey := ""
 		key := mediaPairKey(candidate.relative)
 		if _, hasStill := stillKeys[key]; hasStill {
-			if candidate.MOV {
+			if candidate.MOV || candidate.MP4 {
 				pairKey = key
 			} else if _, hasMotion := motionKeys[key]; hasMotion {
 				pairKey = key

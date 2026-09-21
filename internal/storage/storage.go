@@ -147,6 +147,11 @@ func copyAndRemove(source, destination string) error {
 		_ = os.Remove(destination)
 		return closeInErr
 	}
+	// Preserve the timestamp used by timeline/import date fallback across devices.
+	if err := os.Chtimes(destination, info.ModTime(), info.ModTime()); err != nil {
+		_ = os.Remove(destination)
+		return err
+	}
 	return os.Remove(source)
 }
 

@@ -622,6 +622,17 @@ func extractMetadata(path, mimeType string, size int64) (imageMetadata, error) {
 	return extractMetadataWithTools(path, mimeType, size, nil)
 }
 
+// CaptureTime uses the same metadata and fallback rules as the timeline.
+// Importers call this before moving originals so file mtime remains meaningful.
+func CaptureTime(path, mimeType string, tools *media.Tools) (time.Time, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	metadata, err := extractMetadataWithTools(path, mimeType, info.Size(), tools)
+	return metadata.capturedAt, err
+}
+
 func extractMetadataWithTools(path, mimeType string, size int64, tools *media.Tools) (imageMetadata, error) {
 	stat, err := os.Stat(path)
 	if err != nil {
