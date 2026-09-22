@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { NavigationContainer, useIsFocused, useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackNavigationProp, type NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -8,8 +8,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { Screen } from '../components/ui';
 import { colors, spacing } from '../components/theme';
-import { ConnectionSettingsScreen } from '../features/auth/ConnectionSettingsScreen';
-import { LoginScreen } from '../features/auth/LoginScreen';
+import { LoginScreen, type LoginSubmitInput } from '../features/auth/LoginScreen';
 import { FolderBrowserScreen } from '../features/folders/FolderBrowserScreen';
 import { GalleryScreen } from '../features/gallery/GalleryScreen';
 import { MediaViewerScreen } from '../features/viewer/MediaViewerScreen';
@@ -21,14 +20,13 @@ import { uploadQueue } from '../features/upload/uploadService';
 import { createApiClient } from '../services/api/client';
 import type { Photo, User } from '../services/api/types';
 import { credentialsStore } from '../services/credentials';
-import { connectionStore, getEnabledLANCIDRs } from '../services/connection/store';
+import { connectionStore, generateServerID, getEnabledLANCIDRs } from '../services/connection/store';
 import type { ServerConfig } from '../services/connection/types';
 import { useBoot } from './useBoot';
 import '../i18n';
 
 type RootStackParamList = {
   Loading: undefined;
-  Connection: undefined;
   Login: undefined;
   Main: undefined;
   Viewer: { photos: readonly Photo[]; initialIndex?: number };
@@ -251,24 +249,51 @@ function ViewerRoute({
   );
 }
 
-function LoginRoute({ server, reload }: { server: ServerConfig; reload: () => void }) {
-  const api = useMemo(
-    () => createApiClient({
-      baseURL: server.baseURL,
-      serverId: server.id,
+const MOBILE_APP_VERSION = '0.0.4';
+
+function LoginRoute({ server, reload }: { server?: ServerConfig; reload: () => void }) {
+  const login = useCallback(async (input: LoginSubmitInput) => {
+    const serverId = server?.id ?? generateServerID();
+    const api = createApiClient({
+      baseURL: input.baseURL,
+      serverId,
       lanCIDRs: () => getEnabledLANCIDRs(connectionStore.getState()),
       credentials: credentialsStore,
-    }),
-    [server.baseURL, server.id],
-  );
+    });
+    await api.healthz();
+    const session = await api.login({
+      username: input.username,
+      password: input.password,
+      deviceName: 'Android device',
+      platform: 'android',
+      appVersion: MOBILE_APP_VERSION,
+    });
+
+    const store = connectionStore.getState();
+    if (server) {
+      store.updateServer(server.id, {
+        baseURL: input.baseURL,
+        allowInsecureConfirmedAt: input.allowInsecureConfirmedAt,
+      });
+    } else {
+      store.addServer({
+        id: serverId,
+        baseURL: input.baseURL,
+        displayName: input.baseURL,
+        allowInsecureConfirmedAt: input.allowInsecureConfirmedAt,
+      });
+      store.selectServer(serverId);
+    }
+    await store.flushPersistence();
+    return session;
+  }, [server]);
+
   return (
     <LoginScreen
       services={{
         server,
         lanCIDRs: getEnabledLANCIDRs(connectionStore.getState()),
-        api,
-        onInsecureConfirmed: (confirmedAt) =>
-          connectionStore.getState().setServerInsecureConfirmation(server.id, confirmedAt),
+        login,
         onAuthenticated: reload,
       }}
     />
@@ -281,12 +306,14 @@ export function RootNavigator() {
     <NavigationContainer>
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         {state.status === 'loading' ? <RootStack.Screen name="Loading" component={LoadingScreen} /> : null}
-        {state.status === 'needs-server' ? (
-          <RootStack.Screen name="Connection" component={ConnectionSettingsScreen} />
-        ) : null}
-        {state.status === 'needs-login' ? (
+        {state.status === 'needs-server' || state.status === 'needs-login' ? (
           <RootStack.Screen name="Login">
-            {() => <LoginRoute server={state.server} reload={reload} />}
+            {() => (
+              <LoginRoute
+                server={state.status === 'needs-login' ? state.server : undefined}
+                reload={reload}
+              />
+            )}
           </RootStack.Screen>
         ) : null}
         {state.status === 'authenticated' ? (

@@ -15,6 +15,7 @@ export type StorageLike = {
 export type UploadConcurrency = 1 | 2 | 3 | 4;
 
 export type AddServerInput = {
+  id?: string;
   baseURL: string;
   displayName: string;
   allowInsecureConfirmedAt?: string | null;
@@ -57,7 +58,7 @@ export const DEFAULT_CONNECTION_SETTINGS: ConnectionSettings = {
   language: 'system',
 };
 
-function generateServerID(): string {
+export function generateServerID(): string {
   return `server-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
@@ -209,7 +210,10 @@ export function createConnectionStore(options: ConnectionStoreOptions = {}) {
       },
       flushPersistence: () => writeQueue,
       addServer: (input) => {
-        let id = idFactory();
+        let id = input.id ?? idFactory();
+        if (input.id && get().servers.some((server) => server.id === id)) {
+          return id;
+        }
         while (get().servers.some((server) => server.id === id)) {
           id = generateServerID();
         }
@@ -238,7 +242,9 @@ export function createConnectionStore(options: ConnectionStoreOptions = {}) {
               ...server,
               ...patch,
               allowInsecureConfirmedAt: baseURLChanged
-                ? null
+                ? patch.allowInsecureConfirmedAt !== undefined
+                  ? patch.allowInsecureConfirmedAt
+                  : null
                 : patch.allowInsecureConfirmedAt !== undefined
                   ? patch.allowInsecureConfirmedAt
                   : server.allowInsecureConfirmedAt,

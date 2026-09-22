@@ -6,16 +6,22 @@ import { Message, Field, PrimaryButton, Screen } from '../../components/ui';
 import { colors, spacing } from '../../components/theme';
 import { evaluateServerURL } from '../../services/connection/policy';
 import type { ServerConfig } from '../../services/connection/types';
-import { ApiError, type ApiClient } from '../../services/api/client';
+import { ApiError } from '../../services/api/client';
 import type { MobileSessionResponse } from '../../services/api/types';
 import '../../i18n';
 
+export type LoginSubmitInput = {
+  baseURL: string;
+  username: string;
+  password: string;
+  allowInsecureConfirmedAt: string | null;
+};
+
 export type LoginScreenServices = {
-  server: ServerConfig;
+  server?: ServerConfig;
   lanCIDRs: readonly string[];
-  api: Pick<ApiClient, 'healthz' | 'login'>;
+  login: (input: LoginSubmitInput) => Promise<MobileSessionResponse>;
   onAuthenticated?: (session: MobileSessionResponse) => void | Promise<void>;
-  onInsecureConfirmed?: (confirmedAt: string | null) => void | Promise<void>;
 };
 
 function policyMessage(reason: string, t: (key: string) => string): string {
@@ -39,8 +45,8 @@ function loginErrorMessage(error: unknown, t: (key: string) => string): string {
     if (error.code === 'INVALID_CREDENTIALS') {
       return t('auth.invalidCredentials');
     }
-    if (error.code === 'SERVER_MOBILE_API_UNSUPPORTED') {
-      return t('auth.unsupportedMobile');
+    if (error.code === 'INVALID_RESPONSE') {
+      return t('auth.invalidResponse');
     }
     return error.message;
   }
@@ -50,24 +56,42 @@ function loginErrorMessage(error: unknown, t: (key: string) => string): string {
   if (error instanceof Error && (error as Error & { code?: string }).code === 'INVALID_CREDENTIALS') {
     return t('auth.invalidCredentials');
   }
-  return t('auth.healthFailed');
+  if (
+    error instanceof Error &&
+    ((error as Error & { code?: string }).code === 'CREDENTIALS_ERROR' ||
+      error.message.includes('NativeCredentials'))
+  ) {
+    return t('auth.credentialStoreFailed');
+  }
+  if (
+    error instanceof TypeError ||
+    (error instanceof Error &&
+      (error.message.includes('Network request failed') ||
+        error.message.startsWith('server_') ||
+        error.message.startsWith('redirect_')))
+  ) {
+    return t('auth.healthFailed');
+  }
+  return t('auth.loginFailed');
 }
 
 export function LoginScreen({ services }: { services: LoginScreenServices }) {
   const { t } = useTranslation();
+  const [baseURL, setBaseURL] = useState(services.server?.baseURL ?? '');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [httpConfirmed, setHttpConfirmed] = useState(Boolean(services.server.allowInsecureConfirmedAt));
+  const [httpConfirmed, setHttpConfirmed] = useState(Boolean(services.server?.allowInsecureConfirmedAt));
   const decision = useMemo(
-    () => evaluateServerURL(services.server.baseURL, services.lanCIDRs),
-    [services.lanCIDRs, services.server.baseURL],
+    () => evaluateServerURL(baseURL, services.lanCIDRs),
+    [baseURL, services.lanCIDRs],
   );
 
   useEffect(() => {
-    setHttpConfirmed(Boolean(services.server.allowInsecureConfirmedAt));
-  }, [services.server.allowInsecureConfirmedAt, services.server.id]);
+    setBaseURL(services.server?.baseURL ?? '');
+    setHttpConfirmed(Boolean(services.server?.allowInsecureConfirmedAt));
+  }, [services.server?.allowInsecureConfirmedAt, services.server?.baseURL, services.server?.id]);
 
   const submit = async () => {
     setError(null);
@@ -85,13 +109,11 @@ export function LoginScreen({ services }: { services: LoginScreenServices }) {
     }
     setLoading(true);
     try {
-      await services.api.healthz();
-      const session = await services.api.login({
+      const session = await services.login({
+        baseURL: decision.normalizedURL,
         username: username.trim(),
         password,
-        deviceName: 'Android device',
-        platform: 'android',
-        appVersion: '1.0.0',
+        allowInsecureConfirmedAt: decision.insecure ? new Date().toISOString() : null,
       });
       await services.onAuthenticated?.(session);
     } catch (caught) {
@@ -104,29 +126,39 @@ export function LoginScreen({ services }: { services: LoginScreenServices }) {
   return (
     <Screen>
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>{services.server.displayName}</Text>
+        <Text style={styles.eyebrow}>{services.server?.displayName ?? '77Photo'}</Text>
         <Text style={styles.title}>{t('auth.title')}</Text>
         <Text style={styles.subtitle}>{t('auth.subtitle')}</Text>
       </View>
+      {error ? <Message>{error}</Message> : null}
+      <Field
+        label={t('connection.url')}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        placeholder="http://192.168.1.10:8080"
+        value={baseURL}
+        onChangeText={(value) => {
+          setBaseURL(value);
+          if (value.trim() !== services.server?.baseURL) {
+            setHttpConfirmed(false);
+          }
+        }}
+      />
+      {baseURL.trim() && !decision.allowed ? <Message>{policyMessage(decision.reason, t)}</Message> : null}
       {decision.allowed && decision.insecure ? <Message warning>{t('auth.lanWarning')}</Message> : null}
       {decision.allowed && decision.insecure ? (
         <Pressable
           accessibilityRole="checkbox"
           accessibilityLabel={t('auth.confirmLanControl', '确认在内网使用未加密 HTTP')}
           accessibilityState={{ checked: httpConfirmed }}
-          onPress={() => {
-            const next = !httpConfirmed;
-            setHttpConfirmed(next);
-            Promise.resolve(services.onInsecureConfirmed?.(next ? new Date().toISOString() : null)).catch(() => undefined);
-          }}
+          onPress={() => setHttpConfirmed((value) => !value)}
           style={styles.confirmRow}
         >
           <Text style={styles.checkbox}>{httpConfirmed ? '☑' : '☐'}</Text>
           <Text style={styles.confirmText}>{t('auth.confirmLanControl', '确认在内网使用未加密 HTTP')}</Text>
         </Pressable>
       ) : null}
-      {!decision.allowed ? <Message>{policyMessage(decision.reason, t)}</Message> : null}
-      {error ? <Message>{error}</Message> : null}
       <Field label={t('auth.username')} autoCapitalize="none" autoCorrect={false} value={username} onChangeText={setUsername} />
       <Field label={t('auth.password')} secureTextEntry value={password} onChangeText={setPassword} />
       <PrimaryButton

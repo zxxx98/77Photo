@@ -1,5 +1,5 @@
 import type { TurboModule } from 'react-native';
-import { TurboModuleRegistry } from 'react-native';
+import { NativeModules, TurboModuleRegistry } from 'react-native';
 
 export type StoredCredentials = {
   serverId: string;
@@ -22,4 +22,7 @@ export interface Spec extends TurboModule {
   ): Promise<StoredCredentials | null>;
 }
 
-export default TurboModuleRegistry.get<Spec>('NativeCredentials');
+const turboModule = TurboModuleRegistry.get<Spec>('NativeCredentials');
+const legacyModule = NativeModules.NativeCredentials as Spec | undefined;
+
+export default turboModule ?? legacyModule ?? null;

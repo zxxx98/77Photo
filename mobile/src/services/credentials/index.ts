@@ -4,15 +4,19 @@ export type CredentialsStore = Pick<Spec, 'get' | 'set' | 'clear'> & Partial<Pic
 
 export type { StoredCredentials };
 
+function unavailableCredentialsError(): Error & { code: string } {
+  return Object.assign(new Error('NativeCredentials is unavailable'), { code: 'CREDENTIALS_ERROR' });
+}
+
 const unavailableCredentials: CredentialsStore = {
   get: async () => {
-    throw new Error('NativeCredentials is unavailable');
+    throw unavailableCredentialsError();
   },
   set: async () => {
-    throw new Error('NativeCredentials is unavailable');
+    throw unavailableCredentialsError();
   },
   clear: async () => {
-    throw new Error('NativeCredentials is unavailable');
+    throw unavailableCredentialsError();
   },
 };
 

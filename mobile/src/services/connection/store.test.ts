@@ -56,6 +56,21 @@ describe('connection settings store', () => {
     expect(second.getState().selectedServerId).toBe('server-1');
   });
 
+  it('accepts a reserved server ID so credentials and persisted server configuration stay aligned', async () => {
+    const storage = createMemoryStorage();
+    const store = createConnectionStore({ storage, idFactory: () => 'generated-server' });
+
+    const id = store.getState().addServer({
+      id: 'reserved-server',
+      baseURL: 'https://photo.example',
+      displayName: 'Home',
+    });
+    await store.getState().flushPersistence();
+
+    expect(id).toBe('reserved-server');
+    expect(store.getState().servers[0]?.id).toBe('reserved-server');
+  });
+
   it('allows an existing insecure confirmation to be cleared explicitly', async () => {
     const storage = createMemoryStorage();
     const store = createConnectionStore({ storage, idFactory: () => 'server-1' });
