@@ -3,7 +3,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApiClient, Folder, Photo } from '../../app/api';
+import type { ApiClient, Folder, Photo, PhotoPage } from '../../app/api';
 import { I18nProvider } from '../../app/I18nProvider';
 import FoldersWorkspace from './FoldersWorkspace';
 
@@ -38,6 +38,39 @@ describe('folders workspace states', () => {
     });
     return { onUpload, onFolderChange };
   }
+
+  it.each(['success', 'failure'])('ignores stale pagination %s after entering another folder', async (outcome) => {
+    let resolveOld!: (page: PhotoPage) => void;
+    let rejectOld!: (error: Error) => void;
+    const oldPage = new Promise<PhotoPage>((resolve, reject) => { resolveOld = resolve; rejectOld = reject; });
+    let resolveCurrent!: (page: PhotoPage) => void;
+    const currentPage = new Promise<PhotoPage>((resolve) => { resolveCurrent = resolve; });
+    const child = { ...rootFolder, id: 'child', name: 'Child' };
+    const childPhoto = { ...photo, id: 'child-photo', folder_id: 'child', filename: 'child.jpg' };
+    const listFolders = vi.fn().mockImplementation((id?: string) => Promise.resolve({ items: id === rootFolder.id ? [child] : [] }));
+    const listPhotos = vi.fn().mockImplementation(({ folderId, cursor }: { folderId: string; cursor?: string }) => {
+      if (cursor) return folderId === rootFolder.id ? oldPage : currentPage;
+      return Promise.resolve({ items: [folderId === rootFolder.id ? photo : childPhoto], next_cursor: folderId === rootFolder.id ? 'old-cursor' : 'child-cursor' });
+    });
+    const api = { listFolders, listPhotos } as unknown as ApiClient;
+    await act(async () => root.render(<I18nProvider><FoldersWorkspace api={api} initialFolder={rootFolder} onUpload={vi.fn()} /></I18nProvider>));
+    await act(async () => container.querySelector<HTMLButtonElement>('.gallery-sentinel button')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('.folder-row-link')!.click());
+    expect(container.querySelector<HTMLButtonElement>('.gallery-sentinel button')!.disabled).toBe(false);
+    await act(async () => container.querySelector<HTMLButtonElement>('.gallery-sentinel button')!.click());
+    expect(listPhotos).toHaveBeenLastCalledWith({ folderId: 'child', cursor: 'child-cursor', limit: 50 });
+
+    await act(async () => {
+      if (outcome === 'success') resolveOld({ items: [{ ...photo, id: 'stale', filename: 'stale.jpg' }], next_cursor: 'stale-cursor' });
+      else rejectOld(new Error('offline'));
+    });
+    expect(container.textContent).not.toContain('stale.jpg');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('.gallery-sentinel button')!.disabled).toBe(true);
+    await act(async () => resolveCurrent({ items: [{ ...childPhoto, id: 'child-2', filename: 'child-2.jpg' }], next_cursor: null }));
+    expect(container.textContent).toContain('child-2.jpg');
+    expect(container.querySelector('.gallery-sentinel button')).toBeNull();
+  });
 
   it('runs both root empty-state actions', async () => {
     const api = { listFolders: vi.fn().mockResolvedValue({ items: [] }) } as unknown as ApiClient;

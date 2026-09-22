@@ -8,6 +8,12 @@ import { I18nProvider } from '../../app/I18nProvider';
 import UploadWorkspace from './UploadWorkspace';
 import type { UploadSelection } from './uploadSelection';
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 const uploadedPhoto: Photo = {
   id: 'photo-1', owner_id: 'user-1', folder_id: 'nested-1', filename: 'baby.jpg', mime_type: 'image/jpeg', size: 100,
   captured_at: '2026-09-17T01:00:00Z', captured_at_source: 'file_mtime',
@@ -27,6 +33,55 @@ describe('upload workspace folder context', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it.each(['failed', 'cancelled'])('retries a %s upload without selecting another file', async (status) => {
+    const file = new File(['image'], 'baby.jpg', { type: 'image/jpeg' });
+    const error = Object.assign(new Error('offline'), { code: status === 'cancelled' ? 'ABORTED' : 'NETWORK_ERROR' });
+    const uploadPhoto = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(uploadedPhoto);
+    const api = { listFolders: vi.fn().mockResolvedValue({ items: [] }), uploadPhoto } as unknown as ApiClient;
+    const onUploadComplete = vi.fn();
+    await act(async () => root.render(<I18nProvider><UploadWorkspace api={api} selection={{ id: 1, files: [file], destination: { id: 'nested-1', name: 'Baby' }, returnToFolder: true }} onUploadComplete={onUploadComplete} /></I18nProvider>));
+
+    expect(uploadPhoto).toHaveBeenCalledTimes(1);
+    expect(onUploadComplete).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLButtonElement>('.text-button')!.click());
+    expect(uploadPhoto).toHaveBeenCalledTimes(2);
+    expect(uploadPhoto).toHaveBeenLastCalledWith(file, 'nested-1', expect.any(Function), expect.any(AbortSignal));
+    expect(onUploadComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for files added during an upload before returning to the folder', async () => {
+    const first = deferred<Photo>();
+    const second = deferred<Photo>();
+    const uploadPhoto = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const api = { listFolders: vi.fn().mockResolvedValue({ items: [] }), uploadPhoto } as unknown as ApiClient;
+    const onUploadComplete = vi.fn();
+    const destination = { id: 'nested-1', name: 'Baby' };
+    const renderSelection = (id: number) => <I18nProvider><UploadWorkspace api={api} selection={{ id, files: [new File(['image'], `${id}.jpg`)], destination, returnToFolder: true }} onUploadComplete={onUploadComplete} /></I18nProvider>;
+
+    await act(async () => root.render(renderSelection(1)));
+    await act(async () => root.render(renderSelection(2)));
+    expect(uploadPhoto).toHaveBeenCalledTimes(1);
+    await act(async () => first.resolve(uploadedPhoto));
+    expect(uploadPhoto).toHaveBeenCalledTimes(2);
+    expect(onUploadComplete).not.toHaveBeenCalled();
+    await act(async () => second.resolve({ ...uploadedPhoto, id: 'photo-2' }));
+    expect(onUploadComplete).toHaveBeenCalledTimes(1);
+    expect(onUploadComplete).toHaveBeenCalledWith(destination);
+  });
+
+  it('does not automatically retry failures when more files are selected', async () => {
+    const uploadPhoto = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(uploadedPhoto);
+    const api = { listFolders: vi.fn().mockResolvedValue({ items: [] }), uploadPhoto } as unknown as ApiClient;
+    const onUploadComplete = vi.fn();
+    const renderSelection = (id: number) => <I18nProvider><UploadWorkspace api={api} selection={{ id, files: [new File(['image'], `${id}.jpg`)], destination: { id: 'nested-1', name: 'Baby' }, returnToFolder: true }} onUploadComplete={onUploadComplete} /></I18nProvider>;
+    await act(async () => root.render(renderSelection(1)));
+    await act(async () => root.render(renderSelection(2)));
+    expect(uploadPhoto).toHaveBeenCalledTimes(2);
+    expect(uploadPhoto.mock.calls[1][0].name).toBe('2.jpg');
+    expect(onUploadComplete).not.toHaveBeenCalled();
+    expect(container.querySelector('.text-button')).not.toBeNull();
   });
 
   it('uploads to a nested folder passed from the folder browser and returns there after success', async () => {

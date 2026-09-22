@@ -30,6 +30,7 @@ export default function FoldersWorkspace({ api, initialFolder = null, onFolderCh
   const [selected, setSelected] = useState<number | null>(null);
   const [shareResource, setShareResource] = useState<{ type: 'folder'; id: string; name: string } | null>(null);
   const folderNameRef = useRef<HTMLInputElement>(null);
+  const loadGenerationRef = useRef(0);
   const copy = locale === 'zh' ? {
     folders: '文件夹',
     photos: '照片',
@@ -49,6 +50,7 @@ export default function FoldersWorkspace({ api, initialFolder = null, onFolderCh
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setLoadingMore(false);
     setError(null);
     setSelected(null);
     const folderRequest = api.listFolders(parent?.id);
@@ -65,7 +67,10 @@ export default function FoldersWorkspace({ api, initialFolder = null, onFolderCh
     }).finally(() => {
       if (active) setLoading(false);
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      loadGenerationRef.current += 1;
+    };
   }, [api, parent?.id, t]);
 
   async function create(event: FormEvent) {
@@ -86,16 +91,18 @@ export default function FoldersWorkspace({ api, initialFolder = null, onFolderCh
 
   async function loadMorePhotos() {
     if (!parent || !photoCursor || loadingMore) return;
+    const generation = loadGenerationRef.current;
     setLoadingMore(true);
     setError(null);
     try {
       const page = await api.listPhotos({ folderId: parent.id, cursor: photoCursor, limit: 50 });
+      if (generation !== loadGenerationRef.current) return;
       setPhotos((current) => [...current, ...page.items]);
       setPhotoCursor(page.next_cursor);
     } catch {
-      setError(copy.photoLoadFailed);
+      if (generation === loadGenerationRef.current) setError(copy.photoLoadFailed);
     } finally {
-      setLoadingMore(false);
+      if (generation === loadGenerationRef.current) setLoadingMore(false);
     }
   }
 
