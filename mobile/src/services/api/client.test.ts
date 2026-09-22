@@ -154,6 +154,36 @@ describe('mobile API client', () => {
     expect(credentials.set).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'access-2' }));
   });
 
+  it('reuses credentials rotated by native upload after a 401', async () => {
+    let current = storedCredentials;
+    const credentials: CredentialsStore = {
+      get: jest.fn(async () => current),
+      set: jest.fn(async (value: StoredCredentials) => { current = value; }),
+      clear: jest.fn(async () => undefined),
+    };
+    const calls: Call[] = [];
+    const transport: ApiTransport = async (url, init = {}) => {
+      calls.push({ url, init });
+      const authorization = new Headers(init.headers).get('Authorization');
+      if (authorization === 'Bearer expired') {
+        current = { ...storedCredentials, accessToken: 'native-access-2', refreshToken: 'native-refresh-2' };
+        return jsonResponse({ error: { code: 'AUTH_REQUIRED', message: 'authentication required' } }, 401);
+      }
+      return jsonResponse({ items: [], next_cursor: null });
+    };
+    const client = createApiClient({
+      baseURL: 'https://server.test',
+      serverId: 'server-1',
+      transport,
+      credentials,
+    });
+
+    await client.listFolders();
+
+    expect(calls).toHaveLength(2);
+    expect(new Headers(calls[1]?.init.headers).get('Authorization')).toBe('Bearer native-access-2');
+  });
+
   it('retries a failed request at most once', async () => {
     const scripted = createScriptedTransport({ alwaysProtected401: true });
     const client = createApiClient({

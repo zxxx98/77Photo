@@ -7,8 +7,8 @@ import org.junit.Test
 
 class UploadRecoveryWorkerTest {
   @Test
-  fun activeForegroundOwnerMakesRecoveryWorkerYieldSuccessfully() {
-    assertEquals(RecoveryLeaseDecision.YIELD_SUCCESS, UploadRecoveryWorker.leaseDecision(true))
+  fun activeForegroundOwnerKeepsRecoveryWorkPending() {
+    assertEquals(RecoveryLeaseDecision.RETRY, UploadRecoveryWorker.leaseDecision(true))
     assertEquals(RecoveryLeaseDecision.RUN, UploadRecoveryWorker.leaseDecision(false))
   }
 

@@ -23,6 +23,36 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class UploadApiTest {
   @Test
+  fun refreshWaiterReusesCredentialsRotatedByAnotherCaller() {
+    var networkCalls = 0
+    val client = OkHttpClient.Builder()
+      .addInterceptor(Interceptor { chain ->
+        networkCalls += 1
+        Response.Builder()
+          .request(chain.request())
+          .protocol(Protocol.HTTP_1_1)
+          .code(500)
+          .message("Unexpected")
+          .body("{}".toResponseBody("application/json".toMediaType()))
+          .build()
+      })
+      .build()
+    val credentials = MutableCredentials("access-2", "refresh-2")
+
+    val result = UploadCredentialRefreshCoordinator.refresh(
+      serverId = "server-1",
+      deviceId = "device-1",
+      attemptedAccessToken = "access-1",
+      refreshEndpoint = "https://photos.example/api/v1/mobile/auth/refresh",
+      client = client,
+      credentials = credentials,
+    )
+
+    assertEquals("access-2", result?.accessToken)
+    assertEquals(0, networkCalls)
+  }
+
+  @Test
   fun pairedMotionUsesOneLogicalRequestWithFileBeforeMotionAndCombinedProgress() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     var capturedPath: String? = null
@@ -110,5 +140,23 @@ class UploadApiTest {
     )
 
     override fun replace(credentials: UploadStoredCredentials) = Unit
+  }
+
+  private class MutableCredentials(accessToken: String, refreshToken: String) : UploadCredentialStore {
+    private var current = UploadStoredCredentials(
+      serverId = "server-1",
+      deviceId = "device-1",
+      accessToken = accessToken,
+      accessTokenExpiresAt = "2099-01-01T00:00:00Z",
+      refreshToken = refreshToken,
+      refreshTokenExpiresAt = "2099-01-01T00:00:00Z",
+    )
+
+    override fun get(serverId: String, deviceId: String): UploadStoredCredentials? =
+      current.takeIf { it.serverId == serverId && it.deviceId == deviceId }
+
+    override fun replace(credentials: UploadStoredCredentials) {
+      current = credentials
+    }
   }
 }

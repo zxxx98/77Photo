@@ -14,6 +14,7 @@ import com.facebook.react.module.model.ReactModuleInfo
 import com.facebook.react.module.model.ReactModuleInfoProvider
 import com.facebook.react.BaseReactPackage
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.turbomodule.core.interfaces.TurboModule
@@ -22,6 +23,7 @@ import com.photo77.upload.db.UploadTaskEntity
 import com.photo77.upload.db.UploadTaskState
 import com.photo77.upload.ContentResolverUriGrantReleaser
 import com.photo77.upload.releaseCanceledTaskUriGrants
+import com.photo77.upload.UriGrantRegistry
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -125,7 +127,18 @@ class NativeUploadQueueModule(
           leaseUntilEpochMs = null,
         )
       }
-      database.uploadTaskDao().insertAll(tasks)
+      UriGrantRegistry.synchronized {
+        // Re-take the grant while publishing the queue rows. This closes the
+        // race where a picker cleanup releases the process-wide grant just
+        // before these tasks become visible to the reference query.
+        tasks.flatMap { listOfNotNull(it.contentUri, it.motionUri) }.distinct().forEach { uri ->
+          reactApplicationContext.contentResolver.takePersistableUriPermission(
+            Uri.parse(uri),
+            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+          )
+        }
+        database.uploadTaskDao().insertAll(tasks)
+      }
       Arguments.createArray().also { result -> tasks.forEach { result.pushString(it.id) } }
     }
   }
@@ -179,6 +192,7 @@ class NativeUploadQueueModule(
         releaseCanceledTaskUriGrants(
           dao.findByIds(ids),
           ContentResolverUriGrantReleaser(reactApplicationContext.contentResolver),
+          dao::hasRetainableUri,
         )
       }
       null

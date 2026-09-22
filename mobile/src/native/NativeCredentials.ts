@@ -14,6 +14,12 @@ export interface Spec extends TurboModule {
   get(serverId: string): Promise<StoredCredentials | null>;
   set(value: StoredCredentials): Promise<void>;
   clear(serverId: string): Promise<void>;
+  refresh(
+    serverId: string,
+    baseURL: string,
+    attemptedAccessToken: string | null,
+    lanCIDRs: readonly string[],
+  ): Promise<StoredCredentials | null>;
 }
 
 export default TurboModuleRegistry.get<Spec>('NativeCredentials');

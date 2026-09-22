@@ -1,6 +1,6 @@
 import NativeCredentials, { type Spec, type StoredCredentials } from '../../native/NativeCredentials';
 
-export type CredentialsStore = Pick<Spec, 'get' | 'set' | 'clear'>;
+export type CredentialsStore = Pick<Spec, 'get' | 'set' | 'clear'> & Partial<Pick<Spec, 'refresh'>>;
 
 export type { StoredCredentials };
 

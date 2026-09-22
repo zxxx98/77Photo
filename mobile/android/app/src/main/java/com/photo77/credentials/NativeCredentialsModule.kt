@@ -8,6 +8,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.module.model.ReactModuleInfo
 import com.facebook.react.module.model.ReactModuleInfoProvider
@@ -17,6 +18,10 @@ import com.facebook.react.module.annotations.ReactModule
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import org.json.JSONObject
+import com.photo77.upload.EncryptedUploadCredentialStore
+import com.photo77.upload.UploadApi
+import com.photo77.upload.UploadStoredCredentials
+import com.photo77.upload.UploadURLPolicy
 
 @ReactModule(name = NativeCredentialsModule.NAME)
 class NativeCredentialsModule(
@@ -93,6 +98,29 @@ class NativeCredentialsModule(
     }
   }
 
+  /** Uses the same native single-flight coordinator as background uploads. */
+  @ReactMethod
+  fun refresh(serverId: String, baseURL: String, attemptedAccessToken: String?, lanCIDRs: ReadableArray, promise: Promise) {
+    execute(promise) {
+      val safeServerId = validateServerId(serverId)
+      val ranges = (0 until lanCIDRs.size()).map { index ->
+        lanCIDRs.getString(index)?.trim()?.takeIf { it.isNotEmpty() }
+          ?: throw IllegalArgumentException("lanCIDRs contains an invalid range")
+      }.distinct().take(MAX_LAN_CIDRS)
+      val normalizedBaseURL = UploadURLPolicy.requireAllowed(baseURL, ranges)
+      val store = EncryptedUploadCredentialStore(reactApplicationContext)
+      val current = readUploadCredentials(store, safeServerId) ?: return@execute null
+      val refreshed = UploadApi(
+        baseUrl = normalizedBaseURL,
+        contentResolver = reactApplicationContext.contentResolver,
+        credentials = store,
+        allowedLANCIDRs = ranges,
+      ).refresh(safeServerId, current.deviceId, attemptedAccessToken)
+      if (!refreshed) return@execute null
+      readUploadCredentials(store, safeServerId)?.toWritableMap()
+    }
+  }
+
   override fun invalidate() {
     executor.shutdownNow()
     super.invalidate()
@@ -121,6 +149,26 @@ class NativeCredentialsModule(
       putString("refreshToken", jsonRequiredString(json, "refreshToken"))
       putString("refreshTokenExpiresAt", jsonRequiredString(json, "refreshTokenExpiresAt"))
     }
+  }
+
+  private fun readUploadCredentials(store: EncryptedUploadCredentialStore, serverId: String): UploadStoredCredentials? {
+    val prefix = keyPrefix(serverId)
+    val ciphertext = preferences.getString("$prefix.ciphertext", null) ?: return null
+    val iv = preferences.getString("$prefix.iv", null) ?: return null
+    val schema = preferences.getInt("$prefix.schema", -1)
+    if (schema < 0) return null
+    val json = JSONObject(cipher.decrypt(EncryptedPayload(schema, iv, ciphertext), serverId))
+    val deviceId = jsonRequiredString(json, "deviceId")
+    return store.get(serverId, deviceId)
+  }
+
+  private fun UploadStoredCredentials.toWritableMap(): WritableMap = Arguments.createMap().apply {
+    putString("serverId", serverId)
+    putString("deviceId", deviceId)
+    putString("accessToken", accessToken)
+    putString("accessTokenExpiresAt", accessTokenExpiresAt)
+    putString("refreshToken", refreshToken)
+    putString("refreshTokenExpiresAt", refreshTokenExpiresAt)
   }
 
   private fun requiredString(value: ReadableMap, key: String): String {
@@ -152,6 +200,7 @@ class NativeCredentialsModule(
     const val NAME = "NativeCredentials"
     private const val PREFERENCES_NAME = "photo77.mobile.credentials"
     private val SERVER_ID_PATTERN = Regex("[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+    private const val MAX_LAN_CIDRS = 128
   }
 }
 

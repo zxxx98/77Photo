@@ -71,6 +71,7 @@ data class UploadResult(
   val errorMessage: String? = null,
   val disposition: UploadDisposition? = null,
   val succeeded: Boolean = false,
+  val attemptedAccessToken: String? = null,
 ) {
   companion object {
     fun success() = UploadResult(succeeded = true, statusCode = 200)
@@ -96,10 +97,11 @@ data class UploadResult(
       disposition = UploadDisposition.SKIPPED,
     )
 
-    fun authRequired(message: String? = null) = UploadResult(
+    fun authRequired(message: String? = null, attemptedAccessToken: String? = null) = UploadResult(
       statusCode = 401,
       errorCode = "AUTH_REQUIRED",
       errorMessage = message,
+      attemptedAccessToken = attemptedAccessToken,
     )
   }
 }
@@ -118,6 +120,7 @@ class UploadScheduler(
 ) {
   private val coordinator: ExecutorService = Executors.newSingleThreadExecutor(daemonThreadFactory("photo77-upload-coordinator"))
   private val workers: ExecutorService = Executors.newCachedThreadPool(daemonThreadFactory("photo77-upload-worker"))
+  private val leaseReleaseExecutor: ExecutorService = Executors.newSingleThreadExecutor(daemonThreadFactory("photo77-upload-lease-release"))
   private val stopped = AtomicBoolean(false)
   private val stateLock = Any()
   private var configuredConcurrency = DEFAULT_CONCURRENCY
@@ -146,11 +149,17 @@ class UploadScheduler(
     }
   }
 
-  fun stop() {
-    if (!stopped.compareAndSet(false, true)) return
+  fun stop(): Future<*>? {
+    if (!stopped.compareAndSet(false, true)) return null
     coordinator.shutdownNow()
     workers.shutdownNow()
-    runOwner?.let(source::releaseLeases)
+    val leaseRelease = runOwner?.let { owner ->
+      // Room is synchronous; never perform this write on a caller such as a
+      // Service lifecycle callback or BroadcastReceiver main thread.
+      leaseReleaseExecutor.submit { source.releaseLeases(owner) }
+    }
+    leaseReleaseExecutor.shutdown()
+    return leaseRelease
   }
 
   private fun runLoop(serverId: String, owner: String) {
@@ -234,7 +243,7 @@ class UploadScheduler(
       if (stopped.get()) return
 
       if (result.statusCode == 401 || result.errorCode == "AUTH_REQUIRED") {
-        if (!authRetried && authRefresher?.refresh(task.serverId, task.deviceId) == true) {
+        if (!authRetried && authRefresher?.refresh(task.serverId, task.deviceId, result.attemptedAccessToken) == true) {
           authRetried = true
           continue
         }

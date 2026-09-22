@@ -69,6 +69,26 @@ class UriGrantReleaserTest {
     )
   }
 
+  @Test
+  fun sharedUriIsKeptWhileAnotherRetryableTaskStillReferencesIt() {
+    val released = mutableListOf<String>()
+    val releaser = UriGrantReleaser { released += it.toString() }
+    val canceled = task(
+      "canceled",
+      UploadTaskState.CANCELED,
+      "content://media/shared",
+      "content://media/motion",
+    )
+
+    releaseCanceledTaskUriGrants(
+      listOf(canceled),
+      releaser,
+      hasRetainableUri = { it == "content://media/shared" },
+    )
+
+    assertEquals(listOf("content://media/motion"), released)
+  }
+
   private fun task(id: String, state: String, uri: String, motionUri: String) = UploadTaskEntity(
     id = id,
     batchId = "batch-1",

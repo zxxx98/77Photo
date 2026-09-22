@@ -14,6 +14,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import com.photo77.network.PolicyAwareHttpClient
+import java.util.concurrent.ConcurrentHashMap
 
 data class UploadStoredCredentials(
   val serverId: String,
@@ -30,7 +31,7 @@ interface UploadCredentialStore {
 }
 
 interface UploadAuthRefresher {
-  fun refresh(serverId: String, deviceId: String): Boolean
+  fun refresh(serverId: String, deviceId: String, attemptedAccessToken: String? = null): Boolean
 }
 
 /** The native equivalent of the Keystore-backed credentials TurboModule store. */
@@ -162,7 +163,7 @@ class UploadApi(
         if (response.isSuccessful) {
           UploadResult.success()
         } else {
-          response.toUploadResult()
+          response.toUploadResult(stored.accessToken)
         }
       }
     } catch (_: java.io.FileNotFoundException) {
@@ -176,57 +177,81 @@ class UploadApi(
     }
   }
 
-  override fun refresh(serverId: String, deviceId: String): Boolean {
-    if (allowedBaseUrl == null) return false
-    val current = credentials.get(serverId, deviceId) ?: return false
-    val requestBody = JSONObject().put("refresh_token", current.refreshToken)
-      .toString().toRequestBody(JSON_MEDIA_TYPE)
-    val request = Request.Builder()
-      .url(endpoint("/api/v1/mobile/auth/refresh"))
-      .post(requestBody)
-      .build()
-    return try {
-      client.newCall(request).execute().use { response ->
-        if (!response.isSuccessful) return false
-        val json = JSONObject(response.body?.string().orEmpty())
-        val deviceJSON = json.optJSONObject("device") ?: return false
-        val responseDeviceId = deviceJSON.optString("id")
-        if (responseDeviceId != deviceId) return false
-        val next = UploadStoredCredentials(
-          serverId = serverId,
-          deviceId = responseDeviceId,
-          accessToken = json.optString("access_token"),
-          accessTokenExpiresAt = json.optString("access_token_expires_at"),
-          refreshToken = json.optString("refresh_token"),
-          refreshTokenExpiresAt = json.optString("refresh_token_expires_at"),
-        )
-        if (next.accessToken.isBlank() || next.refreshToken.isBlank() ||
-          next.accessTokenExpiresAt.isBlank() || next.refreshTokenExpiresAt.isBlank()
-        ) return false
-        credentials.replace(next)
-        true
-      }
-    } catch (_: Exception) {
-      false
-    }
-  }
+  override fun refresh(serverId: String, deviceId: String, attemptedAccessToken: String?): Boolean =
+    allowedBaseUrl != null && UploadCredentialRefreshCoordinator.refresh(
+      serverId = serverId,
+      deviceId = deviceId,
+      attemptedAccessToken = attemptedAccessToken,
+      refreshEndpoint = endpoint("/api/v1/mobile/auth/refresh"),
+      client = client,
+      credentials = credentials,
+    ) != null
 
   private fun endpoint(path: String): String = "${checkNotNull(allowedBaseUrl)}/${path.trimStart('/')}"
 
-  private fun okhttp3.Response.toUploadResult(): UploadResult {
+  private fun okhttp3.Response.toUploadResult(attemptedAccessToken: String): UploadResult {
     val status = code
     val payload = body?.string().orEmpty()
     val error = runCatching { JSONObject(payload).optJSONObject("error") }.getOrNull()
     val code = error?.optString("code")?.takeIf { it.isNotBlank() }
     val message = error?.optString("message")?.takeIf { it.isNotBlank() }
     return if (status == 401) {
-      UploadResult.authRequired(message)
+      UploadResult.authRequired(message, attemptedAccessToken)
     } else {
       UploadResult(statusCode = status, errorCode = code, errorMessage = message)
     }
   }
 
-  companion object {
-    private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+}
+
+/** Single process-wide refresh path shared by uploads and the React bridge. */
+object UploadCredentialRefreshCoordinator {
+  private val refreshLocks = ConcurrentHashMap<String, Any>()
+  private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+  fun refresh(
+    serverId: String,
+    deviceId: String,
+    attemptedAccessToken: String?,
+    refreshEndpoint: String,
+    client: OkHttpClient,
+    credentials: UploadCredentialStore,
+  ): UploadStoredCredentials? {
+    val refreshLock = refreshLocks.computeIfAbsent(serverId) { Any() }
+    return synchronized(refreshLock) {
+      val current = credentials.get(serverId, deviceId) ?: return@synchronized null
+      // A waiter whose failed request used an older access token can reuse the
+      // credentials written by the refresh that ran before it.
+      if (attemptedAccessToken != null && current.accessToken != attemptedAccessToken) {
+        return@synchronized current
+      }
+      val request = Request.Builder()
+        .url(refreshEndpoint)
+        .post(JSONObject().put("refresh_token", current.refreshToken).toString().toRequestBody(jsonMediaType))
+        .build()
+      try {
+        client.newCall(request).execute().use { response ->
+          if (!response.isSuccessful) return@synchronized null
+          val json = JSONObject(response.body?.string().orEmpty())
+          val responseDeviceId = json.optJSONObject("device")?.optString("id")
+            ?.takeIf { it == deviceId } ?: return@synchronized null
+          val next = UploadStoredCredentials(
+            serverId = serverId,
+            deviceId = responseDeviceId,
+            accessToken = json.optString("access_token"),
+            accessTokenExpiresAt = json.optString("access_token_expires_at"),
+            refreshToken = json.optString("refresh_token"),
+            refreshTokenExpiresAt = json.optString("refresh_token_expires_at"),
+          )
+          if (next.accessToken.isBlank() || next.refreshToken.isBlank() ||
+            next.accessTokenExpiresAt.isBlank() || next.refreshTokenExpiresAt.isBlank()
+          ) return@synchronized null
+          credentials.replace(next)
+          next
+        }
+      } catch (_: Exception) {
+        null
+      }
+    }
   }
 }

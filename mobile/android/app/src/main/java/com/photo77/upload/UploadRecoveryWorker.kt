@@ -19,7 +19,6 @@ import java.util.concurrent.TimeUnit
 
 internal enum class RecoveryLeaseDecision {
   RUN,
-  YIELD_SUCCESS,
   RETRY,
 }
 
@@ -44,10 +43,13 @@ class UploadRecoveryWorker(
     releaseCompletedTaskUriGrants(
       dao.findByServer(serverId),
       ContentResolverUriGrantReleaser(applicationContext.contentResolver),
+      dao::hasRetainableUri,
     )
     val source = RoomUploadTaskSource(dao)
-    if (leaseDecision(source.hasActiveLease(serverId, System.currentTimeMillis())) == RecoveryLeaseDecision.YIELD_SUCCESS) {
-      return@withContext Result.success()
+    if (leaseDecision(source.hasActiveLease(serverId, System.currentTimeMillis())) == RecoveryLeaseDecision.RETRY) {
+      // Keep this unique work alive until the foreground owner either finishes or
+      // its lease expires. A success result here would lose recovery after a kill.
+      return@withContext Result.retry()
     }
     val api = UploadApi(
       baseUrl = normalizedBaseUrl,
@@ -62,7 +64,11 @@ class UploadRecoveryWorker(
       authRefresher = api,
       networkAvailable = { hasAllowedNetwork(allowMobile) },
       onTaskTerminal = { task ->
-        releaseTaskUriGrants(task, ContentResolverUriGrantReleaser(applicationContext.contentResolver))
+        releaseTaskUriGrantsIfUnused(
+          task,
+          dao::hasRetainableUri,
+          ContentResolverUriGrantReleaser(applicationContext.contentResolver),
+        )
       },
     )
     val future = scheduler.start(
@@ -92,7 +98,7 @@ class UploadRecoveryWorker(
     const val KEY_LAN_CIDRS = "lan_cidrs"
 
     internal fun leaseDecision(hasActiveLease: Boolean): RecoveryLeaseDecision =
-      if (hasActiveLease) RecoveryLeaseDecision.YIELD_SUCCESS else RecoveryLeaseDecision.RUN
+      if (hasActiveLease) RecoveryLeaseDecision.RETRY else RecoveryLeaseDecision.RUN
 
     internal fun reservationDecision(isReserved: Boolean): RecoveryLeaseDecision =
       if (isReserved) RecoveryLeaseDecision.RETRY else RecoveryLeaseDecision.RUN
@@ -121,7 +127,9 @@ class UploadRecoveryWorker(
       val requestBuilder = OneTimeWorkRequestBuilder<UploadRecoveryWorker>()
         .setInputData(input)
         .setConstraints(constraints)
-        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+        // A live foreground owner can hold a 60s lease for a long upload. Keep
+        // recovery checks frequent enough to notice a process kill promptly.
+        .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.SECONDS)
       if (initialDelayMillis > 0L) {
         requestBuilder.setInitialDelay(initialDelayMillis, TimeUnit.MILLISECONDS)
       }

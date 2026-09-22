@@ -258,7 +258,7 @@ export function createApiClient(options: ApiClientOptions) {
 
   let loadedCredentials: StoredCredentials | null | undefined;
   let credentialsLoad: Promise<StoredCredentials | null> | null = null;
-  let refreshPromise: Promise<MobileSessionResponse> | null = null;
+  let refreshPromise: Promise<void> | null = null;
 
   const getCredentials = async (): Promise<StoredCredentials | null> => {
     if (loadedCredentials !== undefined) {
@@ -310,7 +310,7 @@ export function createApiClient(options: ApiClientOptions) {
   const requestJSON = async <T>(path: string, requestOptions: RequestOptions = {}): Promise<T> => {
     const response = await requestOnce(path, requestOptions);
     if (response.status === 401 && requestOptions.auth !== false && requestOptions.retryOnUnauthorized !== false) {
-      await refreshSingleFlight();
+      await refreshSingleFlight(loadedCredentials?.accessToken);
       return requestJSON<T>(path, { ...requestOptions, retryOnUnauthorized: false });
     }
     const payload = await readJSON(response);
@@ -320,10 +320,29 @@ export function createApiClient(options: ApiClientOptions) {
     return payload as T;
   };
 
-  const performRefresh = async (): Promise<MobileSessionResponse> => {
-    const current = await getCredentials();
+  const performRefresh = async (attemptedAccessToken?: string): Promise<void> => {
+    // Native uploads can rotate the same refresh token while the JS client is
+    // alive. Re-read secure storage before refreshing instead of using the
+    // in-memory access token snapshot.
+    const latest = await options.credentials.get(activeServerId);
+    loadedCredentials = latest;
+    const current = latest;
     if (!current?.refreshToken) {
       throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
+    }
+    if (attemptedAccessToken && current.accessToken !== attemptedAccessToken) {
+      return;
+    }
+    if (options.credentials.refresh) {
+      const refreshed = await options.credentials.refresh(
+        activeServerId,
+        baseURL,
+        attemptedAccessToken ?? null,
+        getLANCIDRs(),
+      );
+      if (!refreshed) throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
+      loadedCredentials = refreshed;
+      return;
     }
     const response = await requestOnce(MOBILE_REFRESH_PATH, {
       method: 'POST',
@@ -339,7 +358,6 @@ export function createApiClient(options: ApiClientOptions) {
     const nextCredentials = credentialsFromSession(activeServerId, session);
     await options.credentials.set(nextCredentials);
     loadedCredentials = nextCredentials;
-    return session;
   };
 
   const clearSession = async (serverId = activeServerId, userId = options.userId): Promise<void> => {
@@ -352,23 +370,32 @@ export function createApiClient(options: ApiClientOptions) {
     }
   };
 
-  const refreshSingleFlight = (): Promise<MobileSessionResponse> => {
-    if (!refreshPromise) {
-      refreshPromise = performRefresh()
-        .catch(async (error: unknown) => {
-          loadedCredentials = null;
-          try {
-            await options.credentials.clear(activeServerId);
-          } catch {
-            // Preserve the original authentication error if secure storage is unavailable.
-          }
-          throw error;
-        })
-        .finally(() => {
-          refreshPromise = null;
-        });
+  const refreshSingleFlight = async (attemptedAccessToken?: string): Promise<void> => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!refreshPromise) {
+        refreshPromise = performRefresh(attemptedAccessToken)
+          .catch(async (error: unknown) => {
+            loadedCredentials = null;
+            try {
+              await options.credentials.clear(activeServerId);
+            } catch {
+              // Preserve the original authentication error if secure storage is unavailable.
+            }
+            throw error;
+          })
+          .finally(() => {
+            refreshPromise = null;
+          });
+      }
+      await refreshPromise;
+      if (!attemptedAccessToken) return;
+      const latest = await options.credentials.get(activeServerId);
+      loadedCredentials = latest;
+      if (latest?.accessToken !== attemptedAccessToken) return;
+      // The joined refresh may only have adopted credentials newer than another
+      // caller's token. Retry once for this request's still-current token.
     }
-    return refreshPromise;
+    throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
   };
 
   const login = async (input: MobileLoginInput): Promise<MobileSessionResponse> => {
@@ -395,7 +422,7 @@ export function createApiClient(options: ApiClientOptions) {
     return session;
   };
 
-  const refresh = (): Promise<MobileSessionResponse> => refreshSingleFlight();
+  const refresh = (): Promise<void> => refreshSingleFlight();
 
   return {
     request: requestJSON,

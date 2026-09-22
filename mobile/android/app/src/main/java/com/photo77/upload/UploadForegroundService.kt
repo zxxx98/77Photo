@@ -20,15 +20,34 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Owns uploads after an explicit user start/resume action. */
 class UploadForegroundService : Service() {
   private val monitor: ExecutorService = Executors.newSingleThreadExecutor()
+  private val progressMonitor: ExecutorService = Executors.newSingleThreadExecutor()
+  private val lifecycleLock = Any()
+  @Volatile
   private var scheduler: UploadScheduler? = null
+  @Volatile
+  private var activeFuture: java.util.concurrent.Future<*>? = null
   private var currentServerId: String? = null
   private var currentBaseUrl: String? = null
   private var currentDeviceId: String? = null
   private var currentAllowMobile = false
   private var currentLanCIDRs: List<String> = emptyList()
   private var currentConcurrency = DEFAULT_CONCURRENCY
+  @Volatile
   private var recoveryNeeded = false
   private val stopping = AtomicBoolean(false)
+  private var generation = 0L
+  @Volatile
+  private var latestStartId = 0
+
+  private data class StartRequest(
+    val generation: Long,
+    val serverId: String,
+    val baseUrl: String,
+    val deviceId: String,
+    val allowMobile: Boolean,
+    val lanCIDRs: List<String>,
+    val concurrency: Int,
+  )
 
   override fun onCreate() {
     super.onCreate()
@@ -55,82 +74,179 @@ class UploadForegroundService : Service() {
       return START_NOT_STICKY
     }
 
-    val existingServerId = currentServerId
-    // Promotion happens before opening the database or network connection.
-    stopping.set(false)
-    currentServerId = serverId
-    currentBaseUrl = normalizedBaseUrl
-    currentDeviceId = deviceId
-    currentAllowMobile = intent.getBooleanExtra(EXTRA_ALLOW_MOBILE, false)
-    currentLanCIDRs = lanCIDRs
-    currentConcurrency = intent.getIntExtra(EXTRA_CONCURRENCY, DEFAULT_CONCURRENCY).coerceIn(1, 4)
-    recoveryNeeded = false
+    val allowMobile = intent.getBooleanExtra(EXTRA_ALLOW_MOBILE, false)
+    val concurrency = intent.getIntExtra(EXTRA_CONCURRENCY, DEFAULT_CONCURRENCY).coerceIn(1, 4)
+    var existingServerId: String? = null
+    var reusableScheduler: UploadScheduler? = null
+    var schedulerToStop: UploadScheduler? = null
+    var request: StartRequest? = null
+    synchronized(lifecycleLock) {
+      existingServerId = currentServerId
+      reusableScheduler = scheduler?.takeIf {
+        activeFuture?.isDone == false &&
+        currentServerId == serverId && currentBaseUrl == normalizedBaseUrl && currentDeviceId == deviceId &&
+          currentAllowMobile == allowMobile && currentLanCIDRs == lanCIDRs
+      }
+      schedulerToStop = if (reusableScheduler == null) scheduler else null
+      if (schedulerToStop != null) {
+        scheduler = null
+        activeFuture = null
+      }
+      stopping.set(false)
+      latestStartId = startId
+      currentServerId = serverId
+      currentBaseUrl = normalizedBaseUrl
+      currentDeviceId = deviceId
+      currentAllowMobile = allowMobile
+      currentLanCIDRs = lanCIDRs
+      currentConcurrency = concurrency
+      recoveryNeeded = false
+      if (reusableScheduler == null) {
+        generation += 1
+        request = StartRequest(generation, serverId, normalizedBaseUrl, deviceId, allowMobile, lanCIDRs, concurrency)
+      }
+    }
     synchronized(activeServices) {
       existingServerId?.let { if (activeServices[it] === this) activeServices.remove(it) }
       activeServices[serverId] = this
     }
-    val allowMobile = currentAllowMobile
-    val concurrency = currentConcurrency
     startInForeground(serverId, normalizedBaseUrl, deviceId, allowMobile, lanCIDRs, concurrency)
-    if (scheduler != null && existingServerId == serverId) {
-      scheduler?.setConcurrency(concurrency)
+    reusableScheduler?.let {
+      it.setConcurrency(concurrency)
       return START_NOT_STICKY
     }
+    val leaseRelease = schedulerToStop?.stop()
+    val initializationRequest = checkNotNull(request)
+    monitor.submit {
+      try {
+        runCatching { leaseRelease?.get() }
+        initializeScheduler(initializationRequest)
+      } catch (_: Throwable) {
+        handleInitializationFailure(initializationRequest)
+      }
+    }
+    return START_NOT_STICKY
+  }
 
-    scheduler?.stop()
+  /** Runs all Room access and scheduler construction away from the service main thread. */
+  private fun initializeScheduler(request: StartRequest) {
+    if (!isCurrent(request)) {
+      releaseObsoleteReservation(request)
+      return
+    }
     val owner = "service-${UUID.randomUUID()}"
     val dao = UploadDatabase.getInstance(applicationContext).uploadTaskDao()
     releaseCompletedTaskUriGrants(
-      dao.findByServer(serverId),
+      dao.findByServer(request.serverId),
       ContentResolverUriGrantReleaser(contentResolver),
+      dao::hasRetainableUri,
     )
     val source = RoomUploadTaskSource(dao)
     val api = UploadApi(
-      baseUrl = normalizedBaseUrl,
+      baseUrl = request.baseUrl,
       contentResolver = contentResolver,
       credentials = EncryptedUploadCredentialStore(applicationContext),
-      allowedLANCIDRs = lanCIDRs,
+      allowedLANCIDRs = request.lanCIDRs,
     )
     val nextScheduler = UploadScheduler(
       source = source,
       uploader = api,
       authRefresher = api,
-      networkAvailable = { hasAllowedNetwork(allowMobile) },
+      networkAvailable = { hasAllowedNetwork(request.allowMobile) },
       onTaskTerminal = { task ->
-        releaseTaskUriGrants(task, ContentResolverUriGrantReleaser(contentResolver))
+        releaseTaskUriGrantsIfUnused(task, dao::hasRetainableUri, ContentResolverUriGrantReleaser(contentResolver))
       },
-      onInitialLeaseDecision = { releaseStartReservation(serverId) },
+      onInitialLeaseDecision = { releaseStartReservation(request.serverId) },
     )
-    scheduler = nextScheduler
-    val future = nextScheduler.start(
-      serverId = serverId,
-      owner = owner,
-      concurrency = concurrency,
-    )
-    monitor.submit { watchProgress(serverId, normalizedBaseUrl, deviceId, allowMobile, lanCIDRs, future, startId) }
-    return START_NOT_STICKY
+    val future = synchronized(lifecycleLock) {
+      if (!isCurrentLocked(request)) null else {
+        scheduler = nextScheduler
+        nextScheduler.start(serverId = request.serverId, owner = owner, concurrency = request.concurrency)
+          .also { activeFuture = it }
+      }
+    }
+    if (future == null) {
+      nextScheduler.stop()
+      releaseObsoleteReservation(request)
+      return
+    }
+    progressMonitor.submit { watchProgress(request, future) }
+  }
+
+  private fun handleInitializationFailure(request: StartRequest) {
+    val stopId = synchronized(lifecycleLock) {
+      if (!isCurrentLocked(request)) null else {
+        generation += 1
+        recoveryNeeded = true
+        latestStartId
+      }
+    }
+    if (stopId == null) {
+      releaseObsoleteReservation(request)
+      return
+    }
+    releaseStartReservation(request.serverId)
+    stopSelfResult(stopId)
+  }
+
+  private fun isCurrent(request: StartRequest): Boolean = synchronized(lifecycleLock) { isCurrentLocked(request) }
+
+  private fun isCurrentLocked(request: StartRequest): Boolean =
+    !stopping.get() && generation == request.generation
+
+  private fun releaseObsoleteReservation(request: StartRequest) {
+    val retainedByNewStart = synchronized(lifecycleLock) {
+      !stopping.get() && currentServerId == request.serverId && generation != request.generation
+    }
+    if (!retainedByNewStart) releaseStartReservation(request.serverId)
+  }
+
+  private fun pauseAndStop() {
+    val schedulerToStop = synchronized(lifecycleLock) {
+      stopping.set(true)
+      generation += 1
+      scheduler.also {
+        scheduler = null
+        activeFuture = null
+      }
+    }
+    schedulerToStop?.stop()
+    stopSelf()
   }
 
   override fun onDestroy() {
-    val hadScheduler = scheduler != null
-    stopping.set(true)
-    if (hadScheduler) recoveryNeeded = true
+    val schedulerToStop = synchronized(lifecycleLock) {
+      stopping.set(true)
+      generation += 1
+      scheduler.also {
+        scheduler = null
+        activeFuture = null
+      }
+    }
+    if (schedulerToStop != null) recoveryNeeded = true
     currentServerId?.let(::releaseStartReservation)
-    scheduler?.stop()
-    scheduler = null
+    schedulerToStop?.stop()
     scheduleRecoveryIfNeeded()
     synchronized(activeServices) {
       currentServerId?.let { if (activeServices[it] === this) activeServices.remove(it) }
     }
     monitor.shutdownNow()
+    progressMonitor.shutdownNow()
     super.onDestroy()
   }
 
   override fun onTimeout(startId: Int) {
     // Android may time-limit data-sync foreground services. Leases return to queued.
-    stopping.set(true)
+    val schedulerToStop = synchronized(lifecycleLock) {
+      stopping.set(true)
+      generation += 1
+      scheduler.also {
+        scheduler = null
+        activeFuture = null
+      }
+    }
     recoveryNeeded = true
-    scheduler?.stop()
+    schedulerToStop?.stop()
     scheduleRecoveryIfNeeded()
     stopSelf(startId)
   }
@@ -173,18 +289,17 @@ class UploadForegroundService : Service() {
     }
   }
 
-  private fun watchProgress(
-    serverId: String,
-    baseUrl: String,
-    deviceId: String,
-    allowMobile: Boolean,
-    lanCIDRs: List<String>,
-    future: java.util.concurrent.Future<*>,
-    startId: Int,
-  ) {
+  private fun watchProgress(request: StartRequest, future: java.util.concurrent.Future<*>) {
     val dao = UploadDatabase.getInstance(applicationContext).uploadTaskDao()
-    while (!future.isDone && !Thread.currentThread().isInterrupted) {
-      publishProgress(serverId, baseUrl, deviceId, allowMobile, lanCIDRs, dao.findByServer(serverId))
+    while (!future.isDone && !Thread.currentThread().isInterrupted && isCurrent(request)) {
+      publishProgress(
+        request.serverId,
+        request.baseUrl,
+        request.deviceId,
+        request.allowMobile,
+        request.lanCIDRs,
+        dao.findByServer(request.serverId),
+      )
       try {
         Thread.sleep(1_000L)
       } catch (_: InterruptedException) {
@@ -192,11 +307,22 @@ class UploadForegroundService : Service() {
       }
     }
     runCatching { future.get() }
-    if (stopping.get() || Thread.currentThread().isInterrupted) return
-    val tasks = dao.findByServer(serverId)
-    if (tasks.any { it.state == com.photo77.upload.db.UploadTaskState.QUEUED || it.state == com.photo77.upload.db.UploadTaskState.UPLOADING }) {
-      recoveryNeeded = true
-      stopSelfResult(startId)
+    if (!isCurrent(request) || Thread.currentThread().isInterrupted) return
+    val tasks = dao.findByServer(request.serverId)
+    val needsRecovery = tasks.any {
+      it.state == com.photo77.upload.db.UploadTaskState.QUEUED ||
+        it.state == com.photo77.upload.db.UploadTaskState.UPLOADING
+    }
+    val stopId = synchronized(lifecycleLock) {
+      if (!isCurrentLocked(request)) null else {
+        scheduler = null
+        activeFuture = null
+        if (needsRecovery) recoveryNeeded = true
+        latestStartId
+      }
+    } ?: return
+    if (needsRecovery) {
+      stopSelfResult(stopId)
       return
     }
     val skipped = tasks.count { it.state == com.photo77.upload.db.UploadTaskState.SUCCEEDED && it.lastErrorCode == "DUPLICATE_PHOTO" }
@@ -209,7 +335,7 @@ class UploadForegroundService : Service() {
         failed = tasks.count { it.state == com.photo77.upload.db.UploadTaskState.FAILED },
       ),
     )
-    stopSelfResult(startId)
+    stopSelfResult(stopId)
   }
 
   private fun scheduleRecoveryIfNeeded() {
@@ -297,10 +423,7 @@ class UploadForegroundService : Service() {
     fun pauseActive(serverId: String): Boolean {
       val service = synchronized(activeServices) { activeServices[serverId] }
       if (service == null || service.currentServerId != serverId) return false
-      service.stopping.set(true)
-      service.scheduler?.stop()
-      service.scheduler = null
-      service.stopSelf()
+      service.pauseAndStop()
       return true
     }
 

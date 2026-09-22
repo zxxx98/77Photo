@@ -23,6 +23,8 @@ import java.text.Normalizer
 import java.util.Locale
 import com.photo77.upload.ContentResolverUriGrantReleaser
 import com.photo77.upload.UriGrantReleaser
+import com.photo77.upload.QueueAwareUriGrantReleaser
+import com.photo77.upload.db.UploadDatabase
 
 /** Implemented by the activity that owns the Activity Result registration. */
 interface PhotoPickerHost {
@@ -147,6 +149,13 @@ class NativePhotoPickerModule(
 ) : ReactContextBaseJavaModule(reactContext), TurboModule {
   private val executor: ExecutorService = Executors.newSingleThreadExecutor()
   private var pending: Promise? = null
+  private val queueAwareReleaser by lazy {
+    val dao = UploadDatabase.getInstance(reactApplicationContext).uploadTaskDao()
+    QueueAwareUriGrantReleaser(
+      dao::hasRetainableUri,
+      ContentResolverUriGrantReleaser(reactApplicationContext.contentResolver),
+    )
+  }
 
   override fun getName(): String = NAME
 
@@ -179,11 +188,10 @@ class NativePhotoPickerModule(
   fun release(uris: ReadableArray, promise: Promise) {
     executor.execute {
       try {
-        val releaser = ContentResolverUriGrantReleaser(reactApplicationContext.contentResolver)
         (0 until uris.size()).forEach { index ->
           val value = uris.getString(index)?.takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("URI is invalid")
-          releaser.release(Uri.parse(value))
+          queueAwareReleaser.release(Uri.parse(value))
         }
         promise.resolve(null)
       } catch (error: Throwable) {
@@ -206,13 +214,13 @@ class NativePhotoPickerModule(
         uris.forEach { picked += reader.read(it) }
         val filtered = dropOrphanMotion(
           picked,
-          ContentResolverUriGrantReleaser(reactApplicationContext.contentResolver),
+          queueAwareReleaser,
         )
         filtered.forEach { result.pushMap(it.toWritableMap()) }
         promise.resolve(result)
       } catch (error: Throwable) {
         picked.forEach { metadata ->
-          ContentResolverUriGrantReleaser(reactApplicationContext.contentResolver).release(Uri.parse(metadata.uri))
+          queueAwareReleaser.release(Uri.parse(metadata.uri))
         }
         promise.reject("PICKER_METADATA_UNREADABLE", "selected media metadata could not be read", error)
       }

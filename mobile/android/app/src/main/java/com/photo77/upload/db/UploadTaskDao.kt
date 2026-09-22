@@ -188,6 +188,18 @@ abstract class UploadTaskDao {
   @Query("SELECT EXISTS(SELECT 1 FROM upload_tasks WHERE server_id = :serverId AND state = 'queued')")
   abstract fun hasQueued(serverId: String): Boolean
 
+  /** A URI must remain granted while any task can still read it. */
+  @Query(
+    """
+    SELECT EXISTS(
+      SELECT 1 FROM upload_tasks
+      WHERE (content_uri = :uri OR motion_uri = :uri)
+        AND state IN ('queued', 'uploading', 'paused', 'failed')
+    )
+    """,
+  )
+  abstract fun hasRetainableUri(uri: String): Boolean
+
   @Query(
     "SELECT EXISTS(SELECT 1 FROM upload_tasks WHERE server_id = :serverId AND state = 'uploading' AND lease_until_epoch_ms >= :now)",
   )
