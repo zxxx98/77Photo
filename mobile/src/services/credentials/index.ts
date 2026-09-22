@@ -22,20 +22,57 @@ const unavailableCredentials: CredentialsStore = {
 
 const nativeCredentials = NativeCredentials ?? unavailableCredentials;
 
-// Credential persistence should not block a successful server login.
-// Some Android devices can fail Keystore initialization while the API
-// authentication itself is already valid.
+// Keep the most recent authenticated session in memory as a fallback. This is
+// intentionally process-local: when Android Keystore is unavailable the user
+// can still use the app after a successful login, but will need to sign in
+// again after the app process is restarted.
+const memoryCredentials = new Map<string, StoredCredentials>();
+
 export const credentialsStore: CredentialsStore = {
-  get: (...args) => nativeCredentials.get(...args),
+  get: async (serverId) => {
+    try {
+      const stored = await nativeCredentials.get(serverId);
+      if (stored) {
+        memoryCredentials.set(serverId, stored);
+        return stored;
+      }
+    } catch (error) {
+      console.warn('Credential read unavailable; using in-memory session', error);
+    }
+    return memoryCredentials.get(serverId) ?? null;
+  },
   set: async (value) => {
+    // Populate memory first so the session remains immediately usable even if
+    // the device cannot create/use an Android Keystore key.
+    memoryCredentials.set(value.serverId, value);
     try {
       await nativeCredentials.set(value);
     } catch (error) {
-      console.warn('Credential persistence unavailable', error);
+      console.warn('Credential persistence unavailable; session is memory-only', error);
     }
   },
-  clear: (...args) => nativeCredentials.clear(...args),
-  ...(nativeCredentials.refresh ? { refresh: (...args: Parameters<NonNullable<Spec['refresh']>>) => nativeCredentials.refresh!(...args) } : {}),
+  clear: async (serverId) => {
+    memoryCredentials.delete(serverId);
+    try {
+      await nativeCredentials.clear(serverId);
+    } catch (error) {
+      console.warn('Credential clear unavailable', error);
+    }
+  },
+  ...(nativeCredentials.refresh
+    ? {
+        refresh: async (...args: Parameters<NonNullable<Spec['refresh']>>) => {
+          try {
+            const refreshed = await nativeCredentials.refresh!(...args);
+            if (refreshed) memoryCredentials.set(refreshed.serverId, refreshed);
+            return refreshed;
+          } catch (error) {
+            console.warn('Native credential refresh unavailable', error);
+            return null;
+          }
+        },
+      }
+    : {}),
 };
 
 export function createCredentialsStore(nativeModule: CredentialsStore = credentialsStore): CredentialsStore {
