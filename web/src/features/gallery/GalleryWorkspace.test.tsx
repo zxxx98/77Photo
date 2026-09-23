@@ -87,6 +87,15 @@ describe('GalleryWorkspace LIVE playback', () => {
       image?.dispatchEvent(new Event('error'));
       await Promise.resolve();
     });
+    image = container.querySelector<HTMLImageElement>('.photo-tile img');
+    expect(image?.getAttribute('src')).toBe('/image-placeholder.svg');
+    await act(async () => {
+      image?.dispatchEvent(new Event('load'));
+    });
+    expect(image?.style.visibility).toBe('');
+    await act(async () => {
+      image?.dispatchEvent(new Event('error'));
+    });
     expect(container.querySelector('.photo-tile img')).toBeNull();
     expect(container.textContent).toContain('预览暂不可用');
   });

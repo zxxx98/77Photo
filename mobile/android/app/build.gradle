@@ -67,8 +67,8 @@ def releaseSigningConfigured = [releaseStoreFile, releaseStorePassword, releaseK
 if (releaseStoreFile != null && !releaseSigningConfigured) {
     throw new GradleException("release signing requires a keystore path, store password, key alias, and key password")
 }
-def releaseVersionName = (findProperty("versionName") ?: System.getenv("ANDROID_VERSION_NAME") ?: "0.0.5").toString()
-def releaseVersionCode = Math.max(1, Integer.parseInt((findProperty("versionCode") ?: System.getenv("ANDROID_VERSION_CODE") ?: "5").toString()))
+def releaseVersionName = (findProperty("versionName") ?: System.getenv("ANDROID_VERSION_NAME") ?: "0.0.6").toString()
+def releaseVersionCode = Math.max(1, Integer.parseInt((findProperty("versionCode") ?: System.getenv("ANDROID_VERSION_CODE") ?: "6").toString()))
 
 /**
  * The preferred build flavor of JavaScriptCore (JSC)

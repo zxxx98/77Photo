@@ -157,9 +157,10 @@ export default function FoldersWorkspace({ api, initialFolder = null, onFolderCh
 function FolderPhotoTile({ photo, onSelect }: { photo: Photo; onSelect: () => void }) {
   const { t } = useI18n();
   const [failed, setFailed] = useState(false);
+  const [placeholderFailed, setPlaceholderFailed] = useState(false);
   return <figure className="photo-tile" onClick={onSelect}>
     <div className={`photo-frame ${failed ? 'is-failed' : ''}`}>
-      {failed ? <span>{t('gallery.previewPending')}</span> : <img src={`/api/v1/photos/${encodeURIComponent(photo.id)}/thumbnail?size=256`} alt={photo.filename} loading="lazy" onError={() => setFailed(true)} />}
+      {placeholderFailed ? <span>{t('gallery.previewPending')}</span> : <img src={failed ? (photo.mime_type.startsWith('video/') ? '/video-placeholder.svg' : '/image-placeholder.svg') : `/api/v1/photos/${encodeURIComponent(photo.id)}/thumbnail?size=256`} alt={photo.filename} loading="lazy" onError={() => failed ? setPlaceholderFailed(true) : setFailed(true)} />}
       {photo.is_live_photo && !failed && <span title="Live Photo" style={{ position: 'absolute', left: 9, top: 9, display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 999, padding: '5px 7px', background: 'rgba(32,37,45,.72)', color: '#fff', fontSize: 9, fontWeight: 700, letterSpacing: '.08em', pointerEvents: 'none' }}><CirclePlay size={12} /> LIVE</span>}
     </div>
     <figcaption>{photo.filename}</figcaption>

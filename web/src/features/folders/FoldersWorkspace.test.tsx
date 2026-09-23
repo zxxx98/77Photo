@@ -101,6 +101,21 @@ describe('folders workspace states', () => {
     expect(container.querySelector<HTMLImageElement>('.photo-grid img')?.getAttribute('src')).toBe('/api/v1/photos/photo-1/thumbnail?size=256');
   });
 
+  it.each([['image/jpeg', '/image-placeholder.svg'], ['video/mp4', '/video-placeholder.svg']])('uses matching artwork for missing %s thumbnails', async (mime_type, source) => {
+    const listFolders = vi.fn().mockResolvedValueOnce({ items: [rootFolder] }).mockResolvedValueOnce({ items: [] });
+    const listPhotos = vi.fn().mockResolvedValue({ items: [{ ...photo, mime_type }], next_cursor: null });
+    await renderWith({ listFolders, listPhotos } as unknown as ApiClient);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.folder-row-link')?.click();
+    });
+    const image = container.querySelector<HTMLImageElement>('.photo-grid img');
+    act(() => { image?.dispatchEvent(new Event('error')); });
+    expect(image?.getAttribute('src')).toBe(source);
+    act(() => { image?.dispatchEvent(new Event('error')); });
+    expect(container.querySelector('.photo-grid img')).toBeNull();
+    expect(container.textContent).toContain('预览暂不可用');
+  });
+
   it('uploads into the current folder when that folder is empty', async () => {
     const listFolders = vi.fn().mockResolvedValueOnce({ items: [rootFolder] }).mockResolvedValueOnce({ items: [] });
     const listPhotos = vi.fn().mockResolvedValue(emptyPhotos);

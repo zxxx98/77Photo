@@ -254,7 +254,7 @@ function PhotoTile({ photo, selectionMode, selected, onToggle, onSelect, selecte
 }) {
   const { t } = useI18n();
   const isVideo = photo.mime_type.startsWith('video/');
-  const [previewMode, setPreviewMode] = useState<'thumbnail' | 'original' | 'video-placeholder' | 'failed'>('thumbnail');
+  const [previewMode, setPreviewMode] = useState<'thumbnail' | 'original' | 'video-placeholder' | 'image-placeholder' | 'failed'>('thumbnail');
   const [thumbnailAttempt, setThumbnailAttempt] = useState(0);
   const [previewReady, setPreviewReady] = useState(false);
   const retryTimer = useRef<number | null>(null);
@@ -263,7 +263,9 @@ function PhotoTile({ photo, selectionMode, selected, onToggle, onSelect, selecte
     ? `/api/v1/photos/${encodeURIComponent(photo.id)}/original`
     : previewMode === 'video-placeholder'
       ? videoPlaceholderSource
-      : `/api/v1/photos/${encodeURIComponent(photo.id)}/thumbnail?size=256&retry=${thumbnailAttempt}`;
+      : previewMode === 'image-placeholder'
+        ? '/image-placeholder.svg'
+        : `/api/v1/photos/${encodeURIComponent(photo.id)}/thumbnail?size=256&retry=${thumbnailAttempt}`;
 
   useEffect(() => () => {
     if (retryTimer.current !== null) window.clearTimeout(retryTimer.current);
@@ -288,7 +290,7 @@ function PhotoTile({ photo, selectionMode, selected, onToggle, onSelect, selecte
       setPreviewMode(isVideo ? 'video-placeholder' : 'original');
       return;
     }
-    setPreviewMode('failed');
+    setPreviewMode(previewMode === 'original' ? 'image-placeholder' : 'failed');
   }
 
   const activate = () => selectionMode ? onToggle(photo.id) : onSelect(photo);

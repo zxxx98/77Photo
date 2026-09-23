@@ -249,7 +249,7 @@ function ViewerRoute({
   );
 }
 
-const MOBILE_APP_VERSION = '0.0.5';
+const MOBILE_APP_VERSION = '0.0.6';
 
 function LoginRoute({ server, reload }: { server?: ServerConfig; reload: () => void }) {
   const login = useCallback(async (input: LoginSubmitInput) => {
