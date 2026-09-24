@@ -2,6 +2,12 @@
 
 > Status: design proposal only. This document does not change application behavior.
 
+## Design overview
+
+![77Photo mobile UI redesign overview](./77photo-mobile-redesign-overview.svg)
+
+The overview above is the visual baseline for the current redesign proposal. It covers the actual mobile product scope: Login, Gallery / Timeline, Media Viewer, Upload, Folder Browser, Settings, Connection Settings, LAN Ranges, Rescan, and Media Details.
+
 ## 1. Goal
 
 Refresh the existing React Native mobile UI without expanding the product scope. The design must remain consistent with 77Photo as a lightweight, self-hosted family photo library: quiet, simple, photo-first, and practical.
