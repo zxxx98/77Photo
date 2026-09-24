@@ -20,7 +20,7 @@ import { uploadQueue } from '../features/upload/uploadService';
 import { createApiClient } from '../services/api/client';
 import type { Photo, User } from '../services/api/types';
 import { credentialsStore } from '../services/credentials';
-import { connectionStore, generateServerID, getEnabledLANCIDRs } from '../services/connection/store';
+import { connectionStore, generateServerID, getEnabledLANCIDRs, useEnabledLANCIDRs } from '../services/connection/store';
 import type { ServerConfig } from '../services/connection/types';
 import { useBoot } from './useBoot';
 import '../i18n';
@@ -215,7 +215,7 @@ function UploadTab({ server, user }: AuthenticatedRouteProps) {
   const isFocused = useIsFocused();
   const concurrency = connectionStore((state) => state.uploadConcurrency);
   const cellularUploadEnabled = connectionStore((state) => state.cellularUploadEnabled);
-  const lanCIDRs = connectionStore((state) => getEnabledLANCIDRs(state));
+  const lanCIDRs = useEnabledLANCIDRs();
   return (
     <UploadScreen
       api={api}

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
@@ -168,12 +169,21 @@ function settingsFromState(state: ConnectionStoreState): ConnectionSettings {
   };
 }
 
-export function getEnabledLANCIDRs(settings: ConnectionSettings): string[] {
+export function getEnabledLANCIDRs(settings: Pick<ConnectionSettings, 'builtInCIDREnabled' | 'manualCIDRs'>): string[] {
   const builtIn = DEFAULT_LAN_CIDRS.filter((cidr) => settings.builtInCIDREnabled[cidr] !== false);
   return [
     ...builtIn,
     ...settings.manualCIDRs.filter((entry) => entry.enabled).map((entry) => entry.cidr),
   ];
+}
+
+export function useEnabledLANCIDRs(): string[] {
+  const builtInCIDREnabled = connectionStore((state) => state.builtInCIDREnabled);
+  const manualCIDRs = connectionStore((state) => state.manualCIDRs);
+  return useMemo(
+    () => getEnabledLANCIDRs({ builtInCIDREnabled, manualCIDRs }),
+    [builtInCIDREnabled, manualCIDRs],
+  );
 }
 
 export function createConnectionStore(options: ConnectionStoreOptions = {}) {
