@@ -4,7 +4,7 @@ import { FlashList, type ListRenderItem } from '@shopify/flash-list';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 
-import { colors, spacing } from '../../components/theme';
+import { colors, radii, spacing } from '../../components/theme';
 import { Message, PrimaryButton } from '../../components/ui';
 import type { ApiClient } from '../../services/api/client';
 import type { Photo } from '../../services/api/types';
@@ -143,7 +143,7 @@ export function GalleryScreen({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  listContent: { padding: spacing.sm },
+  listContent: { paddingHorizontal: spacing.xs, paddingBottom: spacing.md },
   center: {
     flex: 1,
     alignItems: 'center',
@@ -156,8 +156,8 @@ const styles = StyleSheet.create({
   dayHeader: {
     width: '100%',
     color: colors.ink,
-    fontSize: 17,
-    fontWeight: '800',
+    fontSize: 15,
+    fontWeight: '700',
     paddingHorizontal: spacing.xs,
     paddingVertical: spacing.sm,
   },
@@ -165,6 +165,7 @@ const styles = StyleSheet.create({
     flex: 1,
     aspectRatio: 1,
     margin: 2,
+    borderRadius: radii.thumbnail,
     backgroundColor: colors.border,
     overflow: 'hidden',
   },

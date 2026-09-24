@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Text, StyleSheet } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { Field, Message, PrimaryButton, Screen } from '../../components/ui';
+import { Field, PrimaryButton, Screen } from '../../components/ui';
 import { colors, spacing } from '../../components/theme';
 import { connectionStore, getEnabledLANCIDRs } from '../../services/connection/store';
 import { evaluateServerURL } from '../../services/connection/policy';
@@ -35,16 +35,16 @@ export function ConnectionSettingsScreen() {
     <Screen>
       <Text style={styles.title}>{t('connection.title')}</Text>
       <Text style={styles.subtitle}>{t('connection.subtitle')}</Text>
-      {error ? <Message>{error}</Message> : null}
       {saved ? <Text style={styles.saved}>{t('connection.added')}</Text> : null}
       <Field
         label={t('connection.url')}
+        error={error ?? undefined}
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="url"
         placeholder="https://photos.example"
         value={baseURL}
-        onChangeText={setBaseURL}
+        onChangeText={(value) => { setBaseURL(value); setError(null); setSaved(false); }}
       />
       <Field label={t('connection.name')} value={displayName} onChangeText={setDisplayName} />
       <PrimaryButton label={t('connection.add')} onPress={save} />
@@ -53,7 +53,7 @@ export function ConnectionSettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: { color: colors.ink, fontSize: 30, fontWeight: '800' },
+  title: { color: colors.ink, fontSize: 23, fontWeight: '700' },
   subtitle: { color: colors.muted, fontSize: 16, lineHeight: 23, marginBottom: spacing.md },
   saved: { color: colors.accent, fontWeight: '600' },
 });

@@ -7,6 +7,7 @@ import {
   Modal,
   Pressable,
   Share,
+  StatusBar,
   StyleSheet,
   Text,
   View,
@@ -16,6 +17,7 @@ import {
 import { PinchGestureHandler, State, type PinchGestureHandlerStateChangeEvent } from 'react-native-gesture-handler';
 import { useTranslation } from 'react-i18next';
 import Video from 'react-native-video';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing } from '../../components/theme';
 import { PrimaryButton } from '../../components/ui';
@@ -170,8 +172,17 @@ export function MediaViewerScreen({
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <StatusBar barStyle="light-content" />
+      <View style={styles.topBar}>
+        <Pressable accessibilityRole="button" accessibilityLabel={t('common.back', '返回')} onPress={onClose} style={styles.iconButton}>
+          <Text style={styles.topText}>‹</Text>
+        </Pressable>
+        <Text style={styles.count}>{selectedIndex + 1} / {photos.length}</Text>
+        <View style={styles.iconButton} />
+      </View>
       <FlatList
+        style={styles.mediaList}
         data={photos}
         horizontal
         pagingEnabled
@@ -220,6 +231,7 @@ export function MediaViewerScreen({
                     />
                   )}
                   {unsupportedPhotoId === item.id ? <UnsupportedMedia photo={item} onDownload={openOriginal} /> : null}
+                  {item.is_live_photo ? <Text style={styles.liveBadge}>LIVE</Text> : null}
                 </Pressable>
               </Animated.View>
             </PinchGestureHandler>
@@ -227,9 +239,9 @@ export function MediaViewerScreen({
         )}
       />
       <View style={styles.toolbar}>
-        <PrimaryButton label={t('viewer.details', '详情')} onPress={() => setDetailsVisible(true)} />
-        <PrimaryButton label={t('viewer.download', '下载原文件')} onPress={openOriginal} />
-        {canShare ? <PrimaryButton label={t('viewer.share', '分享')} onPress={() => { shareSelected().catch(() => undefined); }} /> : null}
+        <Pressable accessibilityRole="button" accessibilityLabel={t('viewer.details', '详情')} onPress={() => setDetailsVisible(true)} style={styles.toolbarAction}><Text style={styles.toolbarText}>{t('viewer.details', '详情')}</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={t('viewer.download', '下载原文件')} onPress={() => openOriginal()} style={styles.toolbarAction}><Text style={styles.toolbarText}>{t('viewer.download', '下载原文件')}</Text></Pressable>
+        {canShare ? <Pressable accessibilityRole="button" accessibilityLabel={t('viewer.share', '分享')} onPress={() => { shareSelected().catch(() => undefined); }} style={styles.toolbarAction}><Text style={styles.toolbarText}>{t('viewer.share', '分享')}</Text></Pressable> : null}
       </View>
       <Modal visible={detailsVisible} transparent animationType="slide" onRequestClose={() => setDetailsVisible(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setDetailsVisible(false)}>
@@ -244,7 +256,7 @@ export function MediaViewerScreen({
           </View>
         </Pressable>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -260,11 +272,19 @@ function UnsupportedMedia({ photo, onDownload }: { photo: Photo; onDownload: () 
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#101418' },
+  container: { flex: 1, backgroundColor: '#000000' },
+  mediaList: { flex: 1 },
+  topBar: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  iconButton: { width: 52, height: 48, alignItems: 'center', justifyContent: 'center' },
+  topText: { color: colors.surface, fontSize: 30 },
+  count: { color: colors.surface, fontSize: 14, fontWeight: '600' },
+  liveBadge: { position: 'absolute', top: spacing.sm, left: spacing.md, color: colors.surface, backgroundColor: 'rgba(0,0,0,0.65)', paddingHorizontal: spacing.xs, paddingVertical: 4, borderRadius: 4, fontSize: 11, fontWeight: '700' },
   page: { width: '100%', flex: 1, alignItems: 'center', justifyContent: 'center' },
   mediaGesture: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   media: { width: '100%', height: '100%' },
-  toolbar: { flexDirection: 'row', gap: spacing.sm, padding: spacing.md, backgroundColor: colors.surface },
+  toolbar: { flexDirection: 'row', paddingHorizontal: spacing.sm, backgroundColor: '#000000', borderTopWidth: 1, borderTopColor: '#262626' },
+  toolbarAction: { flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xs },
+  toolbarText: { color: colors.surface, fontSize: 14, fontWeight: '600', textAlign: 'center' },
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' },
   unsupported: { alignItems: 'center', gap: spacing.md, padding: spacing.lg },
   unsupportedText: { color: colors.surface, textAlign: 'center', fontSize: 16 },

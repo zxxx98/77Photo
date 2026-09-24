@@ -41,6 +41,15 @@ function servicesFor(server?: ServerConfig, overrides: Partial<LoginScreenServic
 }
 
 describe('LoginScreen', () => {
+  it('masks the password until the visibility control is pressed', async () => {
+    await render(<LoginScreen services={servicesFor()} />);
+    expect(screen.getByLabelText('密码').props.secureTextEntry).toBe(true);
+    await fireEvent.press(screen.getByRole('button', { name: '显示密码' }));
+    expect(screen.getByLabelText('密码').props.secureTextEntry).toBe(false);
+    await fireEvent.press(screen.getByRole('button', { name: '隐藏密码' }));
+    expect(screen.getByLabelText('密码').props.secureTextEntry).toBe(true);
+  });
+
   it('puts the server URL and account credentials on the same first-time login screen', async () => {
     const services = servicesFor();
     await render(<LoginScreen services={services} />);

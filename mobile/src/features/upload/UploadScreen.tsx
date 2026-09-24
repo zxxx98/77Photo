@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, AppState, Image, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { colors, spacing } from '../../components/theme';
@@ -63,6 +63,11 @@ function taskStateLabel(task: UploadTask, t: (key: string, fallback: string) => 
     case 'canceled': return t('upload.canceled', '已取消');
     default: return task.state;
   }
+}
+
+function formatSize(size: number | null): string {
+  if (size === null) return '';
+  return size < 1024 * 1024 ? `${Math.round(size / 1024)} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function requestNativeNotificationPermission(): Promise<boolean> {
@@ -305,9 +310,7 @@ export function UploadScreen({
   return (
     <Screen>
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>{t('tabs.upload', '上传')}</Text>
-        <Text style={styles.title}>{t('upload.title', '把照片带回图库')}</Text>
-        <Text style={styles.subtitle}>{t('upload.subtitle', '选择媒体、目标文件夹，然后让系统在后台完成上传。')}</Text>
+        <Text style={styles.title}>{t('tabs.upload', '上传')}</Text>
       </View>
 
       {!notificationPermissionGranted ? (
@@ -321,7 +324,20 @@ export function UploadScreen({
         disabled={busy}
         onPress={() => { chooseMedia().catch(() => undefined); }}
       />
-      {selected.length > 0 ? <Text style={styles.selection}>{t('upload.selected', `已选择 ${selected.length} 项`, { count: selected.length })}</Text> : null}
+      {selected.length > 0 ? (
+        <View style={styles.taskList}>
+          <Text style={styles.selection}>{t('upload.selected', `已选择 ${selected.length} 项`, { count: selected.length })}</Text>
+          {selected.map((item) => (
+            <View key={item.uri} style={styles.taskRow}>
+              {item.mimeType.startsWith('image/') ? <Image source={{ uri: item.uri }} style={styles.taskThumbnail} /> : <View style={styles.taskThumbnail}><Text style={styles.videoMark}>▶</Text></View>}
+              <View style={styles.taskCopy}>
+                <Text style={styles.taskName} numberOfLines={1}>{item.displayName}</Text>
+                {item.size !== null ? <Text style={styles.meta}>{formatSize(item.size)}</Text> : null}
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       <Pressable
         accessibilityRole="button"
@@ -355,9 +371,14 @@ export function UploadScreen({
             const canCancel = task.state === 'queued' || task.state === 'paused' || task.state === 'failed';
             return (
               <View key={task.id} style={styles.taskRow}>
+                {task.mimeType.startsWith('image/') ? <Image source={{ uri: task.contentUri }} style={styles.taskThumbnail} /> : <View style={styles.taskThumbnail}><Text style={styles.videoMark}>▶</Text></View>}
                 <View style={styles.taskCopy}>
                   <Text style={styles.taskName} numberOfLines={1}>{task.displayName}</Text>
-                  <Text style={styles.meta}>{taskStateLabel(task, t)}</Text>
+                  <View style={styles.taskMeta}>
+                    {task.size !== null ? <Text style={styles.meta}>{formatSize(task.size)} · </Text> : null}
+                    <Text style={styles.meta}>{taskStateLabel(task, t)}</Text>
+                  </View>
+                  {task.state === 'uploading' && task.size ? <View style={styles.taskTrack}><View style={[styles.progressFill, { width: `${Math.min(100, Math.round(task.sentBytes / task.size * 100))}%` }]} /></View> : null}
                 </View>
                 {canCancel ? (
                   <PrimaryButton
@@ -385,15 +406,13 @@ export function UploadScreen({
 
 const styles = StyleSheet.create({
   header: { gap: spacing.xs },
-  eyebrow: { color: colors.accent, fontSize: 14, fontWeight: '700', textTransform: 'uppercase' },
-  title: { color: colors.ink, fontSize: 30, fontWeight: '800' },
-  subtitle: { color: colors.muted, fontSize: 16, lineHeight: 23 },
+  title: { color: colors.ink, fontSize: 23, fontWeight: '700' },
   selection: { color: colors.ink, fontSize: 15, fontWeight: '700' },
   folderButton: { minHeight: 56, justifyContent: 'center', paddingHorizontal: spacing.md, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   folderButtonText: { color: colors.ink, fontSize: 16, fontWeight: '700' },
   disabled: { opacity: 0.5 },
   pressed: { backgroundColor: colors.warningBackground },
-  progressBlock: { gap: spacing.xs, padding: spacing.md, borderRadius: 16, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  progressBlock: { gap: spacing.xs, paddingVertical: spacing.md, borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.border },
   progressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   sectionTitle: { color: colors.ink, fontSize: 18, fontWeight: '800' },
   progressText: { color: colors.accent, fontSize: 16, fontWeight: '800' },
@@ -403,7 +422,11 @@ const styles = StyleSheet.create({
   failureBlock: { gap: spacing.sm },
   failureText: { color: colors.error, fontSize: 15, fontWeight: '700' },
   taskList: { gap: spacing.xs },
-  taskRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.sm, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  taskRow: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.xs, borderBottomWidth: 1, borderColor: colors.border },
+  taskThumbnail: { width: 48, height: 48, borderRadius: 4, backgroundColor: colors.input, alignItems: 'center', justifyContent: 'center' },
+  videoMark: { color: colors.muted },
+  taskTrack: { height: 4, borderRadius: 2, backgroundColor: colors.border, overflow: 'hidden', marginTop: spacing.xs },
   taskCopy: { flex: 1, gap: 2 },
+  taskMeta: { flexDirection: 'row' },
   taskName: { color: colors.ink, fontSize: 15, fontWeight: '700' },
 });

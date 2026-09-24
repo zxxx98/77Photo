@@ -71,6 +71,7 @@ export function FolderBrowserScreen({
           }}
           style={({ pressed }) => [styles.row, pressed && styles.pressed]}
         >
+          <Text style={styles.folderIcon}>▱</Text>
           <View style={styles.rowCopy}>
             <Text style={styles.folderName}>{folder.name}</Text>
             <Text style={styles.meta}>
@@ -87,7 +88,7 @@ export function FolderBrowserScreen({
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { color: colors.ink, fontSize: 26, fontWeight: '800' },
+  title: { color: colors.ink, fontSize: 23, fontWeight: '700' },
   backButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.sm },
   backText: { color: colors.accent, fontSize: 16, fontWeight: '700' },
   breadcrumb: { color: colors.muted, fontSize: 14 },
@@ -98,11 +99,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
     paddingHorizontal: spacing.sm,
-    borderRadius: 12,
+    borderRadius: 8,
     backgroundColor: colors.surface,
-    borderWidth: 1,
+    borderBottomWidth: 1,
     borderColor: colors.border,
   },
+  folderIcon: { color: colors.accent, fontSize: 24, width: 30 },
   pressed: { backgroundColor: colors.warningBackground },
   rowCopy: { flex: 1, gap: 4 },
   folderName: { color: colors.ink, fontSize: 16, fontWeight: '700' },

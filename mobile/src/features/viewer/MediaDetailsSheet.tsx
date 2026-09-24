@@ -40,14 +40,14 @@ export function MediaDetailsSheet({
         ) : null}
       </View>
       <Text style={styles.filename}>{photo.filename}</Text>
-      <Text style={styles.value}>{photo.mime_type}</Text>
-      <Text style={styles.value}>{formatBytes(photo.size)}</Text>
-      {photo.width && photo.height ? <Text style={styles.value}>{photo.width} × {photo.height}</Text> : null}
-      <Text style={styles.value}>{new Date(photo.captured_at).toLocaleString()}</Text>
+      <View style={styles.infoRow}><Text style={styles.value}>{t('viewer.captured', '拍摄时间')}</Text><Text style={styles.value}>{new Date(photo.captured_at).toLocaleString()}</Text></View>
+      <View style={styles.infoRow}><Text style={styles.value}>{t('viewer.size', '文件大小')}</Text><Text style={styles.value}>{formatBytes(photo.size)}</Text></View>
+      <View style={styles.infoRow}><Text style={styles.value}>{t('viewer.type', '文件类型')}</Text><Text style={styles.value}>{photo.mime_type}</Text></View>
+      {photo.width && photo.height ? <View style={styles.infoRow}><Text style={styles.value}>{t('viewer.resolution', '分辨率')}</Text><Text style={styles.value}>{photo.width} × {photo.height}</Text></View> : null}
       <View style={styles.actions}>
         {onDownload ? <PrimaryButton label={t('viewer.download', '下载原文件')} onPress={onDownload} /> : null}
         {onShare ? <PrimaryButton label={t('viewer.share', '分享')} onPress={onShare} /> : null}
-        {onDelete ? <PrimaryButton label={t('viewer.delete', '永久删除')} onPress={onDelete} /> : null}
+        {onDelete ? <Pressable accessibilityRole="button" accessibilityLabel={t('viewer.delete', '永久删除')} onPress={onDelete} style={styles.deleteAction}><Text style={styles.deleteText}>{t('viewer.delete', '永久删除')}</Text></Pressable> : null}
       </View>
     </View>
   );
@@ -67,5 +67,8 @@ const styles = StyleSheet.create({
   closeText: { color: colors.muted, fontSize: 30, lineHeight: 34 },
   filename: { color: colors.ink, fontSize: 16, fontWeight: '700' },
   value: { color: colors.muted, fontSize: 14 },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
   actions: { gap: spacing.sm, marginTop: spacing.xs },
+  deleteAction: { minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+  deleteText: { color: colors.error, fontWeight: '700' },
 });

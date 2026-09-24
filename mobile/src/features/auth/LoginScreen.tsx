@@ -81,6 +81,7 @@ export function LoginScreen({ services }: { services: LoginScreenServices }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [httpConfirmed, setHttpConfirmed] = useState(Boolean(services.server?.allowInsecureConfirmedAt));
   const decision = useMemo(
@@ -124,15 +125,17 @@ export function LoginScreen({ services }: { services: LoginScreenServices }) {
   };
 
   return (
-    <Screen>
+    <Screen contentStyle={styles.screen}>
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>{services.server?.displayName ?? '77Photo'}</Text>
-        <Text style={styles.title}>{t('auth.title')}</Text>
-        <Text style={styles.subtitle}>{t('auth.subtitle')}</Text>
+        <Text style={styles.title}>77Photo</Text>
+        <Text style={styles.subtitle}>{t('auth.tagline', '记录生活的每一刻')}</Text>
       </View>
       {error ? <Message>{error}</Message> : null}
       <Field
         label={t('connection.url')}
+        hint={t('auth.serverExample', '例如 https://photos.example')}
+        error={baseURL.trim() && !decision.allowed ? policyMessage(decision.reason, t) : undefined}
+        editable={!loading}
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="url"
@@ -145,7 +148,6 @@ export function LoginScreen({ services }: { services: LoginScreenServices }) {
           }
         }}
       />
-      {baseURL.trim() && !decision.allowed ? <Message>{policyMessage(decision.reason, t)}</Message> : null}
       {decision.allowed && decision.insecure ? <Message warning>{t('auth.lanWarning')}</Message> : null}
       {decision.allowed && decision.insecure ? (
         <Pressable
@@ -159,8 +161,25 @@ export function LoginScreen({ services }: { services: LoginScreenServices }) {
           <Text style={styles.confirmText}>{t('auth.confirmLanControl', '确认在内网使用未加密 HTTP')}</Text>
         </Pressable>
       ) : null}
-      <Field label={t('auth.username')} autoCapitalize="none" autoCorrect={false} value={username} onChangeText={setUsername} />
-      <Field label={t('auth.password')} secureTextEntry value={password} onChangeText={setPassword} />
+      <Field label={t('auth.username')} editable={!loading} autoCapitalize="none" autoCorrect={false} value={username} onChangeText={setUsername} />
+      <Field
+        label={t('auth.password')}
+        editable={!loading}
+        secureTextEntry={!passwordVisible}
+        value={password}
+        onChangeText={setPassword}
+        trailing={
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={passwordVisible ? t('auth.hidePassword', '隐藏密码') : t('auth.showPassword', '显示密码')}
+            disabled={loading}
+            onPress={() => setPasswordVisible((visible) => !visible)}
+            style={styles.visibility}
+          >
+            <Text style={styles.visibilityText}>{passwordVisible ? t('auth.hide', '隐藏') : t('auth.show', '显示')}</Text>
+          </Pressable>
+        }
+      />
       <PrimaryButton
         label={t('auth.login')}
         loading={loading}
@@ -172,10 +191,12 @@ export function LoginScreen({ services }: { services: LoginScreenServices }) {
 }
 
 const styles = StyleSheet.create({
-  header: { gap: spacing.xs, marginBottom: spacing.sm },
-  eyebrow: { color: colors.accent, fontSize: 14, fontWeight: '700', textTransform: 'uppercase' },
-  title: { color: colors.ink, fontSize: 30, fontWeight: '800' },
-  subtitle: { color: colors.muted, fontSize: 16, lineHeight: 23 },
+  screen: { justifyContent: 'center', paddingBottom: 72 },
+  header: { alignItems: 'center', gap: spacing.xs, marginBottom: spacing.xl },
+  title: { color: colors.ink, fontSize: 36, fontWeight: '800' },
+  subtitle: { color: colors.muted, fontSize: 15, lineHeight: 23 },
+  visibility: { minWidth: 48, minHeight: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: spacing.xs },
+  visibilityText: { color: colors.accent, fontSize: 14, fontWeight: '600' },
   confirmRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   checkbox: { color: colors.accent, fontSize: 24 },
   confirmText: { flex: 1, color: colors.ink, fontSize: 15 },

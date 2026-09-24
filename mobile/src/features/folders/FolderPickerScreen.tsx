@@ -72,6 +72,7 @@ export function FolderPickerScreen({
             onLongPress={() => setBreadcrumbs((items) => [...items, { id: folder.id, name: folder.name }])}
             style={({ pressed }) => [styles.row, !writable && styles.disabled, pressed && writable && styles.pressed]}
           >
+            <Text style={styles.folderIcon}>▱</Text>
             <View style={styles.rowCopy}>
               <Text style={styles.folderName}>{folder.name}</Text>
               <Text style={styles.meta}>{writable ? t('folders.writable', '可写') : t('folders.readOnly', '只读')}</Text>
@@ -86,7 +87,7 @@ export function FolderPickerScreen({
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { color: colors.ink, fontSize: 26, fontWeight: '800' },
+  title: { color: colors.ink, fontSize: 23, fontWeight: '700' },
   backButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.sm },
   backText: { color: colors.accent, fontSize: 16, fontWeight: '700' },
   row: {
@@ -95,11 +96,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
     paddingHorizontal: spacing.sm,
-    borderRadius: 12,
+    borderRadius: 8,
     backgroundColor: colors.surface,
-    borderWidth: 1,
+    borderBottomWidth: 1,
     borderColor: colors.border,
   },
+  folderIcon: { color: colors.accent, fontSize: 24, width: 30 },
   disabled: { opacity: 0.55 },
   pressed: { backgroundColor: colors.warningBackground },
   rowCopy: { flex: 1, gap: 4 },

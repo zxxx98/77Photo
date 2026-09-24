@@ -88,8 +88,8 @@ export function RescanPanel({ api }: RescanPanelProps) {
 }
 
 const styles = StyleSheet.create({
-  panel: { gap: spacing.sm, padding: spacing.md, borderRadius: 16, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
-  title: { color: colors.ink, fontSize: 18, fontWeight: '800' },
+  panel: { gap: spacing.sm, paddingVertical: spacing.md, borderBottomWidth: 1, borderColor: colors.border },
+  title: { color: colors.muted, fontSize: 13, fontWeight: '700' },
   subtitle: { color: colors.muted, fontSize: 14, lineHeight: 20 },
   status: { color: colors.ink, fontWeight: '700' },
   counts: { color: colors.muted, fontSize: 13 },

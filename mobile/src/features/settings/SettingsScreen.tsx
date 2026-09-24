@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { colors, spacing } from '../../components/theme';
-import { Message, PrimaryButton, Screen } from '../../components/ui';
+import { Screen } from '../../components/ui';
 import type { ApiClient } from '../../services/api/client';
 import type { User } from '../../services/api/types';
 import type { ServerConfig } from '../../services/connection/types';
@@ -93,8 +93,7 @@ export function SettingsScreen({
   return (
     <Screen>
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>{t('tabs.settings', '设置')}</Text>
-        <Text style={styles.title}>{t('settings.title', '应用设置')}</Text>
+        <Text style={styles.title}>{t('tabs.settings', '设置')}</Text>
       </View>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t('settings.account', '账号与服务器')}</Text>
@@ -116,7 +115,6 @@ export function SettingsScreen({
             ))}
           </View>
         ) : null}
-        {onLogout ? <PrimaryButton label={t('settings.logout', '退出当前设备')} onPress={() => { Promise.resolve(onLogout()).catch(() => undefined); }} /> : null}
       </View>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t('settings.uploadStorage', '上传与存储')}</Text>
@@ -137,7 +135,7 @@ export function SettingsScreen({
         <Pressable accessibilityRole="button" accessibilityLabel={t('settings.clearCache', '清理缩略图缓存')} onPress={clearCache} style={styles.actionRow}>
           <Text style={styles.actionText}>{t('settings.clearCache', '清理缩略图缓存')}</Text>
         </Pressable>
-        <Message warning>{t('settings.cacheHint', '清理缓存不会删除原始照片或上传队列。')}</Message>
+        <Text style={styles.meta}>{t('settings.cacheHint', '清理缓存不会删除原始照片或上传队列。')}</Text>
       </View>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t('settings.network', '网络')}</Text>
@@ -156,27 +154,32 @@ export function SettingsScreen({
         />
       </View>
       {user.role === 'admin' && api ? <RescanPanel api={api} /> : null}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>{t('settings.about', '关于')}</Text>
+        <Text style={styles.meta}>77Photo · 0.0.6</Text>
+        {onLogout ? <Pressable accessibilityRole="button" accessibilityLabel={t('settings.logout', '退出当前设备')} onPress={() => { Promise.resolve(onLogout()).catch(() => undefined); }} style={styles.actionRow}><Text style={styles.dangerText}>{t('settings.logout', '退出当前设备')}</Text></Pressable> : null}
+      </View>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   header: { gap: spacing.xs },
-  eyebrow: { color: colors.accent, fontSize: 14, fontWeight: '700', textTransform: 'uppercase' },
-  title: { color: colors.ink, fontSize: 30, fontWeight: '800' },
-  section: { gap: spacing.sm, padding: spacing.md, borderRadius: 16, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
-  sectionTitle: { color: colors.ink, fontSize: 18, fontWeight: '800' },
+  title: { color: colors.ink, fontSize: 23, fontWeight: '700' },
+  section: { gap: spacing.sm, paddingVertical: spacing.md, borderBottomWidth: 1, borderColor: colors.border },
+  sectionTitle: { color: colors.muted, fontSize: 13, fontWeight: '700' },
   value: { color: colors.ink, fontSize: 16, fontWeight: '700' },
   meta: { color: colors.muted, fontSize: 13 },
   label: { color: colors.ink, fontSize: 15, fontWeight: '600' },
   selector: { flexDirection: 'row', gap: spacing.xs },
   selectorOption: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, borderColor: colors.border },
-  selectorOptionActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  selectorText: { color: colors.ink, fontSize: 16, fontWeight: '800' },
+  selectorOptionActive: { backgroundColor: '#E8F2FF', borderColor: colors.accent },
+  selectorText: { color: colors.ink, fontSize: 16, fontWeight: '700' },
   languageSelector: { gap: spacing.xs },
   languageOption: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.sm, borderRadius: 12, borderWidth: 1, borderColor: colors.border },
   switchRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   actionRow: { minHeight: 48, justifyContent: 'center' },
   actionText: { color: colors.accent, fontWeight: '700' },
+  dangerText: { color: colors.error, fontWeight: '700' },
   switchTargets: { gap: spacing.xs },
 });

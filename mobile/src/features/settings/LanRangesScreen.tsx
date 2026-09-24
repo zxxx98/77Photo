@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { Field, Message, PrimaryButton, Screen } from '../../components/ui';
+import { Field, PrimaryButton, Screen } from '../../components/ui';
 import { colors, spacing } from '../../components/theme';
 import { DEFAULT_LAN_CIDRS, validateManualCIDR } from '../../services/connection/policy';
 import type { ConnectionStore } from '../../services/connection/store';
@@ -88,17 +88,16 @@ export function LanRangesScreen({ store, onDone }: { store: ConnectionStore; onD
           </Pressable>
         </View>
       ))}
-      <Field label={t('settings.addCIDR', '新增内网地址范围')} value={input} onChangeText={setInput} autoCapitalize="none" autoCorrect={false} />
+      <Field label={t('settings.addCIDR', '新增内网地址范围')} value={input} onChangeText={(value) => { setInput(value); setError(null); setPendingGlobal(null); }} error={error ?? undefined} autoCapitalize="none" autoCorrect={false} />
       <PrimaryButton label={t('settings.addRange', '添加地址范围')} onPress={add} disabled={!input.trim()} />
       {pendingGlobal ? <PrimaryButton label={t('settings.confirmGlobal', '确认添加公网范围')} onPress={confirmGlobal} /> : null}
-      {error ? <Message>{error}</Message> : null}
       <Text style={styles.enabledSummary}>{t('settings.enabledCount', `${getEnabledLANCIDRs(settings).length} 个范围已启用`, { count: getEnabledLANCIDRs(settings).length })}</Text>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  title: { color: colors.ink, fontSize: 28, fontWeight: '800' },
+  title: { color: colors.ink, fontSize: 23, fontWeight: '700' },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   back: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.sm },
   backText: { color: colors.accent, fontWeight: '700' },

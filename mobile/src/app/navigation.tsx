@@ -35,6 +35,7 @@ type RootStackParamList = {
 type MainTabParamList = {
   Gallery: undefined;
   Upload: undefined;
+  Folders: undefined;
   Settings: undefined;
 };
 
@@ -68,10 +69,28 @@ function AuthenticatedApi({ server, user }: AuthenticatedRouteProps) {
 }
 
 function GalleryTab({ server, user }: AuthenticatedRouteProps) {
+  const api = AuthenticatedApi({ server, user });
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  return (
+    <View style={styles.galleryRoot}>
+      <Text style={styles.galleryTitle}>77Photo</Text>
+      <GalleryScreen
+        api={api}
+        serverId={server.id}
+        userId={user.id}
+        onPhotoPress={(photo, photos) => navigation.navigate('Viewer', {
+          photos,
+          initialIndex: Math.max(0, photos.findIndex((item) => item.id === photo.id)),
+        })}
+      />
+    </View>
+  );
+}
+
+function FoldersTab({ server, user }: AuthenticatedRouteProps) {
   const { t } = useTranslation();
   const api = AuthenticatedApi({ server, user });
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const [view, setView] = useState<'timeline' | 'folders'>('timeline');
   const [folder, setFolder] = useState<{ id: string; name: string } | null>(null);
 
   if (folder) {
@@ -101,56 +120,36 @@ function GalleryTab({ server, user }: AuthenticatedRouteProps) {
 
   return (
     <View style={styles.galleryRoot}>
-      <View style={styles.gallerySwitcher} accessibilityRole="tablist">
-        <Pressable
-          accessibilityRole="tab"
-          accessibilityState={{ selected: view === 'timeline' }}
-          onPress={() => setView('timeline')}
-          style={[styles.switcherButton, view === 'timeline' && styles.switcherButtonActive]}
-        >
-          <Text style={styles.switcherText}>{t('gallery.timeline', '时间线')}</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="tab"
-          accessibilityState={{ selected: view === 'folders' }}
-          onPress={() => setView('folders')}
-          style={[styles.switcherButton, view === 'folders' && styles.switcherButtonActive]}
-        >
-          <Text style={styles.switcherText}>{t('folders.title', '文件夹')}</Text>
-        </Pressable>
-      </View>
-      {view === 'timeline' ? (
-        <GalleryScreen
-          api={api}
-          serverId={server.id}
-          userId={user.id}
-          onPhotoPress={(photo, photos) => navigation.navigate('Viewer', {
-            photos,
-            initialIndex: Math.max(0, photos.findIndex((item) => item.id === photo.id)),
-          })}
-        />
-      ) : (
-        <FolderBrowserScreen
-          api={api}
-          serverId={server.id}
-          userId={user.id}
-          onFolderPress={(selected) => setFolder({ id: selected.id, name: selected.name })}
-        />
-      )}
+      <FolderBrowserScreen
+        api={api}
+        serverId={server.id}
+        userId={user.id}
+        onFolderPress={(selected) => setFolder({ id: selected.id, name: selected.name })}
+      />
     </View>
   );
 }
 
 function MainTabNavigator({ server, user, onSessionChanged }: AuthenticatedRouteProps) {
+  const { t } = useTranslation();
   return (
-    <MainTabs.Navigator screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.accent }}>
-      <MainTabs.Screen name="Gallery">
+    <MainTabs.Navigator screenOptions={{
+      headerShown: false,
+      tabBarActiveTintColor: colors.accent,
+      tabBarInactiveTintColor: colors.muted,
+      tabBarStyle: styles.tabBar,
+      tabBarLabelStyle: styles.tabLabel,
+    }}>
+      <MainTabs.Screen name="Gallery" options={{ title: t('tabs.gallery', '图库') }}>
         {() => <GalleryTab server={server} user={user} />}
       </MainTabs.Screen>
-      <MainTabs.Screen name="Upload">
+      <MainTabs.Screen name="Upload" options={{ title: t('tabs.upload', '上传') }}>
         {() => <UploadTab server={server} user={user} />}
       </MainTabs.Screen>
-      <MainTabs.Screen name="Settings">
+      <MainTabs.Screen name="Folders" options={{ title: t('folders.title', '文件夹') }}>
+        {() => <FoldersTab server={server} user={user} />}
+      </MainTabs.Screen>
+      <MainTabs.Screen name="Settings" options={{ title: t('tabs.settings', '设置') }}>
         {() => <SettingsTab server={server} user={user} onSessionChanged={onSessionChanged} />}
       </MainTabs.Screen>
     </MainTabs.Navigator>
@@ -333,22 +332,9 @@ export function RootNavigator() {
 
 const styles = StyleSheet.create({
   galleryRoot: { flex: 1, backgroundColor: colors.background },
-  gallerySwitcher: {
-    flexDirection: 'row',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    backgroundColor: colors.background,
-  },
-  switcherButton: {
-    minHeight: 48,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  switcherButtonActive: { borderBottomColor: colors.accent },
-  switcherText: { color: colors.ink, fontSize: 16, fontWeight: '700' },
+  galleryTitle: { color: colors.ink, fontSize: 23, fontWeight: '800', paddingHorizontal: 20, paddingTop: spacing.md, paddingBottom: spacing.xs },
+  tabBar: { backgroundColor: colors.surface, borderTopColor: colors.border, minHeight: 56 },
+  tabLabel: { fontSize: 13, fontWeight: '600' },
   folderBack: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.md },
   folderBackText: { color: colors.accent, fontSize: 16, fontWeight: '700' },
 });
