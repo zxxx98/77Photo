@@ -746,7 +746,13 @@ func applyEXIF(metadata *imageMetadata, parsed *exif.Exif) {
 		}
 	}
 	if field, err := parsed.Get(exif.Orientation); err == nil {
-		if value, err := field.Int(0); err == nil {
+		// EXIF orientation is defined for 1..8 only. Cameras and editors
+		// (Meitu, Android motion photos) routinely write 0 for "undefined",
+		// and Field.Int returns its default for non-numeric fields. Storing
+		// anything outside 1..8 violates the photos.orientation CHECK
+		// constraint and makes the whole row fail to index, which silently
+		// hides the photo from the library.
+		if value, err := field.Int(0); err == nil && value >= 1 && value <= 8 {
 			metadata.orientation = &value
 		}
 	}
