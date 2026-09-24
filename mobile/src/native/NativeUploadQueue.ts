@@ -1,5 +1,5 @@
 import type { TurboModule } from 'react-native';
-import { TurboModuleRegistry } from 'react-native';
+import { NativeModules, TurboModuleRegistry } from 'react-native';
 
 export type UploadState = 'queued' | 'uploading' | 'paused' | 'succeeded' | 'failed' | 'canceled';
 
@@ -79,4 +79,7 @@ export interface Spec extends TurboModule {
   cancel(taskIds: readonly string[]): Promise<void>;
 }
 
-export default TurboModuleRegistry.get<Spec>('NativeUploadQueue');
+const turboModule = TurboModuleRegistry.get<Spec>('NativeUploadQueue');
+const legacyModule = NativeModules.NativeUploadQueue as Spec | undefined;
+
+export default turboModule ?? legacyModule ?? null;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react-native';
+import { act, render, screen, waitFor } from '@testing-library/react-native';
 
 import type { ApiClient } from '../../services/api/client';
 import type { Photo } from '../../services/api/types';
@@ -77,6 +77,23 @@ describe('MediaViewerScreen', () => {
       headers: { Authorization: 'Bearer access-1' },
     });
 
+  });
+
+  it('retries an image preview after the server reports that it is still being generated', async () => {
+    const client = api();
+    const view = await render(<MediaViewerScreen api={client} photos={[photo()]} />);
+
+    try {
+      const image = screen.getByTestId('media-preview-photo-1');
+      await act(async () => {
+        image.props.onError?.({ nativeEvent: { error: 'HTTP 202' } });
+        await new Promise<void>((resolve) => setTimeout(resolve, 1_050));
+      });
+
+      expect(screen.getByTestId('media-preview-photo-1').props.source.uri).toContain('preview_retry=1');
+    } finally {
+      await view.unmount();
+    }
   });
 
   it('falls back to download for a non-LIVE QuickTime item', async () => {

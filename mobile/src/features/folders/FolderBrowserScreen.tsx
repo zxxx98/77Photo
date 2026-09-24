@@ -1,20 +1,23 @@
 import React, { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 
 import { colors, spacing } from '../../components/theme';
 import { Message, Screen } from '../../components/ui';
 import type { ApiClient } from '../../services/api/client';
-import type { Folder } from '../../services/api/types';
+import type { Folder, Photo } from '../../services/api/types';
+import { GalleryScreen } from '../gallery/GalleryScreen';
 import { folderListQueryOptions, type FolderQueryApi } from '../gallery/queries';
 import '../../i18n';
 
 export type FolderBrowserScreenProps = {
-  api: Pick<ApiClient, 'listFolders' | 'getFolder'>;
+  api: Pick<ApiClient, 'listFolders' | 'getFolder' | 'listPhotos' | 'thumbnailURL'>;
   serverId: string;
   userId: string;
   onFolderPress?: (folder: Folder) => void;
+  onPhotoPress?: (photo: Photo, photos: readonly Photo[]) => void;
   onBack?: () => void;
 };
 
@@ -25,6 +28,7 @@ export function FolderBrowserScreen({
   serverId,
   userId,
   onFolderPress,
+  onPhotoPress,
   onBack,
 }: FolderBrowserScreenProps) {
   const { t } = useTranslation();
@@ -44,52 +48,85 @@ export function FolderBrowserScreen({
     setBreadcrumbs((items) => items.slice(0, -1));
   };
 
+  const folderRows = query.data?.items.map((folder) => (
+    <Pressable
+      key={folder.id}
+      testID={`folder-${folder.id}`}
+      accessibilityRole="button"
+      onPress={() => {
+        onFolderPress?.(folder);
+        setBreadcrumbs((items) => [...items, { id: folder.id, name: folder.name }]);
+      }}
+      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+    >
+      <Text style={styles.folderIcon}>▱</Text>
+      <View style={styles.rowCopy}>
+        <Text style={styles.folderName}>{folder.name}</Text>
+        <Text style={styles.meta}>
+          {folder.photo_count} {t('folders.photos', '张照片')} · {folder.child_folder_count} {t('folders.children', '个子文件夹')}
+        </Text>
+      </View>
+      {folder.inherited_permission === 'read' ? <Text style={styles.readOnly}>{t('folders.readOnly', '只读')}</Text> : null}
+      <Text style={styles.chevron}>›</Text>
+    </Pressable>
+  ));
+
+  const header = (
+    <View style={styles.folderHeader}>
+      <View style={styles.header}>
+        <Text style={styles.title}>{t('folders.title', '文件夹')}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={t('common.back', '返回')} onPress={goBack} style={styles.backButton}>
+          <Text style={styles.backText}>‹ {t('common.back', '返回')}</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.breadcrumb}>{breadcrumbs.map(({ name }) => name).join(' / ')}</Text>
+      {query.isPending ? <ActivityIndicator accessibilityLabel={t('common.loading', '加载中')} color={colors.accent} /> : null}
+      {query.isError ? <Message>{t('folders.error', '文件夹加载失败')}</Message> : null}
+      {!query.isPending && !query.isError && query.data.items.length === 0 ? (
+        <Text style={styles.empty}>{t('folders.emptyChildren', '这里还没有子文件夹')}</Text>
+      ) : null}
+      {folderRows}
+    </View>
+  );
+
+  if (currentFolderId) {
+    return (
+      <SafeAreaView style={styles.folderContent} edges={['top', 'left', 'right']}>
+        <GalleryScreen
+          api={api}
+          serverId={serverId}
+          userId={userId}
+          folderId={currentFolderId}
+          groupByDay={false}
+          listHeaderComponent={header}
+          onPhotoPress={onPhotoPress}
+        />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <Screen>
       <View style={styles.header}>
         <Text style={styles.title}>{t('folders.title', '文件夹')}</Text>
-        {breadcrumbs.length > 0 ? (
-          <Pressable accessibilityRole="button" accessibilityLabel={t('common.back', '返回')} onPress={goBack} style={styles.backButton}>
-            <Text style={styles.backText}>‹ {t('common.back', '返回')}</Text>
-          </Pressable>
-        ) : null}
       </View>
-      <Text style={styles.breadcrumb}>{breadcrumbs.map(({ name }) => name).join(' / ') || t('folders.root', '全部文件夹')}</Text>
+      <Text style={styles.breadcrumb}>{t('folders.root', '全部文件夹')}</Text>
       {query.isPending ? <ActivityIndicator accessibilityLabel={t('common.loading', '加载中')} color={colors.accent} /> : null}
       {query.isError ? <Message>{t('folders.error', '文件夹加载失败')}</Message> : null}
       {!query.isPending && !query.isError && query.data.items.length === 0 ? (
         <Text style={styles.empty}>{t('folders.empty', '这里还没有文件夹')}</Text>
       ) : null}
-      {query.data?.items.map((folder) => (
-        <Pressable
-          key={folder.id}
-          testID={`folder-${folder.id}`}
-          accessibilityRole="button"
-          onPress={() => {
-            onFolderPress?.(folder);
-            setBreadcrumbs((items) => [...items, { id: folder.id, name: folder.name }]);
-          }}
-          style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-        >
-          <Text style={styles.folderIcon}>▱</Text>
-          <View style={styles.rowCopy}>
-            <Text style={styles.folderName}>{folder.name}</Text>
-            <Text style={styles.meta}>
-              {folder.photo_count} {t('folders.photos', '张照片')} · {folder.child_folder_count} {t('folders.children', '个子文件夹')}
-            </Text>
-          </View>
-          {folder.inherited_permission === 'read' ? <Text style={styles.readOnly}>{t('folders.readOnly', '只读')}</Text> : null}
-          <Text style={styles.chevron}>›</Text>
-        </Pressable>
-      ))}
+      {folderRows}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  folderContent: { flex: 1, backgroundColor: colors.background },
+  folderHeader: { gap: spacing.md, paddingTop: spacing.lg, paddingBottom: spacing.md },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { color: colors.ink, fontSize: 23, fontWeight: '700' },
-  backButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.sm },
+  backButton: { minHeight: 48, minWidth: 72, justifyContent: 'center', alignItems: 'flex-end', paddingHorizontal: spacing.sm },
   backText: { color: colors.accent, fontSize: 16, fontWeight: '700' },
   breadcrumb: { color: colors.muted, fontSize: 14 },
   empty: { color: colors.muted, paddingVertical: spacing.lg },

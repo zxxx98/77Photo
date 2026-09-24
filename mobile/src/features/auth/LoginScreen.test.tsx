@@ -15,7 +15,7 @@ function session() {
       user_id: 'user-1',
       name: 'Android device',
       platform: 'android' as const,
-      app_version: '0.0.6',
+      app_version: '0.0.8',
       created_at: '2026-09-22T13:15:00.000Z',
       last_seen_at: '2026-09-22T13:15:00.000Z',
     },

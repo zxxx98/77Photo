@@ -2,12 +2,14 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { NavigationContainer, useIsFocused, useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackNavigationProp, type NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Screen } from '../components/ui';
 import { colors, spacing } from '../components/theme';
+import { TabBarIcon } from './TabBarIcon';
 import { LoginScreen, type LoginSubmitInput } from '../features/auth/LoginScreen';
 import { FolderBrowserScreen } from '../features/folders/FolderBrowserScreen';
 import { GalleryScreen } from '../features/gallery/GalleryScreen';
@@ -42,6 +44,11 @@ type MainTabParamList = {
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const MainTabs = createBottomTabNavigator<MainTabParamList>();
 
+const galleryTabIcon = ({ color }: { color: string }) => <TabBarIcon name="gallery" color={color} />;
+const uploadTabIcon = ({ color }: { color: string }) => <TabBarIcon name="upload" color={color} />;
+const foldersTabIcon = ({ color }: { color: string }) => <TabBarIcon name="folders" color={color} />;
+const settingsTabIcon = ({ color }: { color: string }) => <TabBarIcon name="settings" color={color} />;
+
 function LoadingScreen() {
   const { t } = useTranslation();
   return <Screen><Text>{t('app.loading')}</Text></Screen>;
@@ -72,7 +79,7 @@ function GalleryTab({ server, user }: AuthenticatedRouteProps) {
   const api = AuthenticatedApi({ server, user });
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   return (
-    <View style={styles.galleryRoot}>
+    <SafeAreaView style={styles.galleryRoot} edges={['top', 'left', 'right']}>
       <Text style={styles.galleryTitle}>77Photo</Text>
       <GalleryScreen
         api={api}
@@ -83,50 +90,23 @@ function GalleryTab({ server, user }: AuthenticatedRouteProps) {
           initialIndex: Math.max(0, photos.findIndex((item) => item.id === photo.id)),
         })}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
 function FoldersTab({ server, user }: AuthenticatedRouteProps) {
-  const { t } = useTranslation();
   const api = AuthenticatedApi({ server, user });
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const [folder, setFolder] = useState<{ id: string; name: string } | null>(null);
-
-  if (folder) {
-    return (
-      <View style={styles.galleryRoot}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t('common.back', '返回')}
-          onPress={() => setFolder(null)}
-          style={styles.folderBack}
-        >
-          <Text style={styles.folderBackText}>‹ {t('common.back', '返回')} · {folder.name}</Text>
-        </Pressable>
-        <GalleryScreen
-          api={api}
-          serverId={server.id}
-          userId={user.id}
-          folderId={folder.id}
-          onPhotoPress={(photo, photos) => navigation.navigate('Viewer', {
-            photos,
-            initialIndex: Math.max(0, photos.findIndex((item) => item.id === photo.id)),
-          })}
-        />
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.galleryRoot}>
-      <FolderBrowserScreen
-        api={api}
-        serverId={server.id}
-        userId={user.id}
-        onFolderPress={(selected) => setFolder({ id: selected.id, name: selected.name })}
-      />
-    </View>
+    <FolderBrowserScreen
+      api={api}
+      serverId={server.id}
+      userId={user.id}
+      onPhotoPress={(photo, photos) => navigation.navigate('Viewer', {
+        photos,
+        initialIndex: Math.max(0, photos.findIndex((item) => item.id === photo.id)),
+      })}
+    />
   );
 }
 
@@ -140,16 +120,28 @@ function MainTabNavigator({ server, user, onSessionChanged }: AuthenticatedRoute
       tabBarStyle: styles.tabBar,
       tabBarLabelStyle: styles.tabLabel,
     }}>
-      <MainTabs.Screen name="Gallery" options={{ title: t('tabs.gallery', '图库') }}>
+      <MainTabs.Screen name="Gallery" options={{
+        title: t('tabs.gallery', '图库'),
+        tabBarIcon: galleryTabIcon,
+      }}>
         {() => <GalleryTab server={server} user={user} />}
       </MainTabs.Screen>
-      <MainTabs.Screen name="Upload" options={{ title: t('tabs.upload', '上传') }}>
+      <MainTabs.Screen name="Upload" options={{
+        title: t('tabs.upload', '上传'),
+        tabBarIcon: uploadTabIcon,
+      }}>
         {() => <UploadTab server={server} user={user} />}
       </MainTabs.Screen>
-      <MainTabs.Screen name="Folders" options={{ title: t('folders.title', '文件夹') }}>
+      <MainTabs.Screen name="Folders" options={{
+        title: t('folders.title', '文件夹'),
+        tabBarIcon: foldersTabIcon,
+      }}>
         {() => <FoldersTab server={server} user={user} />}
       </MainTabs.Screen>
-      <MainTabs.Screen name="Settings" options={{ title: t('tabs.settings', '设置') }}>
+      <MainTabs.Screen name="Settings" options={{
+        title: t('tabs.settings', '设置'),
+        tabBarIcon: settingsTabIcon,
+      }}>
         {() => <SettingsTab server={server} user={user} onSessionChanged={onSessionChanged} />}
       </MainTabs.Screen>
     </MainTabs.Navigator>
@@ -248,7 +240,7 @@ function ViewerRoute({
   );
 }
 
-const MOBILE_APP_VERSION = '0.0.6';
+const MOBILE_APP_VERSION = '0.0.8';
 
 function LoginRoute({ server, reload }: { server?: ServerConfig; reload: () => void }) {
   const login = useCallback(async (input: LoginSubmitInput) => {
@@ -332,9 +324,7 @@ export function RootNavigator() {
 
 const styles = StyleSheet.create({
   galleryRoot: { flex: 1, backgroundColor: colors.background },
-  galleryTitle: { color: colors.ink, fontSize: 23, fontWeight: '800', paddingHorizontal: 20, paddingTop: spacing.md, paddingBottom: spacing.xs },
+  galleryTitle: { color: colors.ink, fontSize: 23, fontWeight: '800', paddingHorizontal: 20, paddingTop: spacing.lg, paddingBottom: spacing.xs },
   tabBar: { backgroundColor: colors.surface, borderTopColor: colors.border, minHeight: 56 },
   tabLabel: { fontSize: 13, fontWeight: '600' },
-  folderBack: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.md },
-  folderBackText: { color: colors.accent, fontSize: 16, fontWeight: '700' },
 });

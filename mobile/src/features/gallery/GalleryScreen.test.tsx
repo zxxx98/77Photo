@@ -249,17 +249,23 @@ describe('GalleryScreen', () => {
 });
 
 describe('folders and authenticated media', () => {
-  it('navigates into a folder and back to the root list', async () => {
+  it('shows a folder’s child folders and photos, then navigates back to the root list', async () => {
     const api = createClient({
       listFolders: jest.fn(async (parentId?: string) => ({
         items: parentId ? [folder({ id: 'child-1', name: '子目录', parent_id: parentId })] : [folder()],
       })),
+      listPhotos: jest.fn(async (options) => (
+        options?.folderId ? page([photo('nested-photo')]) : page([])
+      )),
     });
     await renderWithQuery(<FolderBrowserScreen api={api} serverId="server-1" userId="user-1" />);
 
     await waitFor(() => expect(screen.getByText('旅行')).toBeTruthy());
     await fireEvent.press(screen.getByText('旅行'));
     await waitFor(() => expect(screen.getByText('子目录')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('photo-nested-photo')).toBeTruthy());
+    expect(api.listPhotos).toHaveBeenCalledWith(expect.objectContaining({ folderId: 'folder-1' }));
+    expect(screen.queryByText('2026-09-15')).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: '返回' }));
     await waitFor(() => expect(api.listFolders).toHaveBeenLastCalledWith(undefined));
   });

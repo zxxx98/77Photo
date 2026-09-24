@@ -22,6 +22,8 @@ export type GalleryScreenProps = {
   serverId: string;
   userId: string;
   folderId?: string;
+  groupByDay?: boolean;
+  listHeaderComponent?: React.ReactElement | null;
   timeZone?: string;
   thumbnailSize?: 256 | 512;
   onPhotoPress?: (photo: Photo, photos: readonly Photo[]) => void;
@@ -47,6 +49,8 @@ export function GalleryScreen({
   serverId,
   userId,
   folderId,
+  groupByDay = true,
+  listHeaderComponent,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
   thumbnailSize = 256,
   onPhotoPress,
@@ -65,7 +69,12 @@ export function GalleryScreen({
   }, [folderId, query.error, queryClient, serverId, userId]);
 
   const photos = useMemo(() => appendPhotoPages(query.data?.pages ?? []), [query.data?.pages]);
-  const rows = useMemo(() => rowsForPhotos(photos, timeZone), [photos, timeZone]);
+  const rows = useMemo(
+    () => groupByDay
+      ? rowsForPhotos(photos, timeZone)
+      : photos.map((photo) => ({ type: 'photo' as const, photo })),
+    [groupByDay, photos, timeZone],
+  );
   const renderItem: ListRenderItem<GalleryRow> = ({ item }) => {
     if (item.type === 'day') {
       return <Text style={styles.dayHeader}>{item.key}</Text>;
@@ -95,10 +104,10 @@ export function GalleryScreen({
     );
   };
 
-  if (query.isPending && !query.data) {
+  if (query.isPending && !query.data && !listHeaderComponent) {
     return <View style={styles.center}><ActivityIndicator color={colors.accent} /><Text>{t('gallery.loading', '正在加载照片…')}</Text></View>;
   }
-  if (query.isError && !query.data) {
+  if (query.isError && !query.data && !listHeaderComponent) {
     return (
       <View style={styles.center}>
         <Message>{t('gallery.error', '照片加载失败')}</Message>
@@ -106,7 +115,7 @@ export function GalleryScreen({
       </View>
     );
   }
-  if (rows.length === 0) {
+  if (rows.length === 0 && !listHeaderComponent) {
     return <View style={styles.center}><Text style={styles.empty}>{t('gallery.empty', '还没有照片')}</Text></View>;
   }
 
@@ -114,6 +123,21 @@ export function GalleryScreen({
     <View style={styles.container}>
       <FlashList
         data={rows}
+        ListHeaderComponent={listHeaderComponent}
+        ListEmptyComponent={listHeaderComponent ? (
+          <View style={styles.listEmpty}>
+            {query.isPending && !query.data ? (
+              <ActivityIndicator color={colors.accent} />
+            ) : query.isError && !query.data ? (
+              <>
+                <Message>{t('gallery.error', '照片加载失败')}</Message>
+                <PrimaryButton label={t('common.retry', '重试')} onPress={() => { query.refetch().catch(() => undefined); }} />
+              </>
+            ) : (
+              <Text style={styles.empty}>{t('gallery.empty', '还没有照片')}</Text>
+            )}
+          </View>
+        ) : null}
         renderItem={renderItem}
         keyExtractor={(item) => item.type === 'day' ? `day-${item.key}` : item.photo.id}
         getItemType={(item) => item.type}
@@ -152,6 +176,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     backgroundColor: colors.background,
   },
+  listEmpty: { alignItems: 'center', gap: spacing.md, padding: spacing.lg },
   empty: { color: colors.muted, fontSize: 17 },
   dayHeader: {
     width: '100%',

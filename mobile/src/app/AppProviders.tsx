@@ -1,7 +1,7 @@
 import React, { type PropsWithChildren, useEffect, useState } from 'react';
 import { StatusBar, useColorScheme } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
 
 import i18n, { resolveLanguage } from '../i18n';
 import { connectionStore } from '../services/connection/store';
@@ -15,7 +15,7 @@ export function AppProviders({ children }: PropsWithChildren) {
     i18n.changeLanguage(resolveLanguage(language)).catch(() => undefined);
   }, [language]);
   return (
-    <SafeAreaProvider>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </SafeAreaProvider>

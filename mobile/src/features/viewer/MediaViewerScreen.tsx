@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   BackHandler,
@@ -220,7 +221,7 @@ export function MediaViewerScreen({
                   ) : item.mime_type.startsWith('video/') ? (
                     <UnsupportedMedia photo={item} onDownload={() => openOriginal(item)} />
                   ) : (
-                    <AuthenticatedImage
+                    <RetryingPreviewImage
                       testID={`media-preview-${item.id}`}
                       uri={api.previewURL(item.id)}
                       accessToken={authHeaders.Authorization?.replace(/^Bearer /, '')}
@@ -228,6 +229,9 @@ export function MediaViewerScreen({
                       userId={userId}
                       resizeMode="contain"
                       style={[styles.media, { transform: [{ scale }] }]}
+                      errorLabel={t('viewer.previewError', '预览加载失败')}
+                      downloadLabel={t('viewer.download', '下载原文件')}
+                      onDownload={() => openOriginal(item)}
                     />
                   )}
                   {unsupportedPhotoId === item.id ? <UnsupportedMedia photo={item} onDownload={openOriginal} /> : null}
@@ -260,6 +264,80 @@ export function MediaViewerScreen({
   );
 }
 
+function RetryingPreviewImage({
+  uri,
+  errorLabel,
+  downloadLabel,
+  onDownload,
+  ...imageProps
+}: React.ComponentProps<typeof AuthenticatedImage> & {
+  errorLabel: string;
+  downloadLabel: string;
+  onDownload: () => void;
+}) {
+  const [attempt, setAttempt] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setAttempt(0);
+    setLoading(true);
+    setFailed(false);
+    return () => {
+      if (retryTimer.current !== null) clearTimeout(retryTimer.current);
+    };
+  }, [uri]);
+
+  const handleError = () => {
+    if (attempt >= PREVIEW_RETRY_LIMIT) {
+      setLoading(false);
+      setFailed(true);
+      return;
+    }
+    if (retryTimer.current !== null) return;
+    setLoading(true);
+    retryTimer.current = setTimeout(() => {
+      retryTimer.current = null;
+      setAttempt((current) => current + 1);
+    }, PREVIEW_RETRY_DELAY_MS);
+  };
+
+  const requestURI = attempt === 0
+    ? uri
+    : `${uri}${uri.includes('?') ? '&' : '?'}preview_retry=${attempt}`;
+
+  return (
+    <View style={styles.previewContainer}>
+      <AuthenticatedImage
+        {...imageProps}
+        key={`${uri}-${attempt}`}
+        uri={requestURI}
+        onLoad={() => {
+          if (retryTimer.current !== null) {
+            clearTimeout(retryTimer.current);
+            retryTimer.current = null;
+          }
+          setLoading(false);
+          setFailed(false);
+        }}
+        onError={handleError}
+      />
+      {loading && !failed ? (
+        <View pointerEvents="none" style={styles.previewStatus}>
+          <ActivityIndicator color={colors.surface} />
+        </View>
+      ) : null}
+      {failed ? (
+        <View style={styles.previewFailure}>
+          <Text style={styles.unsupportedText}>{errorLabel}</Text>
+          <PrimaryButton label={downloadLabel} onPress={onDownload} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function UnsupportedMedia({ photo, onDownload }: { photo: Photo; onDownload: () => void }) {
   const { t } = useTranslation();
   return (
@@ -282,6 +360,9 @@ const styles = StyleSheet.create({
   page: { width: '100%', flex: 1, alignItems: 'center', justifyContent: 'center' },
   mediaGesture: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   media: { width: '100%', height: '100%' },
+  previewContainer: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
+  previewStatus: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
+  previewFailure: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: spacing.md, padding: spacing.lg, backgroundColor: '#000000' },
   toolbar: { flexDirection: 'row', paddingHorizontal: spacing.sm, backgroundColor: '#000000', borderTopWidth: 1, borderTopColor: '#262626' },
   toolbarAction: { flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xs },
   toolbarText: { color: colors.surface, fontSize: 14, fontWeight: '600', textAlign: 'center' },
@@ -292,3 +373,6 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
   empty: { color: colors.muted },
 });
+
+const PREVIEW_RETRY_LIMIT = 5;
+const PREVIEW_RETRY_DELAY_MS = 1_000;

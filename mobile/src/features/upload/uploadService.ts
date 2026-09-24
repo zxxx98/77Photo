@@ -4,12 +4,12 @@ export type UploadQueueService = Pick<Spec, 'enqueue' | 'snapshot' | 'pause' | '
   Partial<Pick<Spec, 'start'>>;
 
 const unavailableQueue: UploadQueueService = {
-  enqueue: async () => { throw new Error('NativeUploadQueue is unavailable'); },
-  snapshot: async () => { throw new Error('NativeUploadQueue is unavailable'); },
-  pause: async () => { throw new Error('NativeUploadQueue is unavailable'); },
-  resume: async () => { throw new Error('NativeUploadQueue is unavailable'); },
-  retryFailed: async () => { throw new Error('NativeUploadQueue is unavailable'); },
-  cancel: async () => { throw new Error('NativeUploadQueue is unavailable'); },
+  enqueue: async () => { throw new Error('Android upload module is missing. Install the latest Android app build, then try again.'); },
+  snapshot: async () => { throw new Error('Android upload module is missing. Install the latest Android app build, then try again.'); },
+  pause: async () => { throw new Error('Android upload module is missing. Install the latest Android app build, then try again.'); },
+  resume: async () => { throw new Error('Android upload module is missing. Install the latest Android app build, then try again.'); },
+  retryFailed: async () => { throw new Error('Android upload module is missing. Install the latest Android app build, then try again.'); },
+  cancel: async () => { throw new Error('Android upload module is missing. Install the latest Android app build, then try again.'); },
 };
 
 export function createUploadService(queue: UploadQueueService = NativeUploadQueue ?? unavailableQueue): UploadQueueService {
