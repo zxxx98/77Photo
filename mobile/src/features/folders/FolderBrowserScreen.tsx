@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 
 import { colors, spacing } from '../../components/theme';
-import { Message, Screen } from '../../components/ui';
+import { Message } from '../../components/ui';
 import type { ApiClient } from '../../services/api/client';
 import type { Folder, Photo } from '../../services/api/types';
 import { GalleryScreen } from '../gallery/GalleryScreen';
@@ -71,22 +71,28 @@ export function FolderBrowserScreen({
     </Pressable>
   ));
 
-  const header = (
-    <View style={styles.folderHeader}>
-      <View style={styles.header}>
+  const content = (
+    <>
+      <View testID="folder-browser-header" style={styles.header}>
         <Text style={styles.title}>{t('folders.title', '文件夹')}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel={t('common.back', '返回')} onPress={goBack} style={styles.backButton}>
-          <Text style={styles.backText}>‹ {t('common.back', '返回')}</Text>
-        </Pressable>
+        {currentFolderId ? (
+          <Pressable accessibilityRole="button" accessibilityLabel={t('common.back', '返回')} onPress={goBack} style={styles.backButton}>
+            <Text style={styles.backText}>‹ {t('common.back', '返回')}</Text>
+          </Pressable>
+        ) : null}
       </View>
-      <Text style={styles.breadcrumb}>{breadcrumbs.map(({ name }) => name).join(' / ')}</Text>
+      <Text style={styles.breadcrumb}>
+        {currentFolderId ? breadcrumbs.map(({ name }) => name).join(' / ') : t('folders.root', '全部文件夹')}
+      </Text>
       {query.isPending ? <ActivityIndicator accessibilityLabel={t('common.loading', '加载中')} color={colors.accent} /> : null}
       {query.isError ? <Message>{t('folders.error', '文件夹加载失败')}</Message> : null}
       {!query.isPending && !query.isError && query.data.items.length === 0 ? (
-        <Text style={styles.empty}>{t('folders.emptyChildren', '这里还没有子文件夹')}</Text>
+        <Text style={styles.empty}>
+          {currentFolderId ? t('folders.emptyChildren', '这里还没有子文件夹') : t('folders.empty', '这里还没有文件夹')}
+        </Text>
       ) : null}
       {folderRows}
-    </View>
+    </>
   );
 
   if (currentFolderId) {
@@ -98,7 +104,7 @@ export function FolderBrowserScreen({
           userId={userId}
           folderId={currentFolderId}
           groupByDay={false}
-          listHeaderComponent={header}
+          listHeaderComponent={content}
           onPhotoPress={onPhotoPress}
         />
       </SafeAreaView>
@@ -106,24 +112,17 @@ export function FolderBrowserScreen({
   }
 
   return (
-    <Screen>
-      <View style={styles.header}>
-        <Text style={styles.title}>{t('folders.title', '文件夹')}</Text>
-      </View>
-      <Text style={styles.breadcrumb}>{t('folders.root', '全部文件夹')}</Text>
-      {query.isPending ? <ActivityIndicator accessibilityLabel={t('common.loading', '加载中')} color={colors.accent} /> : null}
-      {query.isError ? <Message>{t('folders.error', '文件夹加载失败')}</Message> : null}
-      {!query.isPending && !query.isError && query.data.items.length === 0 ? (
-        <Text style={styles.empty}>{t('folders.empty', '这里还没有文件夹')}</Text>
-      ) : null}
-      {folderRows}
-    </Screen>
+    <SafeAreaView style={styles.folderContent} edges={['top', 'left', 'right']}>
+      <ScrollView contentContainerStyle={styles.rootContent}>
+        {content}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   folderContent: { flex: 1, backgroundColor: colors.background },
-  folderHeader: { gap: spacing.md, paddingTop: spacing.lg, paddingBottom: spacing.md },
+  rootContent: { flexGrow: 1, paddingHorizontal: 20, paddingVertical: spacing.lg, gap: spacing.md },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { color: colors.ink, fontSize: 23, fontWeight: '700' },
   backButton: { minHeight: 48, minWidth: 72, justifyContent: 'center', alignItems: 'flex-end', paddingHorizontal: spacing.sm },

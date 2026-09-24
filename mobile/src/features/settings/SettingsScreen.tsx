@@ -156,7 +156,7 @@ export function SettingsScreen({
       {user.role === 'admin' && api ? <RescanPanel api={api} /> : null}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t('settings.about', '关于')}</Text>
-        <Text style={styles.meta}>77Photo · 0.0.8</Text>
+        <Text style={styles.meta}>77Photo · 0.0.9</Text>
         {onLogout ? <Pressable accessibilityRole="button" accessibilityLabel={t('settings.logout', '退出当前设备')} onPress={() => { Promise.resolve(onLogout()).catch(() => undefined); }} style={styles.actionRow}><Text style={styles.dangerText}>{t('settings.logout', '退出当前设备')}</Text></Pressable> : null}
       </View>
     </Screen>

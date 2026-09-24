@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { ApiError, createApiClient, type ApiClient } from '../../services/api/client';
@@ -264,6 +264,10 @@ describe('folders and authenticated media', () => {
     await fireEvent.press(screen.getByText('旅行'));
     await waitFor(() => expect(screen.getByText('子目录')).toBeTruthy());
     await waitFor(() => expect(screen.getByTestId('photo-nested-photo')).toBeTruthy());
+    const header = screen.getByTestId('folder-browser-header');
+    expect(within(header).getByRole('button', { name: '返回' })).toBeTruthy();
+    expect(header.props.style).toMatchObject({ flexDirection: 'row' });
+    expect(header.props.style).not.toHaveProperty('paddingTop');
     expect(api.listPhotos).toHaveBeenCalledWith(expect.objectContaining({ folderId: 'folder-1' }));
     expect(screen.queryByText('2026-09-15')).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: '返回' }));

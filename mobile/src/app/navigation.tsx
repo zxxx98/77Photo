@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { NavigationContainer, useIsFocused, useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackNavigationProp, type NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -32,6 +32,7 @@ type RootStackParamList = {
   Login: undefined;
   Main: undefined;
   Viewer: { photos: readonly Photo[]; initialIndex?: number };
+  LanRanges: undefined;
 };
 
 type MainTabParamList = {
@@ -110,7 +111,12 @@ function FoldersTab({ server, user }: AuthenticatedRouteProps) {
   );
 }
 
-function MainTabNavigator({ server, user, onSessionChanged }: AuthenticatedRouteProps) {
+function MainTabNavigator({
+  server,
+  user,
+  onSessionChanged,
+  navigation,
+}: AuthenticatedRouteProps & NativeStackScreenProps<RootStackParamList, 'Main'>) {
   const { t } = useTranslation();
   return (
     <MainTabs.Navigator screenOptions={{
@@ -142,20 +148,28 @@ function MainTabNavigator({ server, user, onSessionChanged }: AuthenticatedRoute
         title: t('tabs.settings', '设置'),
         tabBarIcon: settingsTabIcon,
       }}>
-        {() => <SettingsTab server={server} user={user} onSessionChanged={onSessionChanged} />}
+        {() => (
+          <SettingsTab
+            server={server}
+            user={user}
+            onSessionChanged={onSessionChanged}
+            onOpenLanRanges={() => navigation.navigate('LanRanges')}
+          />
+        )}
       </MainTabs.Screen>
     </MainTabs.Navigator>
   );
 }
 
-function SettingsTab({ server, user, onSessionChanged }: AuthenticatedRouteProps) {
+function SettingsTab({
+  server,
+  user,
+  onSessionChanged,
+  onOpenLanRanges,
+}: AuthenticatedRouteProps & { onOpenLanRanges: () => void }) {
   const { t } = useTranslation();
   const api = AuthenticatedApi({ server, user });
   const queryClient = useQueryClient();
-  const [lanRangesOpen, setLanRangesOpen] = useState(false);
-  if (lanRangesOpen) {
-    return <LanRangesScreen store={connectionStore} onDone={() => setLanRangesOpen(false)} />;
-  }
   return (
     <SettingsScreen
       store={connectionStore}
@@ -163,7 +177,7 @@ function SettingsTab({ server, user, onSessionChanged }: AuthenticatedRouteProps
       user={user}
       api={api}
       queryClient={queryClient}
-      onOpenLanRanges={() => setLanRangesOpen(true)}
+      onOpenLanRanges={onOpenLanRanges}
       onSwitchServer={(targetServerId) => {
         switchServerWithQueueDecision({
           fromServerId: server.id,
@@ -240,7 +254,13 @@ function ViewerRoute({
   );
 }
 
-const MOBILE_APP_VERSION = '0.0.8';
+function LanRangesRoute({
+  navigation,
+}: NativeStackScreenProps<RootStackParamList, 'LanRanges'>) {
+  return <LanRangesScreen store={connectionStore} onDone={() => navigation.goBack()} />;
+}
+
+const MOBILE_APP_VERSION = '0.0.9';
 
 function LoginRoute({ server, reload }: { server?: ServerConfig; reload: () => void }) {
   const login = useCallback(async (input: LoginSubmitInput) => {
@@ -309,12 +329,24 @@ export function RootNavigator() {
         ) : null}
         {state.status === 'authenticated' ? (
           <RootStack.Screen name="Main">
-            {() => <MainTabNavigator server={state.server} user={state.user} onSessionChanged={reload} />}
+            {(props) => (
+              <MainTabNavigator
+                server={state.server}
+                user={state.user}
+                onSessionChanged={reload}
+                {...props}
+              />
+            )}
           </RootStack.Screen>
         ) : null}
         {state.status === 'authenticated' ? (
           <RootStack.Screen name="Viewer">
             {(props) => <ViewerRoute server={state.server} user={state.user} {...props} />}
+          </RootStack.Screen>
+        ) : null}
+        {state.status === 'authenticated' ? (
+          <RootStack.Screen name="LanRanges">
+            {(props) => <LanRangesRoute {...props} />}
           </RootStack.Screen>
         ) : null}
       </RootStack.Navigator>
