@@ -691,3 +691,65 @@ func waitForJob(t *testing.T, service *Service, principal acl.Principal, id stri
 	}
 	t.Fatal("rescan did not complete")
 }
+
+// motionPhotoWithThumbnail mirrors how camera apps write motion photos: an EXIF
+// APP1 segment carries a thumbnail whose EOI marker ends long before the
+// primary image does, so a scanner that stops at the first EOI finds no video.
+func motionPhotoWithThumbnail(t *testing.T, video []byte) []byte {
+	t.Helper()
+	encoded := jpegBytesForIndexer(t, 2, 2)
+	thumbnail := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0xff, 0xd9}
+	segment := []byte{0xff, 0xe1, 0x00, byte(len(thumbnail) + 2)}
+	still := make([]byte, 0, len(encoded)+len(segment)+len(thumbnail)+len(video))
+	still = append(still, encoded[:2]...)
+	still = append(still, segment...)
+	still = append(still, thumbnail...)
+	still = append(still, encoded[2:]...)
+	return append(still, video...)
+}
+
+func TestRescanExtractsMotionBehindEXIFThumbnailEOI(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := folders.NewService(db, store).Create(ctx, principal, folders.CreateInput{Name: "imports"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.ResolvePath(filepath.Join(folder.StoragePath, "MVIMG_2.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, motionPhotoWithThumbnail(t, heicBytesForIndexer("isom")), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	photoService := photos.NewService(db, store, 1<<20)
+	photoService.SetMediaTools(&media.Tools{FFprobe: "ffprobe", Runner: scannerMediaRunner{}, Timeout: time.Second, MaxOutputBytes: 1 << 20})
+	service := NewService(db, store, photoService)
+	service.SetMediaTools(&media.Tools{FFprobe: "ffprobe", Runner: scannerMediaRunner{}, Timeout: time.Second, MaxOutputBytes: 1 << 20})
+	job, err := service.Start(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+	var photoID string
+	if err := db.QueryRowContext(ctx, "SELECT id FROM photos WHERE filename='MVIMG_2.jpg'").Scan(&photoID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := photoService.LiveVideoPath(ctx, principal, photoID); err != nil {
+		t.Fatalf("motion behind EXIF thumbnail EOI missing = %v", err)
+	}
+}

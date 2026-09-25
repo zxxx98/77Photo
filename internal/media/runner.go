@@ -456,34 +456,35 @@ func (t *Tools) FindEmbeddedMotion(ctx context.Context, input string) (EmbeddedM
 	return EmbeddedMotion{Offset: int64(offset), Size: int64(len(data) - offset), MIME: "video/mp4"}, nil
 }
 
+// locateJPEGMotion returns the offset of the ISO-BMFF segment appended to a
+// still. Every JPEG EOI marker is examined: camera apps embed an EXIF
+// thumbnail that ends with its own EOI long before the primary image does, so
+// stopping at the first marker reports "no motion" for most vendor files.
 func locateJPEGMotion(data []byte) (int, bool) {
 	for offset := 2; offset+1 < len(data); offset++ {
 		if data[offset] != 0xff || data[offset+1] != 0xd9 {
 			continue
 		}
 		segment := data[offset+2:]
-		if validFTYPBox(segment) {
+		if validFTYPBox(segment, int64(len(segment))) {
 			return offset + 2, true
 		}
-		return 0, false
+		// Thumbnail or padding EOI: keep scanning for the primary image.
 	}
 	return 0, false
 }
 
-func validFTYPBox(data []byte) bool {
+func validFTYPBox(data []byte, remaining int64) bool {
 	if len(data) < 16 || string(data[4:8]) != "ftyp" {
 		return false
 	}
 	boxSize := uint64(readUint32(data[:4]))
 	headerSize := uint64(8)
 	if boxSize == 1 {
-		if len(data) < 16 {
-			return false
-		}
-		boxSize = uint64(readUint64(data[8:16]))
+		boxSize = readUint64(data[8:16])
 		headerSize = 16
 	}
-	if boxSize < headerSize+8 || boxSize > uint64(len(data)) {
+	if boxSize < headerSize+8 || boxSize > uint64(remaining) {
 		return false
 	}
 	return true

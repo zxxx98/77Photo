@@ -396,3 +396,56 @@ func TestExtractMotionUsesVideoContainerForHEIC(t *testing.T) {
 		t.Fatalf("temporary video output extension = %q, want .mp4", extension)
 	}
 }
+
+// motionPhotoStill builds a JPEG the way camera apps write motion photos: the
+// EXIF APP1 segment carries a thumbnail that ends with its own EOI marker long
+// before the primary image does.
+func motionPhotoStill(video []byte) []byte {
+	thumbnail := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0xff, 0xd9}
+	still := []byte{0xff, 0xd8, 0xff, 0xe1}
+	still = append(still, thumbnail...)
+	still = append(still, 0xff, 0xe2, 0x00, 0x04)
+	still = append(still, 'i', 'm', 'a', 'g', 'e')
+	still = append(still, 0xff, 0xd9)
+	return append(still, video...)
+}
+
+func TestFindEmbeddedMotionSkipsEXIFThumbnailEOI(t *testing.T) {
+	video := ftypBytes("mp42")
+	still := motionPhotoStill(video)
+	input := filepath.Join(t.TempDir(), "MVIMG_0003.jpg")
+	if err := os.WriteFile(input, still, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{runOut: []byte("video\n")}
+	tools := Tools{FFprobe: "ffprobe", Runner: runner, Timeout: time.Second, MaxOutputBytes: 1 << 20}
+
+	motion, err := tools.FindEmbeddedMotion(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int64(len(still) - len(video))
+	if motion.Offset != want || motion.Size != int64(len(video)) {
+		t.Fatalf("motion = %#v, want offset %d size %d", motion, want, len(video))
+	}
+}
+
+func TestFindEmbeddedMotionBoundedSkipsEXIFThumbnailEOI(t *testing.T) {
+	video := ftypBytes("mp42")
+	still := motionPhotoStill(video)
+	input := filepath.Join(t.TempDir(), "MVIMG_0004.jpg")
+	if err := os.WriteFile(input, still, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{runOut: []byte("video\n")}
+	tools := Tools{FFprobe: "ffprobe", Runner: runner, Timeout: time.Second, MaxInputBytes: 1 << 20}
+
+	motion, err := tools.FindEmbeddedMotionBounded(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int64(len(still) - len(video))
+	if motion.Offset != want || motion.Size != int64(len(video)) {
+		t.Fatalf("motion = %#v, want offset %d size %d", motion, want, len(video))
+	}
+}

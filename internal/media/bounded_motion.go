@@ -132,6 +132,10 @@ func (t *Tools) ExtractMotionBounded(ctx context.Context, input, destination str
 	return t.atomicFFmpegCopy(ctx, input, destination)
 }
 
+// locateJPEGMotionFile returns the offset of the ISO-BMFF segment appended to
+// a still. Every JPEG EOI marker is examined: camera apps embed an EXIF
+// thumbnail that ends with its own EOI long before the primary image does, so
+// stopping at the first marker reports "no motion" for most vendor files.
 func locateJPEGMotionFile(file *os.File, fileSize int64) (int64, bool, error) {
 	buffer := make([]byte, embeddedMotionScanChunk)
 	var previous byte
@@ -142,12 +146,14 @@ func locateJPEGMotionFile(file *os.File, fileSize int64) (int64, bool, error) {
 			current := buffer[index]
 			currentOffset := offset + int64(index)
 			if previous == 0xff && current == 0xd9 {
-				segmentOffset := currentOffset + 1
-				valid, err := validFTYPAt(file, segmentOffset, fileSize)
+				motionOffset, ok, err := motionBoxAt(file, currentOffset+1, fileSize)
 				if err != nil {
 					return 0, false, err
 				}
-				return segmentOffset, valid, nil
+				if ok {
+					return motionOffset, true, nil
+				}
+				// Thumbnail or padding EOI: keep scanning for the primary image.
 			}
 			previous = current
 		}
@@ -161,29 +167,23 @@ func locateJPEGMotionFile(file *os.File, fileSize int64) (int64, bool, error) {
 	}
 }
 
-func validFTYPAt(file *os.File, offset, fileSize int64) (bool, error) {
-	if offset < 0 || offset > fileSize || fileSize-offset < 8 {
-		return false, nil
+// motionBoxAt reports whether a valid ISO-BMFF box starts at offset. Filler
+// between the EOI marker and the box is not tolerated: an ISO-BMFF header
+// starts with NUL bytes, so skipping filler would shift into the box payload.
+func motionBoxAt(file *os.File, offset, fileSize int64) (int64, bool, error) {
+	if offset < 0 || offset > fileSize || fileSize-offset < 16 {
+		return 0, false, nil
 	}
 	header := make([]byte, 16)
 	n, err := file.ReadAt(header, offset)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return false, fmt.Errorf("read embedded motion header: %w", err)
+		return 0, false, fmt.Errorf("read embedded motion header: %w", err)
 	}
-	if n < 8 || string(header[4:8]) != "ftyp" {
-		return false, nil
+	if n < 16 {
+		return 0, false, nil
 	}
-	boxSize := uint64(readUint32(header[:4]))
-	headerSize := uint64(8)
-	if boxSize == 1 {
-		if n < 16 {
-			return false, nil
-		}
-		boxSize = readUint64(header[8:16])
-		headerSize = 16
+	if !validFTYPBox(header, fileSize-offset) {
+		return 0, false, nil
 	}
-	if boxSize < headerSize+8 || boxSize > uint64(fileSize-offset) {
-		return false, nil
-	}
-	return true, nil
+	return offset, true, nil
 }
