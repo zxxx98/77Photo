@@ -47,17 +47,4 @@ go run ./tests/performance -count 100000 -pages 20
 
 ## Android 客户端
 
-Android 客户端支持 Android 12+，使用系统 Photo Picker 和加密的设备令牌；上传队列由 Room、前台 data-sync 服务和 WorkManager 共同维护。客户端配置、HTTPS/IP 证书要求、内网 HTTP 风险、通知权限、电池限制、故障恢复和设备撤销说明见 [Android 客户端运维文档](docs/operations/android-client.md)。
-
-本地检查：
-
-```bash
-cd mobile
-npm ci
-npm test -- --runInBand
-npm run typecheck
-npm run lint
-ANDROID_HOME=/home/ubuntu/Android/Sdk npm run android:assemble
-```
-
-生产 Android release 只应由 CI 使用受保护的 upload keystore 构建；不要把 keystore、密码或签名属性提交到仓库。
+旧 Android 客户端已移除，当前仓库不提供 Android App、APK/AAB 或 Android 构建流程。原 APK 的 `77Photo` 显示名、`com.photo77` 应用 ID 和启动图标已独立保留在 [Android 身份资源](assets/android/launcher/README.md)，供新工程沿用。Web/PWA 可在手机浏览器使用；服务端的移动认证与 Bearer API 仍保留，供未来原生客户端使用。重建方向和阶段边界见 [Android 从零设计](docs/ui/ANDROID_FROM_WEB.md)。

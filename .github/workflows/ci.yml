@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - 'mobile/**'
-      - '.github/workflows/android-ci.yml'
 
 jobs:
   go:

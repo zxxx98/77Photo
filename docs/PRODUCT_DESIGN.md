@@ -99,7 +99,7 @@ V1 使用响应式 Web / PWA，一套界面适配：
 
 原生 Android/iOS 应用不是 V1 前置条件。
 
-但服务端 API 从第一天开始与 Web UI 解耦，为后续 React Native 客户端和手机后台自动备份留出空间。
+但服务端 API 与 Web UI 解耦，为后续原生客户端留出空间。Android 重建方向见 [从零设计](ui/ANDROID_FROM_WEB.md)；技术栈和自动备份实现尚未确定。
 
 ---
 
@@ -774,15 +774,15 @@ V1 可以支持：
 
 ## 17. 未来原生客户端
 
-未来 Android App 可以使用 React Native，但必须复用同一 REST API。
+未来 Android App 应复用同一 REST API；具体技术栈在重建时重新评估。
 
 ```text
-React Web ──────────┐
-                    ├── REST API ── Go Server
-React Native Android┘
+React Web ────────┐
+                  ├── REST API ── Go Server
+Android 客户端 ───┘
 ```
 
-原生 App 的核心价值应集中在 Web 难以可靠实现的部分：
+原生 App 先交付安全浏览与手选上传；Web 难以可靠实现的以下能力应作为后续独立阶段评估：
 
 - 后台相册扫描
 - 自动备份
@@ -791,7 +791,7 @@ React Native Android┘
 - 上传失败重试
 - 上传状态通知
 
-不要为了“看起来像 App”而过早维护两套 UI。
+不要为了“看起来像 App”而过早维护两套 UI，也不要在自动备份的授权和可靠同步尚未实现时宣称它已经可用。
 
 ---
 
