@@ -180,7 +180,7 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
               const itemIndex = filmstripStart + offset;
               return (
                 <button key={item.id} className={`immersive-viewer__thumb${itemIndex === index ? ' is-current' : ''}`} type="button" aria-label={item.filename} aria-current={itemIndex === index ? 'true' : undefined} onClick={() => setIndex(itemIndex)}>
-                  <img src={photoPreviewURL(item.id)} alt="" loading="lazy" />
+                  <FilmstripThumbnail photo={item} />
                   {item.is_live_photo && <CirclePlay size={12} className="immersive-viewer__thumb-live" />}
                 </button>
               );
@@ -263,6 +263,35 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
   );
 }
 
+function FilmstripThumbnail({ photo }: { photo: Photo }) {
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const retryTimer = useRef<number | null>(null);
+  const isVideo = photo.mime_type.startsWith('video/');
+  const src = failed
+    ? isVideo ? videoPlaceholderSource : '/image-placeholder.svg'
+    : `/api/v1/photos/${encodeURIComponent(photo.id)}/thumbnail?size=256&retry=${attempt}`;
+
+  useEffect(() => () => {
+    if (retryTimer.current !== null) window.clearTimeout(retryTimer.current);
+  }, []);
+
+  function handleError() {
+    if (attempt < thumbnailRetryLimit) {
+      if (retryTimer.current === null) {
+        retryTimer.current = window.setTimeout(() => {
+          retryTimer.current = null;
+          setAttempt((value) => value + 1);
+        }, thumbnailRetryDelayMS);
+      }
+      return;
+    }
+    setFailed(true);
+  }
+
+  return <img src={src} alt="" loading="lazy" onError={handleError} />;
+}
+
 function LivePhotoMedia({ photo, previewURL }: { photo: Photo; previewURL: string }) {
   const [playing, setPlaying] = useState(true);
 
@@ -307,6 +336,10 @@ function LivePhotoMedia({ photo, previewURL }: { photo: Photo; previewURL: strin
 function photoPreviewURL(id: string): string {
   return `/api/v1/photos/${encodeURIComponent(id)}/preview`;
 }
+
+const thumbnailRetryLimit = 2;
+const thumbnailRetryDelayMS = 1000;
+const videoPlaceholderSource = '/video-placeholder.svg';
 
 function formatBytes(value: number): string {
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
