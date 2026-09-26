@@ -98,6 +98,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
 .search-field input::placeholder { color: #9da4ad; }
 .topbar-actions { display: inline-flex; align-items: center; gap: 16px; margin-left: auto; }
 .content-scroll { min-height: 0; flex: 1; overflow: auto; padding: clamp(28px, 5vw, 66px) clamp(22px, 4vw, 58px) 72px; }
+.content-scroll.content-scroll--map { display: flex; overflow: hidden; padding: 0; }
 .gallery-workspace, .empty-workspace { max-width: 1240px; margin: 0 auto; }
 .workspace-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
 .workspace-heading h1, .empty-workspace h1 { margin: 12px 0 0; font-size: clamp(28px, 3.4vw, 43px); font-weight: 500; letter-spacing: -.06em; line-height: 1.08; }
@@ -160,6 +161,13 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
 .app-shell-skeleton-content { padding: clamp(28px, 5vw, 66px) clamp(22px, 4vw, 58px); }
 .skeleton-line-heading { width: min(300px, 46%); height: 40px; border-radius: 13px; }
 .skeleton-line-subheading { width: min(360px, 65%); margin: 14px 0 42px; }
+.map-skeleton { min-height: 0; flex: 1; }
+.map-skeleton > div[aria-hidden='true'] { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 360px; }
+.map-skeleton-canvas { height: 100%; border-radius: 0; }
+.map-skeleton-panel { display: grid; align-content: start; gap: 12px; border-left: 1px solid var(--border); padding: 22px; }
+.map-skeleton-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
+.map-skeleton-tile { aspect-ratio: 1; border-radius: 10px; }
+@media (max-width: 1100px) { .map-skeleton > div[aria-hidden='true'] { grid-template-columns: minmax(0, 1fr); } .map-skeleton-panel { display: none; } }
 @keyframes skeleton-shimmer { to { transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) { .skeleton-block::after { animation: none; } }
 .empty-timeline { min-height: 365px; display: grid; grid-template-columns: minmax(0, .9fr) minmax(300px, 1.1fr); align-items: center; gap: clamp(30px, 7vw, 92px); margin: 0; border-bottom: 1px solid var(--border); padding: 44px 0 52px; }
@@ -408,10 +416,12 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
   .menu-button { flex: 0 0 40px; }
   .scrim { position: fixed; z-index: 9; inset: 0; border: 0; background: rgba(61,74,92,.2); opacity: 0; pointer-events: none; }
   .scrim.is-visible { opacity: 1; pointer-events: auto; }
-  .mobile-nav { position: fixed; z-index: 8; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); padding: 8px 10px max(8px, env(safe-area-inset-bottom)); background: rgba(250,249,247,.95); }
+  .mobile-nav { position: fixed; z-index: 8; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--border); padding: 8px 10px max(8px, env(safe-area-inset-bottom)); background: rgba(250,249,247,.95); }
   .mobile-nav-item { min-height: 44px; display: grid; place-items: center; gap: 3px; border: 0; border-radius: 13px; color: var(--slate-soft); background: transparent; font-size: 10px; }
   .mobile-nav-item.is-active { color: var(--slate); background: rgba(212,165,165,.16); }
   .content-scroll { padding-bottom: 110px; }
+  /* The map fills the space above the fixed bottom navigation (44px items, 8px padding, 1px border). */
+  .content-scroll.content-scroll--map { padding: 0 0 calc(53px + max(8px, env(safe-area-inset-bottom))); }
   .app-shell-skeleton-sidebar { display: none; }
 }
 @media (max-width: 560px) {

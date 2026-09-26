@@ -220,13 +220,24 @@ type probeMetadata struct {
 	} `json:"streams"`
 }
 
-// ProbeCapturedAt returns the best embedded capture timestamp exposed by
-// FFprobe. QuickTime's timezone-aware creation date is preferred over the
-// generic creation_time tag. The boolean is false when the container has no
-// usable timestamp; callers can then fall back to EXIF or filesystem time.
-func (t *Tools) ProbeCapturedAt(ctx context.Context, input string) (time.Time, bool, error) {
+// ProbedMetadata is the capture metadata FFprobe exposes for a container.
+// The Has* flags are false when the container carried no usable value.
+type ProbedMetadata struct {
+	CapturedAt    time.Time
+	HasCapturedAt bool
+	Latitude      float64
+	Longitude     float64
+	HasLocation   bool
+}
+
+// ProbeMetadata returns the best embedded capture timestamp and location
+// exposed by FFprobe. QuickTime's timezone-aware creation date is preferred
+// over the generic creation_time tag, and QuickTime's ISO 6709 location over
+// the MP4 location tag written by Android. Callers fall back to EXIF or
+// filesystem time for whatever is missing.
+func (t *Tools) ProbeMetadata(ctx context.Context, input string) (ProbedMetadata, error) {
 	if strings.TrimSpace(input) == "" {
-		return time.Time{}, false, errors.New("media input path is required")
+		return ProbedMetadata{}, errors.New("media input path is required")
 	}
 	ctx, cancel := t.timedContext(ctx)
 	defer cancel()
@@ -234,30 +245,57 @@ func (t *Tools) ProbeCapturedAt(ctx context.Context, input string) (time.Time, b
 	if strings.TrimSpace(path) == "" {
 		path = "ffprobe"
 	}
+	const tags = "creation_time,com.apple.quicktime.creationdate,date,com.apple.quicktime.location.ISO6709,location"
 	output, err := t.runner().Run(ctx, path,
 		"-v", "error",
-		"-show_entries", "format_tags=creation_time,com.apple.quicktime.creationdate,date:stream_tags=creation_time,com.apple.quicktime.creationdate,date",
+		"-show_entries", "format_tags="+tags+":stream_tags="+tags,
 		"-of", "json",
 		input,
 	)
 	if err != nil {
-		return time.Time{}, false, err
+		return ProbedMetadata{}, err
 	}
 	var payload probeMetadata
 	if err := json.Unmarshal(output, &payload); err != nil {
-		return time.Time{}, false, fmt.Errorf("parse ffprobe metadata: %w", err)
+		return ProbedMetadata{}, fmt.Errorf("parse ffprobe metadata: %w", err)
 	}
-	for _, key := range []string{"com.apple.quicktime.creationdate", "creation_time", "date"} {
-		if value, ok := parseProbeCaptureTime(payload.Format.Tags[key]); ok {
-			return value.UTC(), true, nil
+	var metadata ProbedMetadata
+	payload.firstTag([]string{"com.apple.quicktime.creationdate", "creation_time", "date"}, func(value string) bool {
+		captured, ok := parseProbeCaptureTime(value)
+		if ok {
+			metadata.CapturedAt, metadata.HasCapturedAt = captured.UTC(), true
 		}
-		for _, stream := range payload.Streams {
-			if value, ok := parseProbeCaptureTime(stream.Tags[key]); ok {
-				return value.UTC(), true, nil
+		return ok
+	})
+	payload.firstTag([]string{"com.apple.quicktime.location.ISO6709", "location"}, func(value string) bool {
+		latitude, longitude, ok := ParseISO6709(value)
+		if ok {
+			metadata.Latitude, metadata.Longitude, metadata.HasLocation = latitude, longitude, true
+		}
+		return ok
+	})
+	return metadata, nil
+}
+
+// ProbeCapturedAt returns only the capture timestamp from ProbeMetadata.
+func (t *Tools) ProbeCapturedAt(ctx context.Context, input string) (time.Time, bool, error) {
+	metadata, err := t.ProbeMetadata(ctx, input)
+	return metadata.CapturedAt, metadata.HasCapturedAt, err
+}
+
+// firstTag offers tag values to accept in key priority order, format tags
+// before stream tags, and stops at the first value accept takes.
+func (p probeMetadata) firstTag(keys []string, accept func(string) bool) {
+	for _, key := range keys {
+		if accept(p.Format.Tags[key]) {
+			return
+		}
+		for _, stream := range p.Streams {
+			if accept(stream.Tags[key]) {
+				return
 			}
 		}
 	}
-	return time.Time{}, false, nil
 }
 
 func parseProbeCaptureTime(value string) (time.Time, bool) {

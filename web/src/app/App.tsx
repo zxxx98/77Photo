@@ -1,5 +1,5 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Folder, Image, LogOut, Menu, Search, Settings, Upload, X } from 'lucide-react';
+import { ChangeEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Folder, Image, LogOut, Map as MapIcon, Menu, Search, Settings, Upload, X } from 'lucide-react';
 import { createApiClient, type Folder as FolderRecord } from './api';
 import { SessionStore } from './auth';
 import { useI18n } from './I18nProvider';
@@ -16,7 +16,10 @@ import SettingsWorkspace from '../features/settings/SettingsWorkspace';
 import type { UploadDestination, UploadSelection } from '../features/upload/uploadSelection';
 import LanguageToggle from '../features/i18n/LanguageToggle';
 import BrandMark from '../features/branding/BrandMark';
-import { AppShellSkeleton } from '../features/loading/LoadingStates';
+import { AppShellSkeleton, MapSkeleton } from '../features/loading/LoadingStates';
+
+// Leaflet and clustering only load when the map is opened.
+const MapWorkspace = lazy(() => import('../features/map/MapWorkspace'));
 
 type View = AppView;
 type FolderLocation = Pick<FolderRecord, 'id' | 'name'>;
@@ -24,6 +27,7 @@ type FolderLocation = Pick<FolderRecord, 'id' | 'name'>;
 const navItems: Array<{ id: View; labelKey: TranslationKey; icon: typeof Image }> = [
   { id: 'gallery', labelKey: 'shell.gallery', icon: Image },
   { id: 'folders', labelKey: 'shell.folders', icon: Folder },
+  { id: 'map', labelKey: 'shell.map', icon: MapIcon },
   { id: 'settings', labelKey: 'shell.settings', icon: Settings },
 ];
 
@@ -135,10 +139,10 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
           </div>
           <input ref={pickerRef} className="sr-only" type="file" accept="image/jpeg,image/png,image/heic,image/heif,video/mp4,video/webm,video/quicktime,.mov" multiple tabIndex={-1} aria-hidden="true" onChange={handlePickerChange} />
         </header>
-        <div className="content-scroll"><Workspace api={api} currentUser={user!} view={view} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} folderContext={folderContext} onFolderChange={handleFolderChange} onUpload={chooseUpload} onUploadComplete={handleUploadComplete} /></div>
+        <div className={`content-scroll${view === 'map' ? ' content-scroll--map' : ''}`}><Workspace api={api} currentUser={user!} view={view} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} folderContext={folderContext} onFolderChange={handleFolderChange} onUpload={chooseUpload} onUploadComplete={handleUploadComplete} /></div>
       </main>
       <nav className="mobile-nav" aria-label={t('common.mobileNavigation')}>
-        {navItems.slice(0, 2).map(({ id, labelKey, icon: Icon }) => (
+        {navItems.slice(0, 3).map(({ id, labelKey, icon: Icon }) => (
           <button key={id} className={`mobile-nav-item ${view === id ? 'is-active' : ''}`} onClick={() => onViewChange(id)}><Icon size={19} /><span>{t(labelKey)}</span></button>
         ))}
         <button className={`mobile-nav-item ${view === 'settings' ? 'is-active' : ''}`} onClick={() => onViewChange('settings')}><Settings size={19} /><span>{t('shell.settings')}</span></button>
@@ -149,6 +153,7 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
 
 function Workspace({ api, currentUser, view, uploadSelection, onUploadSelectionConsumed, folderContext, onFolderChange, onUpload, onUploadComplete }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View; uploadSelection: UploadSelection | null; onUploadSelectionConsumed: (id: number) => void; folderContext: FolderLocation | null; onFolderChange: (folder: FolderLocation | null) => void; onUpload: (folder?: FolderLocation | null) => void; onUploadComplete: (destination: UploadDestination) => void }) {
   if (view === 'gallery') return <GalleryWorkspace api={api} />;
+  if (view === 'map') return <Suspense fallback={<MapSkeleton />}><MapWorkspace api={api} currentUser={currentUser} /></Suspense>;
   if (view === 'folders') return <FoldersWorkspace api={api} initialFolder={folderContext} onFolderChange={onFolderChange} onUpload={onUpload} />;
   if (view === 'upload') return <UploadWorkspace api={api} selection={uploadSelection} onSelectionConsumed={onUploadSelectionConsumed} onUploadComplete={onUploadComplete} />;
   if (view === 'settings') return <SettingsWorkspace api={api} currentUser={currentUser} />;

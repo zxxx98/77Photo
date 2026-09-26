@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,6 +14,7 @@ func clearConfigEnv(t *testing.T) {
 		"PHOTO_DATA_DIR", "PHOTO_CACHE_DIR", "PHOTO_DB_PATH", "PHOTO_LISTEN_ADDR",
 		"PHOTO_THUMBNAIL_WORKERS", "PHOTO_MAX_UPLOAD_SIZE", "PHOTO_SESSION_TTL",
 		"PHOTO_FFMPEG_PATH", "PHOTO_FFPROBE_PATH", "PHOTO_HEIF_CONVERT_PATH", "PHOTO_MEDIA_TIMEOUT",
+		"PHOTO_MAP_TIANDITU_KEY",
 	} {
 		t.Setenv(key, "")
 		_ = os.Unsetenv(key)
@@ -90,6 +92,39 @@ func TestLoadFromEnvRejectsInvalidDurationAndSize(t *testing.T) {
 	t.Setenv("PHOTO_MEDIA_TIMEOUT", "0s")
 	if _, err := LoadFromEnv(); err == nil {
 		t.Fatal("LoadFromEnv() error = nil, want invalid media timeout error")
+	}
+}
+
+func TestLoadFromEnvReadsOptionalTiandituKey(t *testing.T) {
+	clearConfigEnv(t)
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TiandituKey != "" {
+		t.Fatalf("TiandituKey = %q, want empty by default", cfg.TiandituKey)
+	}
+	t.Setenv("PHOTO_MAP_TIANDITU_KEY", "  0123456789abcdef0123456789abcdef \n")
+	cfg, err = LoadFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TiandituKey != "0123456789abcdef0123456789abcdef" {
+		t.Fatalf("TiandituKey = %q, want trimmed key", cfg.TiandituKey)
+	}
+}
+
+func TestLoadFromEnvRejectsMalformedTiandituKeyWithoutEchoingIt(t *testing.T) {
+	for _, value := range []string{"secret part", "secret\x01part", strings.Repeat("k", 129)} {
+		clearConfigEnv(t)
+		t.Setenv("PHOTO_MAP_TIANDITU_KEY", value)
+		_, err := LoadFromEnv()
+		if err == nil {
+			t.Fatalf("LoadFromEnv() accepted key %q", value)
+		}
+		if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "kkkk") {
+			t.Fatalf("error %q echoes the key", err)
+		}
 	}
 }
 

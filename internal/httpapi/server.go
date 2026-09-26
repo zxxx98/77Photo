@@ -55,6 +55,7 @@ type Services struct {
 	Importer         *importer.Service
 	SecureCookies    bool
 	Static           http.Handler
+	Map              photos.MapConfig
 }
 
 func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services Services) http.Handler {
@@ -114,6 +115,7 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 		mux.Handle("/api/v1/photos/batch-delete", photos.NewBulkDeleteHTTPHandler(services.Photos, services.Auth))
 		mux.Handle("/api/v1/photos/", photoHandler)
 		mux.Handle("/api/v1/live-photos/", photos.NewLiveHTTPHandler(services.Photos, services.Auth))
+		mux.Handle("/api/v1/map/", photos.NewMapHTTPHandler(services.Photos, services.Auth, services.Map))
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if services.Static != nil && !strings.HasPrefix(r.URL.Path, "/api/") {

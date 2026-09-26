@@ -121,6 +121,48 @@ describe('API client', () => {
     expect(fetcher).toHaveBeenCalledWith('/api/v1/photos?folder_id=f_1&cursor=cursor-value&limit=25', expect.objectContaining({ credentials: 'include' }));
   });
 
+  it('serializes map area filters and forwards the abort signal', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    const client = createApiClient(fetcher as typeof fetch);
+    const controller = new AbortController();
+
+    await client.listPhotos({ bbox: [170, -20.5, -170, -10], from: '2025-01-01T00:00:00Z', to: '2026-01-01T00:00:00Z', limit: 50, signal: controller.signal });
+
+    const [path, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    const query = new URL(path, 'https://77photo.test').searchParams;
+    expect(query.get('bbox')).toBe('170,-20.5,-170,-10');
+    expect(query.get('from')).toBe('2025-01-01T00:00:00Z');
+    expect(query.get('to')).toBe('2026-01-01T00:00:00Z');
+    expect(query.get('limit')).toBe('50');
+    expect(init.signal).toBe(controller.signal);
+  });
+
+  it('loads one photo with its LIVE status', async () => {
+    const photo = { id: 'p_1', owner_id: 'u_1', folder_id: 'f_1', filename: 'photo.heic', mime_type: 'image/heic', size: 1, captured_at: '2026-09-15T01:00:00Z', captured_at_source: 'exif', gps_latitude: 31.23, gps_longitude: 121.47 };
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(photo), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ live_photo_ids: ['p_1'] }), { status: 200 }));
+    const client = createApiClient(fetcher as typeof fetch);
+
+    await expect(client.getPhoto('p_1')).resolves.toEqual({ ...photo, is_live_photo: true });
+    expect(fetcher.mock.calls[0][0]).toBe('/api/v1/photos/p_1');
+  });
+
+  it('loads map points and shares one map configuration request', async () => {
+    const points = { items: [['p_1', 31.230416, 121.473701, '2026-09-01T08:30:00Z']], total_photos: 3 };
+    const fetcher = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ enabled: false }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(points), { status: 200 }));
+    const client = createApiClient(fetcher as typeof fetch);
+
+    await expect(client.getMapConfig()).rejects.toThrow('offline');
+    await expect(client.getMapConfig()).resolves.toEqual({ enabled: false });
+    await expect(client.getMapConfig()).resolves.toEqual({ enabled: false });
+    await expect(client.getMapPoints()).resolves.toEqual(points);
+    expect(fetcher.mock.calls.map(([path]) => path)).toEqual(['/api/v1/map/config', '/api/v1/map/config', '/api/v1/map/points']);
+  });
+
   it('checks LIVE status in batches of at most 100 photo ids', async () => {
     const items = Array.from({ length: 205 }, (_, index) => ({
       id: `p_${index}`,

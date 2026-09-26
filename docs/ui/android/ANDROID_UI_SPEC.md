@@ -1,6 +1,6 @@
 # 77Photo Android UI 设计规格
 
-状态：Android 重建的页面级视觉与交互参考，**不是已实现的客户端**。本文件补充 [Android 从零设计](../ANDROID_FROM_WEB.md)，用于约束后续 Android 客户端的页面结构、视觉语言和交互细节。
+状态：Android 重建的页面级视觉与交互参考，**不是已完成的客户端**。`mobile/` 已开始实现登录与会话基础，本文件继续约束后续页面结构、视觉语言和交互细节，并补充 [Android 从零设计](../ANDROID_FROM_WEB.md)。
 
 ## 1. 页面范围与导航
 

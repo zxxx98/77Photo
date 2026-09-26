@@ -14,6 +14,7 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/auth"
 	dbstore "github.com/zxxx98/77Photo/internal/database"
+	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/sharelinks"
 	"github.com/zxxx98/77Photo/internal/storage"
 	"github.com/zxxx98/77Photo/internal/users"
@@ -132,5 +133,49 @@ func TestNewHandlerWithServicesMountsPublicShareRoutes(t *testing.T) {
 	logHandler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/share-links/secret-token/photos", nil))
 	if strings.Contains(logs.String(), "secret-token") {
 		t.Fatalf("share token was written to request logs: %s", logs.String())
+	}
+}
+
+func TestNewHandlerWithServicesMountsMapRoutes(t *testing.T) {
+	db, err := dbstore.Open(context.Background(), filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	_, session, err := authService.SetupAdmin(context.Background(), "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandlerWithServices(HealthChecks{}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), Services{Auth: authService, Photos: photos.NewService(db, store, 1<<20), Map: photos.TiandituMapConfig("browser-key")})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/map/config", nil)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"enabled":true`) || !strings.Contains(res.Body.String(), "tk=browser-key") {
+		t.Fatalf("map config = %d/%q", res.Code, res.Body.String())
+	}
+
+	login := httptest.NewRequest(http.MethodPost, "/api/v1/mobile/auth/login", strings.NewReader(`{"username":"admin","password":"correct horse battery staple","device_name":"Pixel 9","platform":"android","app_version":"1.0.0"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginRes := httptest.NewRecorder()
+	handler.ServeHTTP(loginRes, login)
+	var tokens struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(loginRes.Body.Bytes(), &tokens); err != nil || tokens.AccessToken == "" {
+		t.Fatalf("mobile login = %d/%q", loginRes.Code, loginRes.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/map/points", nil)
+	req.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
+	res = httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK || strings.TrimSpace(res.Body.String()) != `{"items":[],"total_photos":0}` {
+		t.Fatalf("bearer map points = %d/%q", res.Code, res.Body.String())
 	}
 }

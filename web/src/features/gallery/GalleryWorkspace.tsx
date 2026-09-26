@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ArrowUpRight, Check, CirclePlay, LoaderCircle, RefreshCw, Trash2, X } from 'lucide-react';
+import { ArrowUpRight, LoaderCircle, RefreshCw, Trash2, X } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
 import type { ApiClient, Photo } from '../../app/api';
 import Viewer from '../viewer/Viewer';
 import { GallerySkeleton } from '../loading/LoadingStates';
+import { TimelineGroup, groupByDate } from './PhotoGrid';
 
 export default function GalleryWorkspace({ api }: { api: ApiClient }) {
   const { t, formatCount, locale } = useI18n();
@@ -203,134 +204,6 @@ function openUpload() {
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
-function TimelineGroup({ date, photos, selectionMode, selectedIds, selectDayLabel, selectedLabel, deselectedLabel, onToggleDay, onToggle, onSelect }: {
-  date: string;
-  photos: Photo[];
-  selectionMode: boolean;
-  selectedIds: Set<string>;
-  selectDayLabel: string;
-  selectedLabel: string;
-  deselectedLabel: string;
-  onToggleDay: () => void;
-  onToggle: (id: string) => void;
-  onSelect: (photo: Photo) => void;
-}) {
-  const { t, formatCount, formatCalendarDate } = useI18n();
-  return (
-    <div className="timeline-group">
-      <div className="date-heading">
-        <h2>{formatCalendarDate(date)}</h2>
-        <div style={dateActionsStyle}>
-          <span>{photos.length === 1 ? t('gallery.onePhoto', { count: formatCount(photos.length) }) : t('gallery.manyPhotos', { count: formatCount(photos.length) })}</span>
-          {selectionMode && <button type="button" className="button button-secondary" style={daySelectButtonStyle} onClick={onToggleDay}>{selectDayLabel}</button>}
-        </div>
-      </div>
-      <div className="photo-grid">
-        {photos.map((photo) => (
-          <PhotoTile
-            key={photo.id}
-            photo={photo}
-            selectionMode={selectionMode}
-            selected={selectedIds.has(photo.id)}
-            onToggle={onToggle}
-            onSelect={onSelect}
-            selectedLabel={selectedLabel}
-            deselectedLabel={deselectedLabel}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PhotoTile({ photo, selectionMode, selected, onToggle, onSelect, selectedLabel, deselectedLabel }: {
-  photo: Photo;
-  selectionMode: boolean;
-  selected: boolean;
-  onToggle: (id: string) => void;
-  onSelect: (photo: Photo) => void;
-  selectedLabel: string;
-  deselectedLabel: string;
-}) {
-  const { t } = useI18n();
-  const isVideo = photo.mime_type.startsWith('video/');
-  const [previewMode, setPreviewMode] = useState<'thumbnail' | 'original' | 'video-placeholder' | 'image-placeholder' | 'failed'>('thumbnail');
-  const [thumbnailAttempt, setThumbnailAttempt] = useState(0);
-  const [previewReady, setPreviewReady] = useState(false);
-  const retryTimer = useRef<number | null>(null);
-  const failed = previewMode === 'failed';
-  const previewSource = previewMode === 'original'
-    ? `/api/v1/photos/${encodeURIComponent(photo.id)}/original`
-    : previewMode === 'video-placeholder'
-      ? videoPlaceholderSource
-      : previewMode === 'image-placeholder'
-        ? '/image-placeholder.svg'
-        : `/api/v1/photos/${encodeURIComponent(photo.id)}/thumbnail?size=256&retry=${thumbnailAttempt}`;
-
-  useEffect(() => () => {
-    if (retryTimer.current !== null) window.clearTimeout(retryTimer.current);
-  }, []);
-
-  function handlePreviewLoad() {
-    setPreviewReady(true);
-  }
-
-  function handlePreviewError() {
-    setPreviewReady(false);
-    if (previewMode === 'thumbnail') {
-      if (thumbnailAttempt < thumbnailRetryLimit) {
-        if (retryTimer.current === null) {
-          retryTimer.current = window.setTimeout(() => {
-            retryTimer.current = null;
-            setThumbnailAttempt((attempt) => attempt + 1);
-          }, thumbnailRetryDelayMS);
-        }
-        return;
-      }
-      setPreviewMode(isVideo ? 'video-placeholder' : 'original');
-      return;
-    }
-    setPreviewMode(previewMode === 'original' ? 'image-placeholder' : 'failed');
-  }
-
-  const activate = () => selectionMode ? onToggle(photo.id) : onSelect(photo);
-  const loadingPreview = !failed && !previewReady;
-  return (
-    <figure
-      className="photo-tile"
-      onClick={activate}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          activate();
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      aria-label={selectionMode ? `${selected ? deselectedLabel : selectedLabel}: ${photo.filename}` : photo.filename}
-      aria-pressed={selectionMode ? selected : undefined}
-    >
-      <div className={`photo-frame ${failed ? 'is-failed' : ''}`} style={selectionMode && selected ? selectedFrameStyle : undefined}>
-        {failed ? <span>{t('gallery.previewPending')}</span> : <>
-          <img
-            src={previewSource}
-            alt={photo.filename}
-            loading="lazy"
-            decoding="async"
-            onLoad={handlePreviewLoad}
-            onError={handlePreviewError}
-            style={previewReady ? undefined : hiddenPreviewStyle}
-          />
-          {loadingPreview && <span style={previewLoadingStyle} aria-hidden="true"><LoaderCircle className="spin" size={20} /></span>}
-        </>}
-        {photo.is_live_photo && !failed && <span title="Live Photo" style={{ position: 'absolute', left: 9, top: 9, display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 999, padding: '5px 7px', background: 'rgba(32,37,45,.72)', color: '#fff', fontSize: 9, fontWeight: 700, letterSpacing: '.08em', pointerEvents: 'none' }}><CirclePlay size={12} /> LIVE</span>}
-        {selectionMode && <span style={{ ...selectionBadgeStyle, ...(selected ? selectedBadgeStyle : {}) }} aria-hidden="true">{selected && <Check size={14} />}</span>}
-      </div>
-      <figcaption>{photo.filename}</figcaption>
-    </figure>
-  );
-}
-
 async function deleteIndividually(api: ApiClient, ids: string[]) {
   const deleted_ids: string[] = [];
   const failed: Array<{ id: string; code: string }> = [];
@@ -343,17 +216,6 @@ async function deleteIndividually(api: ApiClient, ids: string[]) {
     }
   }
   return { deleted_ids, failed };
-}
-
-function groupByDate(photos: Photo[]): Array<[string, Photo[]]> {
-  const groups = new Map<string, Photo[]>();
-  for (const photo of photos) {
-    const date = photo.captured_at.slice(0, 10);
-    const current = groups.get(date) ?? [];
-    current.push(photo);
-    groups.set(date, current);
-  }
-  return [...groups.entries()];
 }
 
 function gallerySelectionCopy(locale: 'zh' | 'en', formatCount: (value: number) => string) {
@@ -391,32 +253,6 @@ function gallerySelectionCopy(locale: 'zh' | 'en', formatCount: (value: number) 
   };
 }
 
-const thumbnailRetryLimit = 2;
-const thumbnailRetryDelayMS = 1000;
-const videoPlaceholderSource = '/video-placeholder.svg';
-const hiddenPreviewStyle: CSSProperties = { visibility: 'hidden' };
-const previewLoadingStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'rgba(32,37,45,.5)', pointerEvents: 'none' };
-
-const selectionBadgeStyle: CSSProperties = {
-  position: 'absolute',
-  right: 9,
-  top: 9,
-  width: 24,
-  height: 24,
-  borderRadius: '50%',
-  border: '2px solid rgba(255,255,255,.95)',
-  background: 'rgba(32,37,45,.42)',
-  color: '#fff',
-  display: 'grid',
-  placeItems: 'center',
-  boxShadow: '0 1px 5px rgba(0,0,0,.22)',
-  pointerEvents: 'none',
-};
-
-const selectedBadgeStyle: CSSProperties = { background: '#20252d' };
-const selectedFrameStyle: CSSProperties = { boxShadow: 'inset 0 0 0 3px #20252d' };
-const dateActionsStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 };
-const daySelectButtonStyle: CSSProperties = { padding: '6px 10px', minHeight: 0, fontSize: 12 };
 const bulkBarStyle: CSSProperties = { position: 'sticky', bottom: 18, zIndex: 20, margin: '18px auto 0', width: 'fit-content', maxWidth: 'calc(100% - 24px)', display: 'flex', alignItems: 'center', gap: 18, padding: '10px 12px 10px 18px', borderRadius: 999, background: 'rgba(255,255,255,.96)', boxShadow: '0 12px 40px rgba(20,24,30,.18)', backdropFilter: 'blur(16px)' };
 const bulkDeleteButtonStyle: CSSProperties = { border: 0, borderRadius: 999, padding: '10px 16px', background: '#9f2f27', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, font: 'inherit', fontWeight: 700, cursor: 'pointer' };
 const dialogBackdropStyle: CSSProperties = { position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(20,24,30,.46)', display: 'grid', placeItems: 'center', padding: 20 };

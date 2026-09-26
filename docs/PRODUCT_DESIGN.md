@@ -110,7 +110,6 @@ V1 使用响应式 Web / PWA，一套界面适配：
 - AI 语义搜索
 - 人脸识别
 - 自动人物聚类
-- 地图浏览
 - RAW 在线处理
 - Live Photo 特殊处理
 - 在线图片编辑
@@ -717,7 +716,7 @@ EXIF 信息第一版只展示常用字段：
 - aperture
 - ISO
 
-GPS 可以读取但第一版不需要做地图 UI。
+带位置的照片在详情中显示坐标、小地图和地图链接。地图浏览见 [D-012](DECISIONS.md) 与[网页端地图设计](superpowers/specs/2026-09-26-web-map-design.md)。
 
 ---
 
@@ -1052,7 +1051,6 @@ V1 完成标准：
 
 - 人脸识别
 - CLIP 语义搜索
-- 地图
 - Live Photo
 - RAW preview
 - 视频转码

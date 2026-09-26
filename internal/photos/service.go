@@ -14,6 +14,7 @@ import (
 	_ "image/png"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -640,8 +641,15 @@ func extractMetadataWithTools(path, mimeType string, size int64, tools *media.To
 	}
 	metadata := imageMetadata{capturedAt: stat.ModTime().UTC(), capturedAtSource: "file_mtime"}
 	if tools != nil && (strings.HasPrefix(mimeType, "video/") || mimeType == "image/heic" || mimeType == "image/heif") {
-		if captured, ok, probeErr := tools.ProbeCapturedAt(context.Background(), path); probeErr == nil && ok {
-			metadata.capturedAt, metadata.capturedAtSource = captured.UTC(), "exif"
+		if probed, probeErr := tools.ProbeMetadata(context.Background(), path); probeErr == nil {
+			if probed.HasCapturedAt {
+				metadata.capturedAt, metadata.capturedAtSource = probed.CapturedAt.UTC(), "exif"
+			}
+			// For HEIC this is only a fallback: applyEXIF runs later and an
+			// EXIF GPS position replaces the container location.
+			if probed.HasLocation {
+				setLocation(&metadata, probed.Latitude, probed.Longitude)
+			}
 		}
 	}
 	if strings.HasPrefix(mimeType, "video/") {
@@ -756,6 +764,61 @@ func applyEXIF(metadata *imageMetadata, parsed *exif.Exif) {
 			metadata.orientation = &value
 		}
 	}
+	if latitude, longitude, ok := exifLocation(parsed); ok {
+		setLocation(metadata, latitude, longitude)
+	}
+	if value, ok := positiveEXIFRational(parsed, exif.FocalLength); ok {
+		metadata.focalLength = &value
+	}
+	if value, ok := positiveEXIFRational(parsed, exif.FNumber); ok {
+		metadata.aperture = &value
+	}
+	if field, err := parsed.Get(exif.ISOSpeedRatings); err == nil && field.Count > 0 {
+		if value, err := field.Int(0); err == nil && value > 0 {
+			metadata.iso = &value
+		}
+	}
+}
+
+// exifLocation reads the GPS position. goexif indexes the GPS rationals
+// without checking the tag count, so a malformed GPS IFD can panic; a bad
+// location must never stop the photo itself from being indexed.
+func exifLocation(parsed *exif.Exif) (latitude, longitude float64, ok bool) {
+	defer func() {
+		if recover() != nil {
+			latitude, longitude, ok = 0, 0, false
+		}
+	}()
+	latitude, longitude, err := parsed.LatLong()
+	return latitude, longitude, err == nil
+}
+
+// setLocation stores a capture position only when it can be real. Devices
+// without a fix commonly write 0/0, so that point is treated as missing
+// rather than plotted in the Gulf of Guinea.
+func setLocation(metadata *imageMetadata, latitude, longitude float64) {
+	if math.IsNaN(latitude) || math.IsNaN(longitude) || math.IsInf(latitude, 0) || math.IsInf(longitude, 0) {
+		return
+	}
+	if latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 || (latitude == 0 && longitude == 0) {
+		return
+	}
+	metadata.gpsLatitude, metadata.gpsLongitude = &latitude, &longitude
+}
+
+// positiveEXIFRational returns the first value of a RATIONAL tag. Zero is how
+// cameras say "unknown" for these fields, so only positive values are kept.
+func positiveEXIFRational(parsed *exif.Exif, name exif.FieldName) (float64, bool) {
+	field, err := parsed.Get(name)
+	if err != nil || field.Count == 0 {
+		return 0, false
+	}
+	numerator, denominator, err := field.Rat2(0)
+	if err != nil || denominator == 0 {
+		return 0, false
+	}
+	value := float64(numerator) / float64(denominator)
+	return value, value > 0 && !math.IsInf(value, 0)
 }
 
 func (s *Service) authorizedFolder(ctx context.Context, principal acl.Principal, folderID string) (string, string, error) {

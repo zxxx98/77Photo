@@ -18,6 +18,9 @@ services:
       # This compose file is exposed directly over HTTP on port 20001. Set
       # this to "true" only when an HTTPS reverse proxy fronts the service.
       PHOTO_COOKIE_SECURE: "false"
+      # Tianditu browser key for the map page. Put it in a .env file next to
+      # this compose file (ignored by Git); leave it unset to disable the map.
+      PHOTO_MAP_TIANDITU_KEY: ${PHOTO_MAP_TIANDITU_KEY:-}
     volumes:
       # Original photos and videos: HDD
       - /mnt/disk2/data/77Photo:/data/photos

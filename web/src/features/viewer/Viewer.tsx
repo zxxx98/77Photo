@@ -1,9 +1,12 @@
-import { TouchEvent, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, CirclePlay, Download, Info, MoveRight, Pencil, Share2, Trash2, X } from 'lucide-react';
+import { lazy, Suspense, TouchEvent, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, CirclePlay, Download, ExternalLink, Info, MapPinned, MoveRight, Pencil, Share2, Trash2, X } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
-import type { ApiClient, Folder, Photo } from '../../app/api';
+import type { ApiClient, Folder, MapConfig, Photo } from '../../app/api';
+import { mapFocusHash } from '../../app/routes';
 import ShareDialog from '../sharing/ShareDialog';
 import './Viewer.css';
+
+const LocationMiniMap = lazy(() => import('../map/LocationMiniMap'));
 
 type ViewerProps = {
   api: ApiClient;
@@ -26,8 +29,12 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
   const [moveFolder, setMoveFolder] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [mapConfig, setMapConfig] = useState<MapConfig | null>(null);
   const touchStart = useRef<number | null>(null);
   const photo = photos[index];
+  const location = photo && typeof photo.gps_latitude === 'number' && typeof photo.gps_longitude === 'number'
+    ? { lat: photo.gps_latitude, lng: photo.gps_longitude }
+    : null;
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -63,7 +70,23 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
     return () => { active = false; };
   }, [api, photo?.folder_id]);
 
+  // The configuration decides whether the mini map and "view on map" appear;
+  // it is only needed once details show a photo with a location.
+  const needsMapConfig = detailsOpen && location !== null && mapConfig === null;
+  useEffect(() => {
+    if (!needsMapConfig) return;
+    let active = true;
+    void api.getMapConfig().then((config) => { if (active) setMapConfig(config); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [api, needsMapConfig]);
+
   if (!photo) return null;
+
+  function viewOnMap(position: { lat: number; lng: number }) {
+    onClose();
+    window.history.pushState({}, '', mapFocusHash({ ...position, zoom: 16 }));
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }
 
   async function deletePhoto() {
     if (!confirmDelete) {
@@ -211,7 +234,28 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
             <div><dt>{t('viewer.captured')}</dt><dd>{formatDate(photo.captured_at)}</dd></div>
             <div><dt>{t('viewer.size')}</dt><dd>{photo.width && photo.height ? `${photo.width} × ${photo.height} · ` : ''}{formatBytes(photo.size)}</dd></div>
             <div><dt>{t('viewer.folder')}</dt><dd>{currentFolder?.name ?? t('common.unknownFolder')}</dd></div>
+            {location && <div><dt>{t('viewer.location')}</dt><dd>{formatCoordinates(location.lat, location.lng)}</dd></div>}
           </dl>
+
+          {location && (
+            <div className="immersive-viewer__location">
+              {mapConfig?.enabled && (
+                <Suspense fallback={<div className="immersive-viewer__minimap" />}>
+                  <LocationMiniMap config={mapConfig} latitude={location.lat} longitude={location.lng} />
+                </Suspense>
+              )}
+              {mapConfig?.enabled && (
+                <button className="immersive-viewer__action" type="button" onClick={() => viewOnMap(location)}>
+                  <MapPinned size={17} />
+                  <span>{t('viewer.viewOnMap')}</span>
+                </button>
+              )}
+              <a className="immersive-viewer__action" href={amapMarkerURL(location.lat, location.lng)} target="_blank" rel="noopener noreferrer">
+                <ExternalLink size={17} />
+                <span>{t('viewer.openInAmap')}</span>
+              </a>
+            </div>
+          )}
 
           <div className="immersive-viewer__details-section">
             <label className="immersive-viewer__field">
@@ -340,6 +384,15 @@ function photoPreviewURL(id: string): string {
 const thumbnailRetryLimit = 2;
 const thumbnailRetryDelayMS = 1000;
 const videoPlaceholderSource = '/video-placeholder.svg';
+
+function formatCoordinates(lat: number, lng: number): string {
+  return `${Math.abs(lat).toFixed(5)}° ${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lng).toFixed(5)}° ${lng >= 0 ? 'E' : 'W'}`;
+}
+
+/** Amap converts the WGS-84 position itself when told the coordinate system. */
+function amapMarkerURL(lat: number, lng: number): string {
+  return `https://uri.amap.com/marker?position=${lng.toFixed(6)},${lat.toFixed(6)}&coordinate=wgs84&callnative=1`;
+}
 
 function formatBytes(value: number): string {
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
