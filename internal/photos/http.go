@@ -293,6 +293,14 @@ func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		filter.To = &parsed
 	}
+	if value := strings.TrimSpace(r.URL.Query().Get("bbox")); value != "" {
+		box, parseErr := ParseBBox(value)
+		if parseErr != nil {
+			writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "bbox is invalid", nil)
+			return
+		}
+		filter.BBox = &box
+	}
 	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
 		limit, parseErr := strconv.Atoi(value)
 		if parseErr != nil {

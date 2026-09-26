@@ -27,3 +27,7 @@ export function PublicShareSkeleton({ withHeading = false }: { withHeading?: boo
 export function AppShellSkeleton() {
   return <LoadingRegion className="app-shell-skeleton" labelKey="shell.openingLibrary"><aside className="app-shell-skeleton-sidebar"><BrandMark /><SkeletonBlock className="skeleton-line skeleton-line-brand" />{Array.from({ length: 3 }, (_, index) => <SkeletonBlock className="app-shell-skeleton-nav" key={index} />)}</aside><main className="app-shell-skeleton-main"><div className="app-shell-skeleton-topbar"><SkeletonBlock className="app-shell-skeleton-search" /><SkeletonBlock className="app-shell-skeleton-button" /></div><div className="app-shell-skeleton-content"><SkeletonBlock className="skeleton-line skeleton-line-heading" /><SkeletonBlock className="skeleton-line skeleton-line-subheading" /><div className="gallery-skeleton-grid">{Array.from({ length: 8 }, (_, index) => <SkeletonBlock className="gallery-skeleton-tile" key={index} />)}</div></div></main></LoadingRegion>;
 }
+
+export function MapSkeleton() {
+  return <LoadingRegion className="map-skeleton" labelKey="map.loading"><SkeletonBlock className="map-skeleton-canvas" /><div className="map-skeleton-panel"><SkeletonBlock className="skeleton-line skeleton-line-short" /><SkeletonBlock className="skeleton-line skeleton-line-tiny" /><div className="map-skeleton-grid">{Array.from({ length: 9 }, (_, index) => <SkeletonBlock className="map-skeleton-tile" key={index} />)}</div></div></LoadingRegion>;
+}

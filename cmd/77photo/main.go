@@ -102,7 +102,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
 	shareLinkService := sharelinks.NewService(db, photoStore, thumbnailService, secureCookies)
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db, mediaTools), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, ThumbnailRebuild: thumbnailRebuildHandler, PhotoCleanup: photoCleanupHandler, Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler()})
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db, mediaTools), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, ThumbnailRebuild: thumbnailRebuildHandler, PhotoCleanup: photoCleanupHandler, Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler(), Map: photos.TiandituMapConfig(cfg.TiandituKey)})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
@@ -113,7 +113,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 	}
 	serveErr := make(chan error, 1)
 	go func() {
-		logger.Info("server started", "addr", cfg.ListenAddr)
+		logger.Info("server started", "addr", cfg.ListenAddr, "map_enabled", cfg.TiandituKey != "")
 		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err
 			return

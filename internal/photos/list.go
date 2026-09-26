@@ -25,6 +25,7 @@ type ListFilter struct {
 	FolderID *string
 	From     *time.Time
 	To       *time.Time
+	BBox     *BBox
 	Cursor   string
 	Limit    int
 }
@@ -41,6 +42,7 @@ type photoCursor struct {
 	FolderID     string `json:"f,omitempty"`
 	From         string `json:"from,omitempty"`
 	To           string `json:"to,omitempty"`
+	BBox         string `json:"b,omitempty"`
 	LastCaptured string `json:"c"`
 	LastID       string `json:"i"`
 	ExpiresAt    int64  `json:"e"`
@@ -81,13 +83,20 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 	if filter.To != nil {
 		toValue = filter.To.UTC().Format(time.RFC3339Nano)
 	}
+	bboxValue := ""
+	if filter.BBox != nil {
+		if !filter.BBox.Valid() {
+			return PhotoPage{}, ErrInvalidFilter
+		}
+		bboxValue = filter.BBox.String()
+	}
 	lastCaptured, lastID := "", ""
 	if filter.Cursor != "" {
 		cursor, err := s.decodeCursor(filter.Cursor)
 		if err != nil {
 			return PhotoPage{}, err
 		}
-		if cursor.UserID != principal.UserID || cursor.Role != string(principal.Role) || cursor.FolderID != folderID || cursor.From != fromValue || cursor.To != toValue {
+		if cursor.UserID != principal.UserID || cursor.Role != string(principal.Role) || cursor.FolderID != folderID || cursor.From != fromValue || cursor.To != toValue || cursor.BBox != bboxValue {
 			return PhotoPage{}, ErrInvalidCursor
 		}
 		lastCaptured, lastID = cursor.LastCaptured, cursor.LastID
@@ -109,6 +118,7 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 		where = append(where, "p.captured_at<?")
 		args = append(args, toValue)
 	}
+	appendBBoxPredicate(&where, &args, filter.BBox)
 	if lastCaptured != "" {
 		where = append(where, "(p.captured_at<? OR (p.captured_at=? AND p.id<?))")
 		args = append(args, lastCaptured, lastCaptured, lastID)
@@ -142,17 +152,17 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 		// bounded existence check using the final tuple to avoid emitting a
 		// cursor at the end of an exact-size result set.
 		last := items[len(items)-1]
-		if hasMore, checkErr := s.hasPhotoAfter(ctx, principal, folderID, fromValue, toValue, last.CapturedAt, last.ID); checkErr != nil {
+		if hasMore, checkErr := s.hasPhotoAfter(ctx, principal, folderID, fromValue, toValue, filter.BBox, last.CapturedAt, last.ID); checkErr != nil {
 			return PhotoPage{}, checkErr
 		} else if hasMore {
-			cursor := s.encodeCursor(photoCursor{Version: 1, UserID: principal.UserID, Role: string(principal.Role), FolderID: folderID, From: fromValue, To: toValue, LastCaptured: last.CapturedAt.UTC().Format(time.RFC3339Nano), LastID: last.ID, ExpiresAt: time.Now().Add(s.cursorTTL).Unix()})
+			cursor := s.encodeCursor(photoCursor{Version: 1, UserID: principal.UserID, Role: string(principal.Role), FolderID: folderID, From: fromValue, To: toValue, BBox: bboxValue, LastCaptured: last.CapturedAt.UTC().Format(time.RFC3339Nano), LastID: last.ID, ExpiresAt: time.Now().Add(s.cursorTTL).Unix()})
 			page.NextCursor = &cursor
 		}
 	}
 	return page, nil
 }
 
-func (s *Service) hasPhotoAfter(ctx context.Context, principal acl.Principal, folderID, fromValue, toValue string, captured time.Time, id string) (bool, error) {
+func (s *Service) hasPhotoAfter(ctx context.Context, principal acl.Principal, folderID, fromValue, toValue string, box *BBox, captured time.Time, id string) (bool, error) {
 	query := "SELECT 1 FROM photos p"
 	args := make([]any, 0, 10)
 	where := []string{"p.deleted_at IS NULL", "p.scan_status='indexed'", "(p.captured_at<? OR (p.captured_at=? AND p.id<?))"}
@@ -170,6 +180,7 @@ func (s *Service) hasPhotoAfter(ctx context.Context, principal acl.Principal, fo
 		where = append(where, "p.captured_at<?")
 		args = append(args, toValue)
 	}
+	appendBBoxPredicate(&where, &args, box)
 	query += " WHERE " + strings.Join(where, " AND ") + " LIMIT 1"
 	var one int
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(&one)

@@ -32,6 +32,10 @@ curl -fsS http://127.0.0.1:8080/healthz
 
 Compose 将原图、缓存和 SQLite 分到三个持久化卷。生产环境应在反向代理启用 HTTPS，并保持 `PHOTO_COOKIE_SECURE=true`。配置、升级和反向代理示例见 [部署文档](docs/operations/deployment.md)。
 
+## 地图
+
+Web 端「地图」页按拍摄位置浏览照片，照片详情显示位置和小地图，底图使用天地图。在天地图控制台申请「浏览器端」key，写入 Compose 同目录的 `.env`（`PHOTO_MAP_TIANDITU_KEY=…`，不要提交到 Git）后重启服务。升级前已入库的照片需要管理员在设置中执行一次「重新扫描文件」来读取位置。详见[部署文档](docs/operations/deployment.md)。
+
 ## 备份与性能
 
 原图和 SQLite（包括 WAL）必须备份，缓存可以删除后重建；恢复步骤见 [备份恢复文档](docs/operations/backup-restore.md)。
@@ -47,4 +51,4 @@ go run ./tests/performance -count 100000 -pages 20
 
 ## Android 客户端
 
-旧 Android 客户端已移除，当前仓库不提供 Android App、APK/AAB 或 Android 构建流程。原 APK 的 `77Photo` 显示名、`com.photo77` 应用 ID 和启动图标已独立保留在 [Android 身份资源](assets/android/launcher/README.md)，供新工程沿用。Web/PWA 可在手机浏览器使用；服务端的移动认证与 Bearer API 仍保留，供未来原生客户端使用。重建方向和阶段边界见 [Android 从零设计](docs/ui/ANDROID_FROM_WEB.md)。
+新的 React Native Android 工程位于 [mobile/](mobile/README.md)。当前完成第一阶段的服务器连接、移动端登录与设备会话基础；照片浏览和上传仍在后续阶段。App 沿用 `77Photo` 显示名、`com.photo77` 应用 ID 和[原启动图标](assets/android/launcher/README.md)，使用现有移动 Bearer API。产品方向和阶段边界见 [Android 从零设计](docs/ui/ANDROID_FROM_WEB.md)。

@@ -31,6 +31,11 @@ type report struct {
 	SequentialPagesMS float64   `json:"sequential_pages_ms"`
 	AllocBeforeBytes  uint64    `json:"alloc_before_bytes"`
 	AllocAfterBytes   uint64    `json:"alloc_after_bytes"`
+	MapPoints         int       `json:"map_points"`
+	MapPointsBytes    int       `json:"map_points_bytes"`
+	MapOwnerMS        float64   `json:"map_owner_ms"`
+	MapSharedMemberMS float64   `json:"map_shared_member_ms"`
+	MapAreaAdminMS    float64   `json:"map_area_admin_ms"`
 	HighWaterRSSKB    int64     `json:"high_water_rss_kb,omitempty"`
 }
 
@@ -113,7 +118,55 @@ VALUES ('perf-folder', 'perf-user', 'users/perf-user/benchmark', 'benchmark', 0,
 	sequentialMS := elapsedMS(start)
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	result := report{GeneratedAt: time.Now().UTC(), PhotoCount: *count, PageSize: *pageSize, MeasuredPages: measured, ColdFirstPageMS: coldMS, HotFirstPageMS: hotMS, SequentialPagesMS: sequentialMS, AllocBeforeBytes: before.Alloc, AllocAfterBytes: after.Alloc, HighWaterRSSKB: highWaterRSSKB()}
+
+	// The map loads every located photo at once. A member who reaches the
+	// photos through a folder share takes the slower ACL predicate.
+	start = time.Now()
+	points, err := service.MapPoints(ctx, principal)
+	if err != nil {
+		fatal("map points: %v", err)
+	}
+	encodedPoints, err := points.MarshalJSON()
+	if err != nil {
+		fatal("encode map points: %v", err)
+	}
+	mapOwnerMS := elapsedMS(start)
+	if _, err := db.ExecContext(ctx, `INSERT INTO users (id, username, password_hash, role, is_active, created_at, updated_at)
+VALUES ('perf-member', 'perf-member', 'benchmark', 'user', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		fatal("insert benchmark member: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO shares (id, resource_type, resource_id, user_id, permission, created_at)
+VALUES ('perf-share', 'folder', 'perf-folder', 'perf-member', 'read', '2026-01-01T00:00:00Z')`); err != nil {
+		fatal("insert benchmark share: %v", err)
+	}
+	sharedService := photos.NewService(db, store, 1<<20)
+	sharedService.SetAuthorizer(acl.NewAuthorizer(db))
+	start = time.Now()
+	sharedPoints, err := sharedService.MapPoints(ctx, acl.Principal{UserID: "perf-member", Role: acl.RoleUser})
+	if err != nil {
+		fatal("shared map points: %v", err)
+	}
+	if _, err := sharedPoints.MarshalJSON(); err != nil {
+		fatal("encode shared map points: %v", err)
+	}
+	mapSharedMS := elapsedMS(start)
+	if len(sharedPoints.Items) != len(points.Items) {
+		fatal("shared member saw %d map points, owner saw %d", len(sharedPoints.Items), len(points.Items))
+	}
+	// The map side panel pages through one viewport. An administrator has no
+	// owner filter, so SQLite reads the whole index; a 1-degree box is the
+	// slow case because matches are sparse.
+	area := photos.ListFilter{Limit: *pageSize, BBox: &photos.BBox{West: 115, South: 30, East: 116, North: 31}}
+	if _, err := sharedService.List(ctx, acl.Principal{UserID: "perf-admin", Role: acl.RoleAdmin}, area); err != nil {
+		fatal("warm area list: %v", err)
+	}
+	start = time.Now()
+	if _, err := sharedService.List(ctx, acl.Principal{UserID: "perf-admin", Role: acl.RoleAdmin}, area); err != nil {
+		fatal("area list: %v", err)
+	}
+	mapAreaMS := elapsedMS(start)
+
+	result := report{GeneratedAt: time.Now().UTC(), PhotoCount: *count, PageSize: *pageSize, MeasuredPages: measured, ColdFirstPageMS: coldMS, HotFirstPageMS: hotMS, SequentialPagesMS: sequentialMS, AllocBeforeBytes: before.Alloc, AllocAfterBytes: after.Alloc, MapPoints: len(points.Items), MapPointsBytes: len(encodedPoints), MapOwnerMS: mapOwnerMS, MapSharedMemberMS: mapSharedMS, MapAreaAdminMS: mapAreaMS, HighWaterRSSKB: highWaterRSSKB()}
 	encoded, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		fatal("encode report: %v", err)
@@ -135,8 +188,8 @@ func insertPhotos(ctx context.Context, db interface {
 	}
 	defer tx.Rollback()
 	stmt, err := tx.PrepareContext(ctx, `INSERT INTO photos
-(id, owner_id, folder_id, storage_path, filename, mime_type, size, width, height, checksum, captured_at, captured_at_source, file_created_at, indexed_at, source_revision, scan_status, created_at, updated_at)
-VALUES (?, 'perf-user', 'perf-folder', ?, 'photo.jpg', 'image/jpeg', 1, 1, 1, ?, ?, 'file_mtime', ?, ?, ?, 'indexed', ?, ?)`)
+(id, owner_id, folder_id, storage_path, filename, mime_type, size, width, height, checksum, captured_at, captured_at_source, file_created_at, indexed_at, source_revision, scan_status, gps_latitude, gps_longitude, created_at, updated_at)
+VALUES (?, 'perf-user', 'perf-folder', ?, 'photo.jpg', 'image/jpeg', 1, 1, 1, ?, ?, 'file_mtime', ?, ?, ?, 'indexed', ?, ?, ?, ?)`)
 	if err != nil {
 		fatal("prepare photo insert: %v", err)
 	}
@@ -145,7 +198,14 @@ VALUES (?, 'perf-user', 'perf-folder', ?, 'photo.jpg', 'image/jpeg', 1, 1, 1, ?,
 	for i := 0; i < count; i++ {
 		timestamp := base.Add(-time.Duration(i) * time.Second).Format(time.RFC3339Nano)
 		checksum := fmt.Sprintf("%064x", i+1)
-		if _, err := stmt.ExecContext(ctx, fmt.Sprintf("p_%08d", i), fmt.Sprintf("users/perf-user/benchmark/photo-%08d.jpg", i), checksum, timestamp, timestamp, timestamp, timestamp, timestamp, timestamp); err != nil {
+		// Four in five photos carry a position spread deterministically over
+		// eastern China, roughly the share a phone-heavy library has.
+		var latitude, longitude any
+		if i%5 != 0 {
+			latitude = 20 + float64(i*7919%2000000)/100000
+			longitude = 100 + float64(i*104729%3000000)/100000
+		}
+		if _, err := stmt.ExecContext(ctx, fmt.Sprintf("p_%08d", i), fmt.Sprintf("users/perf-user/benchmark/photo-%08d.jpg", i), checksum, timestamp, timestamp, timestamp, timestamp, latitude, longitude, timestamp, timestamp); err != nil {
 			fatal("insert photo %d: %v", i, err)
 		}
 	}

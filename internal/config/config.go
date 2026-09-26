@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -23,6 +24,7 @@ const (
 	defaultHeifConvertPath  = "heif-convert"
 	defaultMediaTimeout     = 30 * time.Second
 	maxThumbnailWorkers     = 64
+	maxTiandituKeyLength    = 128
 )
 
 // Config contains process-wide settings. Paths are resolved relative to the
@@ -39,6 +41,9 @@ type Config struct {
 	FFprobePath      string
 	HeifConvertPath  string
 	MediaTimeout     time.Duration
+	// TiandituKey is the optional Tianditu browser key. The map is disabled
+	// when it is empty. It is a credential and must never be logged.
+	TiandituKey string
 }
 
 // LoadFromEnv reads the PHOTO_* settings and validates scalar values. It does
@@ -73,6 +78,7 @@ func LoadFromEnv() (Config, error) {
 		FFprobePath:      envString("PHOTO_FFPROBE_PATH", defaultFFprobePath),
 		HeifConvertPath:  envString("PHOTO_HEIF_CONVERT_PATH", defaultHeifConvertPath),
 		MediaTimeout:     mediaTimeout,
+		TiandituKey:      envString("PHOTO_MAP_TIANDITU_KEY", ""),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -104,6 +110,10 @@ func (c Config) Validate() error {
 	}
 	if c.MediaTimeout <= 0 {
 		return fmt.Errorf("media timeout must be positive")
+	}
+	// The error deliberately omits the value so a mistyped key is not logged.
+	if len(c.TiandituKey) > maxTiandituKeyLength || strings.IndexFunc(c.TiandituKey, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return fmt.Errorf("PHOTO_MAP_TIANDITU_KEY must be a single token of at most %d characters", maxTiandituKeyLength)
 	}
 	if _, _, err := net.SplitHostPort(c.ListenAddr); err != nil {
 		return fmt.Errorf("listen address %q is invalid: %w", c.ListenAddr, err)

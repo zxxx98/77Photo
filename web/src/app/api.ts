@@ -37,12 +37,50 @@ export interface Photo {
   captured_at: string;
   captured_at_source: string;
   source_revision?: string;
+  gps_latitude?: number | null;
+  gps_longitude?: number | null;
   is_live_photo?: boolean;
 }
 
 export interface PhotoPage {
   items: Photo[];
   next_cursor: string | null;
+}
+
+/** West, south, east, north in degrees. West greater than east crosses the antimeridian. */
+export type BBox = [west: number, south: number, east: number, north: number];
+
+export interface ListPhotosParams {
+  folderId?: string;
+  bbox?: BBox;
+  from?: string;
+  to?: string;
+  cursor?: string;
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+export interface MapTileLayer {
+  url: string;
+  subdomains: string;
+}
+
+export interface MapConfig {
+  enabled: boolean;
+  provider?: string;
+  tile_layers?: MapTileLayer[];
+  min_zoom?: number;
+  max_zoom?: number;
+  attribution?: string;
+  attribution_url?: string;
+}
+
+/** Photo ID, latitude, longitude and captured_at; the server sends them newest first. */
+export type MapPoint = [id: string, latitude: number, longitude: number, capturedAt: string];
+
+export interface MapPoints {
+  items: MapPoint[];
+  total_photos: number;
 }
 
 export interface BulkDeleteFailure {
@@ -202,7 +240,10 @@ export interface ApiClient {
   me(): Promise<User>;
   logout(): Promise<void>;
   setCsrfToken(token: string | null): void;
-  listPhotos(params?: { folderId?: string; cursor?: string; limit?: number }): Promise<PhotoPage>;
+  listPhotos(params?: ListPhotosParams): Promise<PhotoPage>;
+  getPhoto(id: string): Promise<Photo>;
+  getMapConfig(): Promise<MapConfig>;
+  getMapPoints(): Promise<MapPoints>;
   listFolders(parentId?: string): Promise<{ items: Folder[] }>;
   getFolder(id: string): Promise<Folder>;
   createFolder(name: string, parentId?: string | null): Promise<Folder>;
@@ -242,6 +283,9 @@ const liveStatusBatchSize = 100;
 
 export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
   let csrfToken: string | null = null;
+  // The map configuration is server-wide and rarely changes, so every viewer
+  // and map page shares one request.
+  let mapConfig: Promise<MapConfig> | null = null;
 
   async function request<T>(path: string, init: RequestInit = {}): Promise<T | undefined> {
     const method = (init.method ?? 'GET').toUpperCase();
@@ -259,6 +303,21 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     if (responseCsrfToken) csrfToken = responseCsrfToken;
     if (response.status === 204) return undefined;
     return response.json() as Promise<T>;
+  }
+
+  async function withLiveStatus(items: Photo[], signal?: AbortSignal): Promise<Photo[]> {
+    if (items.length === 0) return items;
+    try {
+      const liveIds = new Set<string>();
+      for (let offset = 0; offset < items.length; offset += liveStatusBatchSize) {
+        const ids = items.slice(offset, offset + liveStatusBatchSize).map((photo) => photo.id).join(',');
+        const status = await request<{ live_photo_ids: string[] }>(`/api/v1/live-photos/status?ids=${encodeURIComponent(ids)}`, { signal });
+        for (const id of status?.live_photo_ids ?? []) liveIds.add(id);
+      }
+      return items.map((photo) => ({ ...photo, is_live_photo: liveIds.has(photo.id) }));
+    } catch {
+      return items;
+    }
   }
 
   function uploadLiveMotion(photoId: string, file: File, onProgress?: (progress: UploadProgress) => void, signal?: AbortSignal): Promise<void> {
@@ -327,23 +386,28 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     listPhotos: async (params = {}) => {
       const query = new URLSearchParams();
       if (params.folderId) query.set('folder_id', params.folderId);
+      if (params.bbox) query.set('bbox', params.bbox.join(','));
+      if (params.from) query.set('from', params.from);
+      if (params.to) query.set('to', params.to);
       if (params.cursor) query.set('cursor', params.cursor);
       if (params.limit) query.set('limit', String(params.limit));
       const suffix = query.toString();
-      const page = await request<PhotoPage>(`/api/v1/photos${suffix ? `?${suffix}` : ''}`) as PhotoPage;
-      if (page.items.length === 0) return page;
-      try {
-        const liveIds = new Set<string>();
-        for (let offset = 0; offset < page.items.length; offset += liveStatusBatchSize) {
-          const ids = page.items.slice(offset, offset + liveStatusBatchSize).map((photo) => photo.id).join(',');
-          const status = await request<{ live_photo_ids: string[] }>(`/api/v1/live-photos/status?ids=${encodeURIComponent(ids)}`);
-          for (const id of status?.live_photo_ids ?? []) liveIds.add(id);
-        }
-        return { ...page, items: page.items.map((photo) => ({ ...photo, is_live_photo: liveIds.has(photo.id) })) };
-      } catch {
-        return page;
-      }
+      const page = await request<PhotoPage>(`/api/v1/photos${suffix ? `?${suffix}` : ''}`, { signal: params.signal }) as PhotoPage;
+      return { ...page, items: await withLiveStatus(page.items, params.signal) };
     },
+    getPhoto: async (id) => {
+      const photo = await request<Photo>(`/api/v1/photos/${encodeURIComponent(id)}`) as Photo;
+      const [withStatus] = await withLiveStatus([photo]);
+      return withStatus;
+    },
+    getMapConfig: () => {
+      mapConfig ??= (request<MapConfig>('/api/v1/map/config') as Promise<MapConfig>).catch((error: unknown) => {
+        mapConfig = null;
+        throw error;
+      });
+      return mapConfig;
+    },
+    getMapPoints: () => request<MapPoints>('/api/v1/map/points') as Promise<MapPoints>,
     listFolders: (parentId) => {
       const suffix = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : '';
       return request<{ items: Folder[] }>(`/api/v1/folders${suffix}`) as Promise<{ items: Folder[] }>;

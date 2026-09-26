@@ -24,6 +24,7 @@ tags:
   - name: photos
   - name: shares
   - name: share-links
+  - name: map
   - name: admin
 paths:
   /healthz:
@@ -494,6 +495,7 @@ paths:
         - $ref: '#/components/parameters/FolderFilter'
         - $ref: '#/components/parameters/FromFilter'
         - $ref: '#/components/parameters/ToFilter'
+        - $ref: '#/components/parameters/BBoxFilter'
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
       responses:
@@ -501,7 +503,7 @@ paths:
           description: Photos sorted by captured_at DESC then id DESC
           content: { application/json: { schema: { $ref: '#/components/schemas/PhotoPage' } } }
         '400':
-          description: Invalid timestamp, cursor, or incompatible filters
+          description: Invalid timestamp, bounding box, cursor, or incompatible filters
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/ReadForbidden' }
@@ -839,6 +841,51 @@ paths:
           description: Invalid byte range
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
 
+  /api/v1/map/config:
+    get:
+      tags: [map]
+      summary: Describe the base map clients should draw
+      description: |
+        Returns `{"enabled": false}` until the deployment sets
+        `PHOTO_MAP_TIANDITU_KEY`. When enabled, `tile_layers` are stacked in
+        order (Tianditu vector base map, then Chinese labels, Web Mercator).
+        Tile URLs carry the browser key, so the response is only sent to
+        signed-in clients and is not cached.
+      operationId: getMapConfig
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current base map configuration
+          content: { application/json: { schema: { $ref: '#/components/schemas/MapConfig' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/map/points:
+    get:
+      tags: [map]
+      summary: List every visible photo that has a capture position
+      description: |
+        Uses the same visibility rules as `GET /api/v1/photos`: members see
+        their own photos and shared folders, administrators see every photo.
+        Deleted, missing and paired motion files are excluded. The whole set
+        is returned at once, newest first, so clients can cluster and filter
+        locally. Responses are gzip-compressed when accepted and revalidated
+        with a weak ETag.
+      operationId: listMapPoints
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Located photos in captured_at DESC, id DESC order
+          headers:
+            ETag: { schema: { type: string }, description: Weak validator of the response body }
+          content: { application/json: { schema: { $ref: '#/components/schemas/MapPoints' } } }
+        '304': { description: The client's cached points are current }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /api/v1/share-links:
     post:
       tags: [share-links]
@@ -1126,6 +1173,16 @@ components:
       required: false
       schema: { type: string, format: date-time }
       description: Exclusive captured_at upper bound; timestamp must include a timezone.
+    BBoxFilter:
+      name: bbox
+      in: query
+      required: false
+      schema: { type: string, example: '121.3,31.1,121.6,31.4' }
+      description: |
+        Only photos whose capture position lies inside `west,south,east,north`
+        (degrees, WGS-84). West greater than east selects a box that crosses
+        the antimeridian. Photos without a position never match. The box is
+        bound into the pagination cursor like the other filters.
     Cursor:
       name: cursor
       in: query
@@ -1366,8 +1423,8 @@ components:
         focal_length: { type: [number, 'null'], minimum: 0 }
         aperture: { type: [number, 'null'], minimum: 0 }
         iso: { type: [integer, 'null'], minimum: 0 }
-        gps_latitude: { type: [number, 'null'], minimum: -90, maximum: 90 }
-        gps_longitude: { type: [number, 'null'], minimum: -180, maximum: 180 }
+        gps_latitude: { type: [number, 'null'], minimum: -90, maximum: 90, description: WGS-84 capture latitude from EXIF GPS or the video container's ISO 6709 location; omitted when unknown }
+        gps_longitude: { type: [number, 'null'], minimum: -180, maximum: 180, description: WGS-84 capture longitude; omitted when unknown }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         is_live_photo: { type: boolean, description: True when a validated motion companion exists; may be omitted by list endpoints before status enrichment. }
@@ -1389,6 +1446,42 @@ components:
         status: { type: string, const: pending }
         retry_after_ms: { type: integer, minimum: 50 }
         photo_id: { $ref: '#/components/schemas/ID' }
+    MapConfig:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        provider: { type: string, enum: [tianditu] }
+        tile_layers:
+          type: array
+          items: { $ref: '#/components/schemas/MapTileLayer' }
+        min_zoom: { type: integer, minimum: 0 }
+        max_zoom: { type: integer, minimum: 0 }
+        attribution: { type: string }
+        attribution_url: { type: string, format: uri }
+    MapTileLayer:
+      type: object
+      required: [url, subdomains]
+      properties:
+        url: { type: string, description: 'Tile URL template with {s}, {z}, {x} and {y} placeholders' }
+        subdomains: { type: string, description: 'One character per subdomain, substituted for {s}' }
+    MapPoints:
+      type: object
+      required: [items, total_photos]
+      properties:
+        items:
+          type: array
+          description: '[photo id, latitude, longitude, captured_at]; coordinates rounded to six decimals'
+          items:
+            type: array
+            minItems: 4
+            maxItems: 4
+            prefixItems:
+              - { $ref: '#/components/schemas/ID' }
+              - { type: number, minimum: -90, maximum: 90 }
+              - { type: number, minimum: -180, maximum: 180 }
+              - { type: string, format: date-time }
+        total_photos: { type: integer, minimum: 0, description: Visible photos with or without a position }
     LivePhotoStatus:
       type: object
       required: [live_photo_ids]
