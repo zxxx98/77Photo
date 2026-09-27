@@ -249,7 +249,7 @@ func (s *Service) worker() {
 
 func (s *Service) process(photoID string) {
 	for attempt := 1; attempt <= MaxAttempts; attempt++ {
-		if err := s.generate(photoID); err == nil {
+		if err := s.generate(photoID, false); err == nil {
 			return
 		}
 		if attempt == MaxAttempts {
@@ -258,7 +258,11 @@ func (s *Service) process(photoID string) {
 	}
 }
 
-func (s *Service) generate(photoID string) error {
+// generate renders the thumbnail variants for photoID. Existing variants are
+// kept unless overwrite is set, in which case they are replaced in place and
+// cached variants of older source revisions are pruned afterwards. Replacing
+// in place means a failed render never leaves the photo without thumbnails.
+func (s *Service) generate(photoID string, overwrite bool) error {
 	photo, err := s.loader.LoadPhoto(s.workerCtx, photoID)
 	if err != nil {
 		return err
@@ -305,13 +309,40 @@ func (s *Service) generate(photoID string) error {
 	for _, size := range []int{1280, 512, 256} {
 		variantSource = resize(variantSource, size)
 		path := s.CachePath(photo.ID, photo.SourceRevision, size)
-		if _, statErr := os.Stat(path); statErr == nil {
-			continue
-		} else if !os.IsNotExist(statErr) {
-			return statErr
+		if !overwrite {
+			if _, statErr := os.Stat(path); statErr == nil {
+				continue
+			} else if !os.IsNotExist(statErr) {
+				return statErr
+			}
 		}
 		if err := writeVariant(path, variantSource); err != nil {
 			return err
+		}
+	}
+	if overwrite {
+		return s.pruneStaleRevisions(photo.ID, photo.SourceRevision)
+	}
+	return nil
+}
+
+// pruneStaleRevisions removes cached variants of photoID that do not belong to
+// sourceRevision.
+func (s *Service) pruneStaleRevisions(photoID, sourceRevision string) error {
+	for _, size := range []int{256, 512, 1280} {
+		current := s.CachePath(photoID, sourceRevision, size)
+		entries, err := os.ReadDir(filepath.Dir(current))
+		if err != nil {
+			return fmt.Errorf("list thumbnail cache: %w", err)
+		}
+		for _, entry := range entries {
+			path := filepath.Join(filepath.Dir(current), entry.Name())
+			if path == current {
+				continue
+			}
+			if err := os.RemoveAll(path); err != nil {
+				return fmt.Errorf("prune thumbnail cache: %w", err)
+			}
 		}
 	}
 	return nil

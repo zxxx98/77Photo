@@ -61,17 +61,41 @@ func (s Store) Rename(oldRelative, newRelative string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := os.Lstat(newPath); err == nil {
-		return os.ErrExist
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.Rename(oldPath, newPath); err == nil {
+	if err := renameNoReplace(oldPath, newPath); err == nil {
 		return nil
 	} else if !errors.Is(err, syscall.EXDEV) {
 		return err
 	}
 	return copyAndRemove(oldPath, newPath)
+}
+
+// renameNoReplaceFallback is used where an atomic no-replace rename is not
+// available. Regular files are hard-linked (which fails if the destination
+// exists) and then unlinked; directories fall back to check-then-rename.
+func renameNoReplaceFallback(oldPath, newPath string) error {
+	info, err := os.Lstat(oldPath)
+	if err != nil {
+		return err
+	}
+	if info.Mode().IsRegular() {
+		linkErr := os.Link(oldPath, newPath)
+		if linkErr == nil {
+			return os.Remove(oldPath)
+		}
+		if errors.Is(linkErr, os.ErrExist) {
+			return os.ErrExist
+		}
+		if errors.Is(linkErr, syscall.EXDEV) {
+			return linkErr
+		}
+		// Hard links are unsupported here; fall through.
+	}
+	if _, err := os.Lstat(newPath); err == nil {
+		return os.ErrExist
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(oldPath, newPath)
 }
 
 func (s Store) RemoveFile(relative string) error {

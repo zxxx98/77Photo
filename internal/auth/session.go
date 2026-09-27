@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/zxxx98/77Photo/internal/acl"
@@ -24,6 +25,8 @@ var (
 	ErrUnauthorized       = errors.New("unauthorized")
 	ErrCSRF               = errors.New("invalid csrf token")
 	ErrRateLimited        = errors.New("login rate limited")
+	ErrInvalidUsername    = errors.New("invalid username")
+	ErrInvalidPassword    = errors.New("invalid password")
 )
 
 const (
@@ -287,11 +290,13 @@ func ClearSessionCookie(w http.ResponseWriter, secure bool) {
 }
 
 func validateCredentials(username, password string) error {
-	if strings.TrimSpace(username) == "" || utf8.RuneCountInString(username) > 64 {
-		return fmt.Errorf("username must be 1-64 characters")
+	// Usernames are stored trimmed, so validate the stored form.
+	username = strings.TrimSpace(username)
+	if username == "" || utf8.RuneCountInString(username) > 64 || strings.IndexFunc(username, unicode.IsControl) >= 0 {
+		return fmt.Errorf("%w: username must be 1-64 printable characters", ErrInvalidUsername)
 	}
 	if utf8.RuneCountInString(password) < 12 || utf8.RuneCountInString(password) > 256 {
-		return fmt.Errorf("password must be 12-256 characters")
+		return fmt.Errorf("%w: password must be 12-256 characters", ErrInvalidPassword)
 	}
 	return nil
 }

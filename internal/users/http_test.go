@@ -96,3 +96,76 @@ func TestHTTPNonAdminCannotListUsers(t *testing.T) {
 	}
 	_ = alice
 }
+
+func TestHTTPUpdateAndDeleteAcceptSnakeCaseBodies(t *testing.T) {
+	db, err := dbstore.Open(context.Background(), filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, adminSession, err := authService.SetupAdmin(context.Background(), "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(db, authService)
+	alice, err := service.Create(context.Background(), acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}, CreateInput{Username: "alice", Password: "alice's secure password", Role: acl.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHTTPHandler(service, authService)
+	send := func(method, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/api/v1/users/"+alice.ID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(auth.CSRFHeaderName(), adminSession.CSRFToken)
+		req.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: adminSession.Token})
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+		return resp
+	}
+
+	updateResp := send(http.MethodPatch, `{"is_active":false}`)
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want 200: %s", updateResp.Code, updateResp.Body.String())
+	}
+	var updated auth.Account
+	if err := json.NewDecoder(updateResp.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.IsActive {
+		t.Fatalf("updated = %+v, want inactive", updated)
+	}
+
+	if deleteResp := send(http.MethodDelete, `{"photo_action":"retain"}`); deleteResp.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204: %s", deleteResp.Code, deleteResp.Body.String())
+	}
+}
+
+func TestHTTPCreateReportsWhichCredentialIsInvalid(t *testing.T) {
+	db, err := dbstore.Open(context.Background(), filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	_, adminSession, err := authService.SetupAdmin(context.Background(), "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHTTPHandler(NewService(db, authService), authService)
+	for body, code := range map[string]string{
+		`{"username":"alice","password":"short","role":"user"}`:                         "PASSWORD_INVALID",
+		`{"username":"   ","password":"alice's secure password","role":"user"}`:         "USERNAME_INVALID",
+		`{"username":"al\u0007ice","password":"alice's secure password","role":"user"}`: "USERNAME_INVALID",
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(auth.CSRFHeaderName(), adminSession.CSRFToken)
+		req.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: adminSession.Token})
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+		if resp.Code != http.StatusUnprocessableEntity || !strings.Contains(resp.Body.String(), `"code":"`+code+`"`) {
+			t.Fatalf("create %s = %d %s, want 422 %s", body, resp.Code, resp.Body.String(), code)
+		}
+	}
+}

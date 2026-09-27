@@ -9,6 +9,7 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
+	"github.com/zxxx98/77Photo/internal/maintenance"
 )
 
 type RebuildHTTPHandler struct {
@@ -94,6 +95,8 @@ func (h *RebuildHTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Re
 			details = map[string]any{"job_id": conflict.JobID}
 		}
 		rebuildWriteError(w, r, http.StatusConflict, "THUMBNAIL_REBUILD_IN_PROGRESS", "another thumbnail rebuild is already queued or running", details)
+	case errors.Is(err, maintenance.ErrBusy):
+		rebuildWriteError(w, r, http.StatusConflict, "MAINTENANCE_IN_PROGRESS", "another maintenance task is queued or running", maintenance.Details(err))
 	case errors.Is(err, ErrRebuildNotFound):
 		rebuildWriteError(w, r, http.StatusNotFound, "NOT_FOUND", "thumbnail rebuild job not found", nil)
 	case errors.Is(err, ErrRebuildInvalidMode):

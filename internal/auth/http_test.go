@@ -266,3 +266,57 @@ func decodeJSON(t *testing.T, resp *http.Response, target any) {
 		t.Fatal(err)
 	}
 }
+
+func TestHTTPChangePasswordKeepsCurrentSessionAndRevokesOthers(t *testing.T) {
+	db, err := dbstore.Open(context.Background(), filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	service := NewService(db, time.Hour, false)
+	server := httptest.NewServer(NewHTTPHandler(service, false))
+	defer server.Close()
+
+	client := &http.Client{Jar: mustCookieJar(t)}
+	setup := doJSON(t, client, server.URL+"/api/v1/setup/admin", http.MethodPost, `{"username":"admin","password":"correct horse battery staple"}`, "")
+	var body struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	decodeJSON(t, setup, &body)
+	_, otherSession, err := service.Authenticate(context.Background(), "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wrong := doJSON(t, client, server.URL+"/api/v1/auth/password", http.MethodPost, `{"current_password":"not my password","new_password":"a brand new passphrase"}`, body.CSRFToken)
+	if wrong.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("wrong current password status = %d, want 422", wrong.StatusCode)
+	}
+	_ = wrong.Body.Close()
+	short := doJSON(t, client, server.URL+"/api/v1/auth/password", http.MethodPost, `{"current_password":"correct horse battery staple","new_password":"short"}`, body.CSRFToken)
+	if short.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("short new password status = %d, want 422", short.StatusCode)
+	}
+	_ = short.Body.Close()
+
+	changed := doJSON(t, client, server.URL+"/api/v1/auth/password", http.MethodPost, `{"current_password":"correct horse battery staple","new_password":"a brand new passphrase"}`, body.CSRFToken)
+	if changed.StatusCode != http.StatusNoContent {
+		t.Fatalf("change status = %d, want 204", changed.StatusCode)
+	}
+	_ = changed.Body.Close()
+
+	me, err := client.Get(server.URL + "/api/v1/auth/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if me.StatusCode != http.StatusOK {
+		t.Fatalf("current session after change = %d, want 200", me.StatusCode)
+	}
+	_ = me.Body.Close()
+	if _, _, err := service.Current(context.Background(), otherSession.Token); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("other session after change error = %v, want ErrUnauthorized", err)
+	}
+	if _, _, err := service.Authenticate(context.Background(), "admin", "a brand new passphrase"); err != nil {
+		t.Fatalf("login with new password: %v", err)
+	}
+}

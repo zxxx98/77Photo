@@ -22,6 +22,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/httpapi"
 	"github.com/zxxx98/77Photo/internal/importer"
 	"github.com/zxxx98/77Photo/internal/indexer"
+	"github.com/zxxx98/77Photo/internal/maintenance"
 	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/sharelinks"
@@ -78,11 +79,16 @@ func run(parent context.Context, logger *slog.Logger) error {
 	folderService.SetAuthorizer(authorizer)
 	photoService.SetAuthorizer(authorizer)
 	shareService := shares.NewService(db)
+	maintenanceLock := &maintenance.Lock{}
+	userService.SetStorage(photoStore)
+	userService.SetMaintenanceLock(maintenanceLock)
 	indexerService := indexer.NewServiceWithContext(ctx, db, photoStore, photoService)
 	indexerService.SetMediaTools(mediaTools)
+	indexerService.SetMaintenanceLock(maintenanceLock)
 	defer indexerService.Wait()
 	importerService := importer.NewServiceWithContext(ctx, db, photoStore, indexerService)
 	importerService.SetMediaTools(mediaTools)
+	importerService.SetMaintenanceLock(maintenanceLock)
 	defer importerService.Wait()
 	thumbnailService, err := thumbnails.NewService(photoService, photoStore, cfg.CacheDir, cfg.ThumbnailWorkers, thumbnails.DefaultQueueCapacity)
 	if err != nil {
@@ -95,14 +101,16 @@ func run(parent context.Context, logger *slog.Logger) error {
 	thumbnailService.Start(ctx)
 	defer thumbnailService.Close()
 	thumbnailRebuildService := thumbnails.NewRebuildServiceWithContext(ctx, db, thumbnailService)
+	thumbnailRebuildService.SetMaintenanceLock(maintenanceLock)
 	defer thumbnailRebuildService.Wait()
 	thumbnailRebuildHandler := thumbnails.NewRebuildHTTPHandler(thumbnailRebuildService, authService)
 	photoCleanupService := cleanup.NewService(db, photoStore, photoService)
+	photoCleanupService.SetMaintenanceLock(maintenanceLock)
 	photoCleanupHandler := cleanup.NewHTTPHandler(photoCleanupService, authService)
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
 	shareLinkService := sharelinks.NewService(db, photoStore, thumbnailService, secureCookies)
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db, mediaTools), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, ThumbnailRebuild: thumbnailRebuildHandler, PhotoCleanup: photoCleanupHandler, Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler(), Map: photos.TiandituMapConfig(cfg.TiandituKey)})
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db, mediaTools), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, ThumbnailRebuild: thumbnailRebuildHandler, PhotoCleanup: photoCleanupHandler, Maintenance: maintenance.NewHTTPHandler(maintenanceLock, authService), Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler(), Map: photos.TiandituMapConfig(cfg.TiandituKey)})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,

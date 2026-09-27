@@ -43,6 +43,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logout(w, r)
+	case r.URL.Path == "/api/v1/auth/password":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, r, http.MethodPost)
+			return
+		}
+		h.changePassword(w, r)
 	case r.URL.Path == "/api/v1/auth/me":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, r, http.MethodGet)
@@ -125,6 +131,30 @@ func (h *HTTPHandler) logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *HTTPHandler) changePassword(w http.ResponseWriter, r *http.Request) {
+	authenticated, err := h.service.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeAuthError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	if err := h.service.AuthorizeWrite(r, authenticated); err != nil {
+		writeAuthError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
+		return
+	}
+	var input struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	if err := h.service.ChangePassword(r.Context(), authenticated.Account.ID, input.CurrentPassword, input.NewPassword, authenticated.Session.ID, authenticated.DeviceID); err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *HTTPHandler) me(w http.ResponseWriter, r *http.Request) {
 	authenticated, err := h.service.AuthenticateRequest(r.Context(), r)
 	if err != nil {
@@ -153,6 +183,13 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 	case errors.Is(err, ErrRateLimited):
 		w.Header().Set("Retry-After", "60")
 		writeAuthError(w, r, http.StatusTooManyRequests, "LOGIN_RATE_LIMITED", "too many login attempts; try again later", nil)
+	case errors.Is(err, ErrCurrentPasswordIncorrect):
+		// Not 401: the caller is signed in, only the confirmation was wrong.
+		writeAuthError(w, r, http.StatusUnprocessableEntity, "CURRENT_PASSWORD_INCORRECT", "current password is incorrect", nil)
+	case errors.Is(err, ErrInvalidPassword):
+		writeAuthError(w, r, http.StatusUnprocessableEntity, "PASSWORD_INVALID", "password must be 12-256 characters", nil)
+	case errors.Is(err, ErrUnauthorized):
+		writeAuthError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
 	case errors.Is(err, ErrSetupComplete):
 		writeAuthError(w, r, http.StatusConflict, "SETUP_COMPLETE", "administrator setup is already complete", nil)
 	default:

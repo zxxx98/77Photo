@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zxxx98/77Photo/internal/acl"
+	"github.com/zxxx98/77Photo/internal/maintenance"
 )
 
 type RebuildStatus string
@@ -50,27 +51,30 @@ type RebuildCounts struct {
 }
 
 type RebuildJob struct {
-	ID         string         `json:"id"`
-	Mode       RebuildMode    `json:"mode"`
-	Status     RebuildStatus  `json:"status"`
-	StartedAt  time.Time      `json:"started_at"`
-	FinishedAt *time.Time     `json:"finished_at,omitempty"`
-	Counts     RebuildCounts  `json:"counts"`
-	Error      *string        `json:"error,omitempty"`
+	ID         string        `json:"id"`
+	Mode       RebuildMode   `json:"mode"`
+	Status     RebuildStatus `json:"status"`
+	StartedAt  time.Time     `json:"started_at"`
+	FinishedAt *time.Time    `json:"finished_at,omitempty"`
+	Counts     RebuildCounts `json:"counts"`
+	Error      *string       `json:"error,omitempty"`
 }
 
 type RebuildService struct {
-	db         *sql.DB
-	thumbnails *Service
-	lifecycle  context.Context
-	mu         sync.RWMutex
-	job        *RebuildJob
-	done       chan struct{}
+	db          *sql.DB
+	thumbnails  *Service
+	lifecycle   context.Context
+	mu          sync.RWMutex
+	job         *RebuildJob
+	done        chan struct{}
+	maintenance *maintenance.Lock
 }
 
 func NewRebuildServiceWithContext(ctx context.Context, db *sql.DB, thumbnailService *Service) *RebuildService {
 	return &RebuildService{db: db, thumbnails: thumbnailService, lifecycle: ctx}
 }
+
+func (s *RebuildService) SetMaintenanceLock(lock *maintenance.Lock) { s.maintenance = lock }
 
 func (s *RebuildService) Start(ctx context.Context, principal acl.Principal) (RebuildJob, error) {
 	return s.StartWithMode(ctx, principal, RebuildModeFull)
@@ -91,6 +95,11 @@ func (s *RebuildService) StartWithMode(ctx context.Context, principal acl.Princi
 	}
 	now := time.Now().UTC()
 	job := &RebuildJob{ID: newRebuildJobID(), Mode: mode, Status: RebuildQueued, StartedAt: now}
+	release, err := s.maintenance.Acquire(maintenance.KindThumbnailRebuild, job.ID)
+	if err != nil {
+		s.mu.Unlock()
+		return RebuildJob{}, err
+	}
 	s.job = job
 	done := make(chan struct{})
 	s.done = done
@@ -101,7 +110,7 @@ func (s *RebuildService) StartWithMode(ctx context.Context, principal acl.Princi
 	if rebuildContext == nil {
 		rebuildContext = context.WithoutCancel(ctx)
 	}
-	go s.run(rebuildContext, job, done)
+	go s.run(rebuildContext, job, done, release)
 	return snapshot, nil
 }
 
@@ -126,13 +135,14 @@ func (s *RebuildService) Wait() {
 	}
 }
 
-func (s *RebuildService) run(ctx context.Context, job *RebuildJob, done chan struct{}) {
+func (s *RebuildService) run(ctx context.Context, job *RebuildJob, done chan struct{}, release func()) {
 	defer close(done)
 	s.mu.Lock()
 	job.Status = RebuildRunning
 	s.mu.Unlock()
 
 	err := s.rebuild(ctx, job)
+	release()
 	s.mu.Lock()
 	if err != nil {
 		job.Status = RebuildFailed
@@ -241,17 +251,12 @@ func (s *RebuildService) regenerate(ctx context.Context, photoID string, mode Re
 	if s.thumbnails.workerCtx == nil {
 		return errors.New("thumbnail worker service is not started")
 	}
-	if mode == RebuildModeFull {
-		if err := s.thumbnails.Invalidate(ctx, photoID); err != nil {
-			return err
-		}
-	}
 	var lastErr error
 	for attempt := 1; attempt <= MaxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := s.thumbnails.generate(photoID); err == nil {
+		if err := s.thumbnails.generate(photoID, mode == RebuildModeFull); err == nil {
 			return nil
 		} else {
 			lastErr = err

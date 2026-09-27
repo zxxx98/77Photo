@@ -189,7 +189,15 @@ export interface BrokenPhoto {
 export interface BrokenPhotoScanResult {
   scanned: number;
   broken: number;
+  skipped?: number;
   items: BrokenPhoto[];
+}
+
+export type MaintenanceKind = 'rescan' | 'thumbnail_rebuild' | 'import' | 'cleanup' | 'user_transfer';
+
+export interface MaintenanceActivity {
+  kind: MaintenanceKind;
+  job_id?: string;
 }
 
 export interface BrokenPhotoCleanupResult {
@@ -265,14 +273,16 @@ export interface ApiClient {
   listUsers(): Promise<{ items: User[] }>;
   createUser(input: { username: string; password: string; role: Role }): Promise<User>;
   updateUser(id: string, input: Partial<Pick<User, 'username' | 'role' | 'is_active'>> & { password?: string }): Promise<User>;
-  deleteUser(id: string): Promise<void>;
+  deleteUser(id: string, options?: { photo_action: 'retain' } | { photo_action: 'transfer'; transfer_to_user_id: string }): Promise<void>;
+  changePassword(currentPassword: string, newPassword: string): Promise<void>;
   startRescan(): Promise<RescanJob>;
   resetLibraryIndex(): Promise<RescanJob>;
   getRescan(id: string): Promise<RescanJob>;
   startThumbnailRebuild(mode?: ThumbnailRebuildMode): Promise<ThumbnailRebuildJob>;
   getThumbnailRebuild(id: string): Promise<ThumbnailRebuildJob>;
   scanBrokenPhotos(): Promise<BrokenPhotoScanResult>;
-  cleanupBrokenPhotos(): Promise<BrokenPhotoCleanupResult>;
+  cleanupBrokenPhotos(ids: string[]): Promise<BrokenPhotoCleanupResult>;
+  getMaintenance(): Promise<{ active: MaintenanceActivity | null }>;
   startImport(input: { source_path: string; user_id: string; organize_by_date?: boolean }): Promise<ImportJob>;
   getImport(id: string): Promise<ImportJob>;
 }
@@ -459,14 +469,16 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     listUsers: () => request<{ items: User[] }>('/api/v1/users') as Promise<{ items: User[] }>,
     createUser: (input) => request<User>('/api/v1/users', { method: 'POST', body: JSON.stringify(input) }) as Promise<User>,
     updateUser: (id, input) => request<User>(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }) as Promise<User>,
-    deleteUser: async (id) => { await request(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ photo_action: 'retain' }) }); },
+    deleteUser: async (id, options = { photo_action: 'retain' }) => { await request(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify(options) }); },
+    changePassword: async (currentPassword, newPassword) => { await request('/api/v1/auth/password', { method: 'POST', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }); },
     startRescan: () => request<RescanJob>('/api/v1/admin/rescan', { method: 'POST', body: JSON.stringify({}) }) as Promise<RescanJob>,
     resetLibraryIndex: () => request<RescanJob>('/api/v1/admin/rescan/reset', { method: 'POST', body: JSON.stringify({ confirm: true }) }) as Promise<RescanJob>,
     getRescan: (id) => request<RescanJob>(`/api/v1/admin/rescan/${encodeURIComponent(id)}`) as Promise<RescanJob>,
     startThumbnailRebuild: (mode = 'full') => request<ThumbnailRebuildJob>('/api/v1/admin/thumbnails/rebuild', { method: 'POST', body: JSON.stringify({ mode }) }) as Promise<ThumbnailRebuildJob>,
     getThumbnailRebuild: (id) => request<ThumbnailRebuildJob>(`/api/v1/admin/thumbnails/rebuild/${encodeURIComponent(id)}`) as Promise<ThumbnailRebuildJob>,
     scanBrokenPhotos: () => request<BrokenPhotoScanResult>('/api/v1/admin/photos/cleanup') as Promise<BrokenPhotoScanResult>,
-    cleanupBrokenPhotos: () => request<BrokenPhotoCleanupResult>('/api/v1/admin/photos/cleanup', { method: 'POST', body: JSON.stringify({ confirm: true }) }) as Promise<BrokenPhotoCleanupResult>,
+    cleanupBrokenPhotos: (ids) => request<BrokenPhotoCleanupResult>('/api/v1/admin/photos/cleanup', { method: 'POST', body: JSON.stringify({ confirm: true, ids }) }) as Promise<BrokenPhotoCleanupResult>,
+    getMaintenance: () => request<{ active: MaintenanceActivity | null }>('/api/v1/admin/maintenance') as Promise<{ active: MaintenanceActivity | null }>,
     startImport: (input) => request<ImportJob>('/api/v1/admin/imports', { method: 'POST', body: JSON.stringify(input) }) as Promise<ImportJob>,
     getImport: (id) => request<ImportJob>(`/api/v1/admin/imports/${encodeURIComponent(id)}`) as Promise<ImportJob>,
   };

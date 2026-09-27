@@ -1,7 +1,7 @@
-import { FormEvent, useEffect, useId, useRef, useState } from 'react';
-import { Check, ChevronDown, FolderInput, ImageIcon, RefreshCw, ShieldCheck, Trash2, UserRound } from 'lucide-react';
+import { FormEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Check, ChevronDown, FolderInput, ImageIcon, KeyRound, RefreshCw, ShieldCheck, Trash2, UserRound } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
-import type { ApiClient, BrokenPhotoScanResult, ImportJob, RescanJob, ThumbnailRebuildJob, ThumbnailRebuildMode, User } from '../../app/api';
+import { ApiError, type ApiClient, type Role, type BrokenPhotoScanResult, type ImportJob, type MaintenanceActivity, type RescanJob, type ThumbnailRebuildJob, type ThumbnailRebuildMode, type User } from '../../app/api';
 
 type UserPickerProps = {
   users: User[];
@@ -135,12 +135,21 @@ function UserPicker({ users, value, label, disabled = false, onChange }: UserPic
 }
 
 export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient; currentUser: User }) {
-  const { locale, t, formatCount } = useI18n();
+  const { t, formatCount } = useI18n();
   const [users, setUsers] = useState<User[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState<Role>('user');
+  const [notice, setNotice] = useState<string | null>(null);
+  const [panel, setPanel] = useState<{ userID: string; kind: 'password' | 'delete' } | null>(null);
+  const [resetPasswordValue, setResetPasswordValue] = useState('');
+  const [deleteAction, setDeleteAction] = useState<'retain' | 'transfer'>('retain');
+  const [transferTargetID, setTransferTargetID] = useState('');
+  const [ownPassword, setOwnPassword] = useState({ current: '', next: '', confirm: '' });
+  const [ownPasswordBusy, setOwnPasswordBusy] = useState(false);
+  const [ownPasswordMessage, setOwnPasswordMessage] = useState<{ text: string; ok: boolean } | null>(null);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [scanJob, setScanJob] = useState<RescanJob | null>(null);
   const [scanStarting, setScanStarting] = useState(false);
@@ -155,132 +164,58 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
   const [importJob, setImportJob] = useState<ImportJob | null>(null);
   const [importStarting, setImportStarting] = useState(false);
   const [cleanupScan, setCleanupScan] = useState<BrokenPhotoScanResult | null>(null);
-  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupAction, setCleanupAction] = useState<'scan' | 'clean' | null>(null);
   const [cleanupMessage, setCleanupMessage] = useState<string | null>(null);
+  const [otherTask, setOtherTask] = useState<MaintenanceActivity | null>(null);
   const scanActive = scanStarting || scanJob?.status === 'queued' || scanJob?.status === 'running';
   const thumbnailActive = thumbnailStarting || thumbnailJob?.status === 'queued' || thumbnailJob?.status === 'running';
   const importActive = importStarting || importJob?.status === 'queued' || importJob?.status === 'running';
-  const copy = locale === 'zh' ? {
-    importTitle: '迁移照片',
-    importSource: '导入目录',
-    importSourceHelp: '填写原图根目录下的相对路径。填写 . 会导入根目录中除 users、shared、隐藏目录之外的文件。',
-    organizeByDate: '按时间线重建文件夹结构',
-    organizeHelp: '开启后按拍摄日期（与时间线一致，UTC）整理为 Imported/年/月/日；缺少拍摄时间时使用文件修改时间。Live 图成对移动，同名文件自动加序号。关闭则保留原目录结构。',
-    targetUser: '目标用户',
-    startImport: '开始导入',
-    importing: '正在导入…',
-    queued: '导入已排队…',
-    complete: '导入完成',
-    failed: '导入失败',
-    startFailed: '无法启动导入，请检查目录和目标用户。',
-    pollFailed: '无法读取导入进度，正在重试…',
-    scanned: '已发现',
-    moved: '已移动',
-    skipped: '已跳过',
-    errors: '失败',
-    importWarning: '导入会把文件移动到目标用户的 Imported 文件夹，并保留原有子目录结构；已有同名目标文件不会被覆盖。',
-    thumbnailTitle: '缩略图缓存',
-    rebuildThumbnails: '重新生成缩略图',
-    rebuildingThumbnails: '正在重新生成…',
-    thumbnailModeLabel: '重建方式',
-    thumbnailIncremental: '增量',
-    thumbnailFull: '全量',
-    thumbnailIncrementalHelp: '仅处理缺失缩略图的照片，已有完整缓存会直接跳过。',
-    thumbnailFullHelp: '删除已有缩略图缓存，并为全部支持的照片和视频重新生成三档缩略图。',
-    thumbnailQueued: '缩略图重建已排队…',
-    thumbnailComplete: '缩略图重建完成',
-    thumbnailFailed: '缩略图重建失败',
-    thumbnailStartFailed: '无法启动缩略图重建。',
-    thumbnailPollFailed: '无法读取缩略图重建进度，正在重试…',
-    thumbnailWarning: '原图不会被修改。增量模式适合日常补齐缓存；全量模式适合缩略图规则变更或缓存异常后的彻底重建。',
-    thumbnailConfirm: '重新生成全部缩略图可能需要较长时间，确定继续吗？',
-    thumbnailTotal: '总数',
-    thumbnailProcessed: '已处理',
-    thumbnailRegenerated: '已生成',
-    resetIndex: '重置并重新扫描',
-    resetHelp: '清空照片索引、缩略图缓存和 Live Photo 派生文件后，从磁盘原图重新建立图库。原始照片/视频、用户和文件夹不会被删除；已有照片分享链接会失效。',
-    resetConfirm: '这会清空所有照片索引、缩略图缓存和 Live Photo 派生文件，然后从原始文件重新扫描。原始照片和视频不会被删除。已有照片分享链接会失效。确定继续吗？',
-    resetFailed: '无法启动图库重置，请确认当前没有其他扫描任务后重试。',
-    cleanupTitle: '坏照片清理',
-    scanBroken: '扫描坏照片',
-    scanningBroken: '正在扫描…',
-    cleanupBroken: (count: number) => `清理 ${formatCount(count)} 张`,
-    cleaningBroken: '正在清理…',
-    cleanupWarning: '只会清理原文件已丢失或 0 字节的明确坏照片。缩略图生成失败不会被删除；清理前会先显示扫描结果。',
-    cleanupNone: '未发现可安全清理的坏照片。',
-    cleanupFound: (count: number) => `发现 ${formatCount(count)} 张可安全清理的坏照片。`,
-    cleanupComplete: (count: number) => `已清理 ${formatCount(count)} 张坏照片。`,
-    cleanupPartial: (deleted: number, failed: number) => `已清理 ${formatCount(deleted)} 张，另有 ${formatCount(failed)} 张清理失败。`,
-    cleanupScanFailed: '无法扫描坏照片，请检查存储状态后重试。',
-    cleanupFailed: '清理坏照片失败，请重试。',
-    cleanupConfirm: (count: number) => `将永久删除 ${formatCount(count)} 张已确认损坏的照片及关联缓存，此操作无法撤销。确定继续吗？`,
-    missingReason: '原文件丢失',
-    emptyReason: '0 字节文件',
-  } : {
-    importTitle: 'Import photos',
-    importSource: 'Import directory',
-    importSourceHelp: 'Enter a path relative to the photo root. Use . to import root files except users, shared and hidden directories.',
-    organizeByDate: 'Organize folders by timeline date',
-    organizeHelp: 'Organize into Imported/year/month/day using the timeline capture date (UTC), falling back to file modification time. Live pairs stay together; duplicate names receive a suffix. Leave off to preserve source folders.',
-    targetUser: 'Target user',
-    startImport: 'Start import',
-    importing: 'Importing…',
-    queued: 'Import queued…',
-    complete: 'Import complete',
-    failed: 'Import failed',
-    startFailed: 'Unable to start import. Check the directory and target user.',
-    pollFailed: 'Unable to read import progress. Retrying…',
-    scanned: 'Discovered',
-    moved: 'Moved',
-    skipped: 'Skipped',
-    errors: 'Failed',
-    importWarning: 'Import moves files into the target user’s Imported folder while preserving subfolders. Existing destination files are never overwritten.',
-    thumbnailTitle: 'Thumbnail cache',
-    rebuildThumbnails: 'Regenerate thumbnails',
-    rebuildingThumbnails: 'Regenerating…',
-    thumbnailModeLabel: 'Rebuild mode',
-    thumbnailIncremental: 'Incremental',
-    thumbnailFull: 'Full',
-    thumbnailIncrementalHelp: 'Only repairs photos with missing thumbnail variants. Complete caches are skipped.',
-    thumbnailFullHelp: 'Deletes existing thumbnail caches and rebuilds all three sizes for every supported photo and video.',
-    thumbnailQueued: 'Thumbnail rebuild queued…',
-    thumbnailComplete: 'Thumbnail rebuild complete',
-    thumbnailFailed: 'Thumbnail rebuild failed',
-    thumbnailStartFailed: 'Unable to start the thumbnail rebuild.',
-    thumbnailPollFailed: 'Unable to read thumbnail rebuild progress. Retrying…',
-    thumbnailWarning: 'Original media is never modified. Use incremental mode for routine cache repair and full mode after thumbnail rule changes or cache corruption.',
-    thumbnailConfirm: 'Regenerating every thumbnail can take a while. Continue?',
-    thumbnailTotal: 'Total',
-    thumbnailProcessed: 'Processed',
-    thumbnailRegenerated: 'Regenerated',
-    resetIndex: 'Reset and rescan',
-    resetHelp: 'Clears the photo index, thumbnail cache and Live Photo derived files, then rebuilds the library from originals on disk. Original media, users and folders are preserved; existing photo share links become invalid.',
-    resetConfirm: 'Clear all photo index records, thumbnail caches and Live Photo derived files, then rescan the originals? Original photos and videos will not be deleted. Existing photo share links will become invalid.',
-    resetFailed: 'Unable to start the library reset. Make sure no other scan is running and try again.',
-    cleanupTitle: 'Broken photo cleanup',
-    scanBroken: 'Scan broken photos',
-    scanningBroken: 'Scanning…',
-    cleanupBroken: (count: number) => `Clean ${formatCount(count)}`,
-    cleaningBroken: 'Cleaning…',
-    cleanupWarning: 'Only clearly broken originals that are missing or zero bytes are removed. Thumbnail failures are never treated as broken photos. Results are shown before deletion.',
-    cleanupNone: 'No safely removable broken photos were found.',
-    cleanupFound: (count: number) => `Found ${formatCount(count)} safely removable broken photos.`,
-    cleanupComplete: (count: number) => `Cleaned ${formatCount(count)} broken photos.`,
-    cleanupPartial: (deleted: number, failed: number) => `Cleaned ${formatCount(deleted)} photos; ${formatCount(failed)} could not be removed.`,
-    cleanupScanFailed: 'Unable to scan for broken photos. Check storage health and try again.',
-    cleanupFailed: 'Unable to clean broken photos. Try again.',
-    cleanupConfirm: (count: number) => `Permanently delete ${formatCount(count)} confirmed broken photos and related cache files? This cannot be undone.`,
-    missingReason: 'Original file missing',
-    emptyReason: 'Zero-byte file',
-  };
+  // The server admits one maintenance task at a time; mirror that here.
+  const maintenanceBusy = scanActive || thumbnailActive || importActive || cleanupAction !== null || otherTask !== null;
+  const visibleUsers = users.filter((user) => !user.deleted_at);
+  const importTargets = visibleUsers.filter((user) => user.is_active);
+  const importTargetID = importTargets.some((user) => user.id === importUserID) ? importUserID : importTargets[0]?.id ?? '';
 
   useEffect(() => {
     if (currentUser.role !== 'admin') return;
-    void api.listUsers().then((response) => {
-      setUsers(response.items);
-      if (!response.items.some((user) => user.id === importUserID)) setImportUserID(response.items[0]?.id ?? currentUser.id);
-    }).catch(() => setMessage(t('settings.onlyAdmins')));
-  }, [api, currentUser.id, currentUser.role, importUserID, t]);
+    void api.listUsers().then((response) => setUsers(response.items)).catch(() => setMessage(t('settings.usersLoadFailed')));
+  }, [api, currentUser.role, t]);
+
+  // Re-attach to a maintenance task that is already running (for example after
+  // a page reload) so its progress is shown and conflicting actions stay locked.
+  const syncMaintenance = useCallback(async () => {
+    try {
+      const { active } = await api.getMaintenance();
+      if (!active) {
+        setOtherTask(null);
+        return;
+      }
+      if (active.job_id && active.kind === 'rescan') setScanJob(await api.getRescan(active.job_id));
+      else if (active.job_id && active.kind === 'thumbnail_rebuild') setThumbnailJob(await api.getThumbnailRebuild(active.job_id));
+      else if (active.job_id && active.kind === 'import') setImportJob(await api.getImport(active.job_id));
+      else {
+        setOtherTask(active);
+        return;
+      }
+      setOtherTask(null);
+    } catch {
+      // Keep the current view; the next action reports its own error.
+    }
+  }, [api]);
+
+  useEffect(() => {
+    if (currentUser.role === 'admin') void syncMaintenance();
+  }, [currentUser.role, syncMaintenance]);
+
+  useEffect(() => {
+    if (!otherTask) return;
+    const timer = window.setTimeout(() => void syncMaintenance(), 2000);
+    return () => window.clearTimeout(timer);
+  }, [otherTask, syncMaintenance]);
+
+  function isConflict(error: unknown) {
+    return error instanceof ApiError && error.status === 409;
+  }
 
   useEffect(() => {
     const id = scanJob?.id ?? '';
@@ -324,7 +259,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
         if (next.status === 'queued' || next.status === 'running') timer = window.setTimeout(() => void poll(), 1000);
       } catch {
         if (disposed) return;
-        setThumbnailMessage(copy.thumbnailPollFailed);
+        setThumbnailMessage(t('settings.thumbnail.pollFailed'));
         timer = window.setTimeout(() => void poll(), 1000);
       }
     }
@@ -334,7 +269,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
       disposed = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [api, thumbnailJob?.id, copy.thumbnailPollFailed]);
+  }, [api, thumbnailJob?.id, t]);
 
   useEffect(() => {
     const id = importJob?.id ?? '';
@@ -351,7 +286,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
         if (next.status === 'queued' || next.status === 'running') timer = window.setTimeout(() => void poll(), 1000);
       } catch {
         if (disposed) return;
-        setImportMessage(copy.pollFailed);
+        setImportMessage(t('settings.import.pollFailed'));
         timer = window.setTimeout(() => void poll(), 1000);
       }
     }
@@ -361,29 +296,75 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
       disposed = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [api, importJob?.id, copy.pollFailed]);
+  }, [api, importJob?.id, t]);
 
-  async function toggle(user: User) {
+  function userErrorMessage(error: unknown, fallback: string) {
+    const code = error instanceof ApiError ? error.code : '';
+    switch (code) {
+      case 'USERNAME_TAKEN': return t('settings.usernameTaken');
+      case 'USERNAME_INVALID': return t('settings.usernameInvalid');
+      case 'PASSWORD_INVALID': return t('settings.passwordInvalid');
+      case 'LAST_ADMIN': return t('settings.lastAdmin');
+      default: return fallback;
+    }
+  }
+
+  function openPanel(user: User, kind: 'password' | 'delete') {
+    setPanel(panel?.userID === user.id && panel.kind === kind ? null : { userID: user.id, kind });
+    setResetPasswordValue('');
+    setDeleteAction('retain');
+    setTransferTargetID('');
+    setMessage(null);
+    setNotice(null);
+  }
+
+  async function updateMember(user: User, input: Parameters<ApiClient['updateUser']>[1], fallback: string, done?: string) {
     setBusy(true);
     setMessage(null);
+    setNotice(null);
     try {
-      const updated = await api.updateUser(user.id, { is_active: !user.is_active });
+      const updated = await api.updateUser(user.id, input);
       setUsers((current) => current.map((item) => item.id === updated.id ? updated : item));
-    } catch {
-      setMessage(t('settings.accountUpdateFailed'));
+      if (done) setNotice(done);
+      return true;
+    } catch (error) {
+      setMessage(userErrorMessage(error, fallback));
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
-  async function remove(user: User) {
-    if (!window.confirm(t('settings.confirmDelete', { name: user.username }))) return;
+  function toggle(user: User) {
+    void updateMember(user, { is_active: !user.is_active }, t('settings.accountUpdateFailed'));
+  }
+
+  function changeRole(user: User) {
+    void updateMember(user, { role: user.role === 'admin' ? 'user' : 'admin' }, t('settings.accountUpdateFailed'));
+  }
+
+  async function resetMemberPassword(event: FormEvent, user: User) {
+    event.preventDefault();
+    if (!resetPasswordValue) return;
+    if (await updateMember(user, { password: resetPasswordValue }, t('settings.accountUpdateFailed'), t('settings.passwordResetDone', { name: user.username }))) {
+      setPanel(null);
+      setResetPasswordValue('');
+    }
+  }
+
+  async function remove(user: User, transferTarget?: User) {
+    if (deleteAction === 'transfer' && !transferTarget) return;
     setBusy(true);
+    setMessage(null);
+    setNotice(null);
     try {
-      await api.deleteUser(user.id);
+      await api.deleteUser(user.id, transferTarget ? { photo_action: 'transfer', transfer_to_user_id: transferTarget.id } : { photo_action: 'retain' });
       setUsers((current) => current.filter((item) => item.id !== user.id));
-    } catch {
-      setMessage(t('settings.accountDeleteFailed'));
+      setPanel(null);
+      setNotice(transferTarget ? t('settings.deleteTransferred', { name: user.username, target: transferTarget.username }) : t('settings.deleteDone', { name: user.username }));
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'MAINTENANCE_IN_PROGRESS') void syncMaintenance();
+      else setMessage(userErrorMessage(error, t('settings.accountDeleteFailed')));
     } finally {
       setBusy(false);
     }
@@ -393,104 +374,147 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     event.preventDefault();
     if (!newUsername.trim() || !newPassword) return;
     setBusy(true);
+    setMessage(null);
+    setNotice(null);
     try {
-      const user = await api.createUser({ username: newUsername.trim(), password: newPassword, role: 'user' });
+      const user = await api.createUser({ username: newUsername.trim(), password: newPassword, role: newRole });
       setUsers((current) => [...current, user]);
       setNewUsername('');
       setNewPassword('');
-    } catch {
-      setMessage(t('settings.accountCreateFailed'));
+      setNewRole('user');
+    } catch (error) {
+      setMessage(userErrorMessage(error, t('settings.accountCreateFailed')));
     } finally {
       setBusy(false);
     }
   }
 
+  async function changeOwnPassword(event: FormEvent) {
+    event.preventDefault();
+    if (!ownPassword.current || !ownPassword.next) return;
+    if (ownPassword.next !== ownPassword.confirm) {
+      setOwnPasswordMessage({ text: t('settings.password.mismatch'), ok: false });
+      return;
+    }
+    setOwnPasswordBusy(true);
+    setOwnPasswordMessage(null);
+    try {
+      await api.changePassword(ownPassword.current, ownPassword.next);
+      setOwnPassword({ current: '', next: '', confirm: '' });
+      setOwnPasswordMessage({ text: t('settings.password.changed'), ok: true });
+    } catch (error) {
+      const code = error instanceof ApiError ? error.code : '';
+      setOwnPasswordMessage({
+        text: code === 'CURRENT_PASSWORD_INCORRECT' ? t('settings.password.incorrect')
+          : code === 'PASSWORD_INVALID' ? t('settings.passwordInvalid')
+            : code === 'LOGIN_RATE_LIMITED' ? t('settings.password.rateLimited')
+              : t('settings.password.failed'),
+        ok: false,
+      });
+    } finally {
+      setOwnPasswordBusy(false);
+    }
+  }
+
   async function rescan() {
-    if (scanActive || importActive) return;
+    if (maintenanceBusy) return;
     setScanStarting(true);
     setScanMessage(null);
     try {
       setScanJob(await api.startRescan());
-    } catch {
+    } catch (error) {
       setScanJob(null);
-      setScanMessage(t('settings.scanFailed'));
+      if (isConflict(error)) void syncMaintenance();
+      else setScanMessage(t('settings.scanFailed'));
     } finally {
       setScanStarting(false);
     }
   }
 
   async function resetLibraryIndex() {
-    if (scanActive || thumbnailActive || importActive || cleanupBusy) return;
-    if (!window.confirm(copy.resetConfirm)) return;
+    if (maintenanceBusy) return;
+    if (!window.confirm(t('settings.reset.confirm'))) return;
     setScanStarting(true);
     setScanMessage(null);
     setCleanupScan(null);
     try {
       setScanJob(await api.resetLibraryIndex());
-    } catch {
+    } catch (error) {
       setScanJob(null);
-      setScanMessage(copy.resetFailed);
+      if (isConflict(error)) void syncMaintenance();
+      else setScanMessage(t('settings.reset.failed'));
     } finally {
       setScanStarting(false);
     }
   }
 
   async function rebuildThumbnails() {
-    if (thumbnailActive || scanActive) return;
-    if (thumbnailMode === 'full' && !window.confirm(copy.thumbnailConfirm)) return;
+    if (maintenanceBusy) return;
+    if (thumbnailMode === 'full' && !window.confirm(t('settings.thumbnail.confirm'))) return;
     setThumbnailStarting(true);
     setThumbnailMessage(null);
     try {
       setThumbnailJob(await api.startThumbnailRebuild(thumbnailMode));
-    } catch {
+    } catch (error) {
       setThumbnailJob(null);
-      setThumbnailMessage(copy.thumbnailStartFailed);
+      if (isConflict(error)) void syncMaintenance();
+      else setThumbnailMessage(t('settings.thumbnail.startFailed'));
     } finally {
       setThumbnailStarting(false);
     }
   }
 
+  function describeScan(result: BrokenPhotoScanResult) {
+    const found = result.broken === 0 ? t('settings.cleanup.none') : t('settings.cleanup.found', { count: formatCount(result.broken) });
+    return result.skipped ? `${found} ${t('settings.cleanup.skipped', { count: formatCount(result.skipped) })}` : found;
+  }
+
   async function scanBrokenPhotos() {
-    if (cleanupBusy || scanActive) return;
-    setCleanupBusy(true);
+    if (maintenanceBusy) return;
+    setCleanupAction('scan');
     setCleanupMessage(null);
     try {
       const result = await api.scanBrokenPhotos();
       setCleanupScan(result);
-      setCleanupMessage(result.broken === 0 ? copy.cleanupNone : copy.cleanupFound(result.broken));
-    } catch {
+      setCleanupMessage(describeScan(result));
+    } catch (error) {
       setCleanupScan(null);
-      setCleanupMessage(copy.cleanupScanFailed);
+      if (isConflict(error)) void syncMaintenance();
+      else setCleanupMessage(t('settings.cleanup.scanFailed'));
     } finally {
-      setCleanupBusy(false);
+      setCleanupAction(null);
     }
   }
 
   async function cleanupBrokenPhotos() {
-    if (cleanupBusy || scanActive || !cleanupScan?.broken || !window.confirm(copy.cleanupConfirm(cleanupScan.broken))) return;
-    setCleanupBusy(true);
+    if (maintenanceBusy || !cleanupScan?.broken || !window.confirm(t('settings.cleanup.confirm', { count: formatCount(cleanupScan.broken) }))) return;
+    setCleanupAction('clean');
     setCleanupMessage(null);
     try {
-      const result = await api.cleanupBrokenPhotos();
-      setCleanupMessage(result.failed > 0 ? copy.cleanupPartial(result.deleted, result.failed) : copy.cleanupComplete(result.deleted));
-      setCleanupScan(await api.scanBrokenPhotos());
-    } catch {
-      setCleanupMessage(copy.cleanupFailed);
+      // Only the photos the administrator just reviewed are sent; the server
+      // re-verifies each one and leaves anything no longer broken untouched.
+      const result = await api.cleanupBrokenPhotos(cleanupScan.items.map((item) => item.id));
+      setCleanupMessage(result.failed > 0 ? t('settings.cleanup.partial', { deleted: formatCount(result.deleted), failed: formatCount(result.failed) }) : t('settings.cleanup.completed', { count: formatCount(result.deleted) }));
+      setCleanupScan(null);
+    } catch (error) {
+      if (isConflict(error)) void syncMaintenance();
+      else setCleanupMessage(t('settings.cleanup.failed'));
     } finally {
-      setCleanupBusy(false);
+      setCleanupAction(null);
     }
   }
 
   async function startImport(event: FormEvent) {
     event.preventDefault();
-    if (importActive || scanActive || !importUserID) return;
+    if (maintenanceBusy || !importTargetID) return;
     setImportStarting(true);
     setImportMessage(null);
     try {
-      setImportJob(await api.startImport({ source_path: importSource.trim() || '.', user_id: importUserID, organize_by_date: organizeByDate }));
-    } catch {
+      setImportJob(await api.startImport({ source_path: importSource.trim() || '.', user_id: importTargetID, organize_by_date: organizeByDate }));
+    } catch (error) {
       setImportJob(null);
-      setImportMessage(copy.startFailed);
+      if (isConflict(error)) void syncMaintenance();
+      else setImportMessage(t('settings.import.startFailed'));
     } finally {
       setImportStarting(false);
     }
@@ -508,23 +532,23 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
     : scanJob?.phase === 'indexing' && (scanJob.total ?? 0) > 0
       ? Math.min(99, Math.round(((scanJob.processed ?? 0) / scanJob.total!) * 100)) : undefined;
   const thumbnailStatusLabel = thumbnailJob?.status === 'running'
-    ? copy.rebuildingThumbnails
+    ? t('settings.thumbnail.running')
     : thumbnailJob?.status === 'completed'
-      ? copy.thumbnailComplete
+      ? t('settings.thumbnail.completed')
       : thumbnailJob?.status === 'failed'
-        ? copy.thumbnailFailed
-        : copy.thumbnailQueued;
+        ? t('settings.thumbnail.failed')
+        : t('settings.thumbnail.queued');
   const thumbnailCounts = thumbnailJob?.counts;
   const thumbnailPercent = thumbnailCounts && thumbnailCounts.total > 0
     ? Math.min(100, Math.round((thumbnailCounts.processed / thumbnailCounts.total) * 100))
     : thumbnailJob?.status === 'completed' ? 100 : 0;
   const importStatusLabel = importJob?.status === 'running'
-    ? copy.importing
+    ? t('settings.import.running')
     : importJob?.status === 'completed'
-      ? copy.complete
+      ? t('settings.import.completed')
       : importJob?.status === 'failed'
-        ? copy.failed
-        : copy.queued;
+        ? t('settings.import.failed')
+        : t('settings.import.queued');
 
   return <section className="settings-workspace" aria-labelledby="settings-title">
     <div className="workspace-heading">
@@ -535,41 +559,84 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
       <span className="avatar">{currentUser.username.slice(0, 1).toUpperCase()}</span>
       <div><strong>{currentUser.username}</strong><small>{currentUser.role === 'admin' ? t('shell.administrator') : t('shell.familyMember')}</small></div>
     </div>
+    <div className="settings-section-heading"><h2>{t('settings.password.title')}</h2><KeyRound size={17} /></div>
+    <form className="password-form" onSubmit={changeOwnPassword}>
+      <input aria-label={t('settings.password.current')} placeholder={t('settings.password.current')} type="password" autoComplete="current-password" value={ownPassword.current} onChange={(event) => setOwnPassword({ ...ownPassword, current: event.target.value })} />
+      <input aria-label={t('settings.password.new')} placeholder={t('settings.password.new')} type="password" autoComplete="new-password" minLength={12} maxLength={256} value={ownPassword.next} onChange={(event) => setOwnPassword({ ...ownPassword, next: event.target.value })} />
+      <input aria-label={t('settings.password.confirm')} placeholder={t('settings.password.confirm')} type="password" autoComplete="new-password" minLength={12} maxLength={256} value={ownPassword.confirm} onChange={(event) => setOwnPassword({ ...ownPassword, confirm: event.target.value })} />
+      <button className="button button-secondary" disabled={ownPasswordBusy}>{t('settings.password.save')}</button>
+    </form>
+    {ownPasswordMessage && <p className="inline-state" role={ownPasswordMessage.ok ? 'status' : 'alert'}>{ownPasswordMessage.text}</p>}
     {currentUser.role === 'admin' && <>
       <div className="settings-section-heading"><h2>{t('settings.familyAccounts')}</h2><span><ShieldCheck size={15} /> {t('settings.adminAccess')}</span></div>
       {message && <p className="inline-state" role="alert">{message}</p>}
-      <form className="new-user-form" onSubmit={create}>
+      {notice && <p className="inline-state" role="status">{notice}</p>}
+      <form className="new-user-form with-role" onSubmit={create}>
         <input aria-label={t('settings.newUsername')} placeholder={t('settings.newUsername')} value={newUsername} onChange={(event) => setNewUsername(event.target.value)} />
-        <input aria-label={t('settings.temporaryPassword')} type="password" placeholder={t('settings.temporaryPassword')} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+        <input aria-label={t('settings.temporaryPassword')} type="password" minLength={12} maxLength={256} placeholder={t('settings.temporaryPassword')} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+        <div className="thumbnail-mode-toggle" role="group" aria-label={t('settings.role')}>
+          {(['user', 'admin'] as const).map((role) => <button
+            key={role}
+            type="button"
+            className={`thumbnail-mode-button ${newRole === role ? 'is-selected' : ''}`}
+            aria-pressed={newRole === role}
+            onClick={() => setNewRole(role)}
+          >{role === 'admin' ? t('settings.roleAdmin') : t('settings.roleMember')}</button>)}
+        </div>
         <button className="button button-secondary" disabled={busy}>{t('settings.addMember')}</button>
       </form>
       <div className="user-list">
-        {users.map((user) => <div className="user-row" key={user.id}>
-          <div><strong>{user.username}</strong><small>{user.role === 'admin' ? t('shell.administrator') : t('shell.familyMember')} · {user.is_active ? t('settings.active') : t('settings.disabled')}</small></div>
-          <button className="button button-secondary" disabled={busy || user.id === currentUser.id} onClick={() => void toggle(user)}>{user.is_active ? t('settings.disable') : t('settings.enable')}</button>
-          <button className="text-button" disabled={busy || user.id === currentUser.id} onClick={() => void remove(user)}>{t('settings.delete')}</button>
-        </div>)}
+        {visibleUsers.map((user) => {
+          const self = user.id === currentUser.id;
+          const transferTargets = importTargets.filter((item) => item.id !== user.id);
+          const transferTarget = transferTargets.find((item) => item.id === transferTargetID) ?? transferTargets[0];
+          return <div key={user.id}>
+            <div className="user-row">
+              <div><strong>{user.username}</strong><small>{user.role === 'admin' ? t('shell.administrator') : t('shell.familyMember')} · {user.is_active ? t('settings.active') : t('settings.disabled')}</small></div>
+              <button className="text-button" disabled={busy || self} onClick={() => changeRole(user)}>{user.role === 'admin' ? t('settings.makeMember') : t('settings.makeAdmin')}</button>
+              <button className="text-button" disabled={busy} aria-expanded={panel?.userID === user.id && panel.kind === 'password'} onClick={() => openPanel(user, 'password')}>{t('settings.resetPassword')}</button>
+              <button className="button button-secondary" disabled={busy || self} onClick={() => toggle(user)}>{user.is_active ? t('settings.disable') : t('settings.enable')}</button>
+              <button className="text-button" disabled={busy || self} aria-expanded={panel?.userID === user.id && panel.kind === 'delete'} onClick={() => openPanel(user, 'delete')}>{t('settings.delete')}</button>
+            </div>
+            {panel?.userID === user.id && panel.kind === 'password' && <form className="user-row-panel" onSubmit={(event) => void resetMemberPassword(event, user)}>
+              <input aria-label={t('settings.resetPasswordFor', { name: user.username })} placeholder={t('settings.resetPasswordFor', { name: user.username })} type="password" autoComplete="new-password" minLength={12} maxLength={256} value={resetPasswordValue} onChange={(event) => setResetPasswordValue(event.target.value)} />
+              <button className="button button-secondary" disabled={busy || !resetPasswordValue}>{t('common.save')}</button>
+              <button className="text-button" type="button" onClick={() => setPanel(null)}>{t('common.cancel')}</button>
+            </form>}
+            {panel?.userID === user.id && panel.kind === 'delete' && <div className="user-row-panel" role="group" aria-label={t('settings.deletePrompt', { name: user.username })}>
+              <p>{t('settings.deletePrompt', { name: user.username })}</p>
+              <div className="thumbnail-mode-toggle" role="group">
+                <button type="button" className={`thumbnail-mode-button ${deleteAction === 'retain' ? 'is-selected' : ''}`} aria-pressed={deleteAction === 'retain'} onClick={() => setDeleteAction('retain')}>{t('settings.deleteRetain')}</button>
+                <button type="button" className={`thumbnail-mode-button ${deleteAction === 'transfer' ? 'is-selected' : ''}`} aria-pressed={deleteAction === 'transfer'} disabled={transferTargets.length === 0} onClick={() => setDeleteAction('transfer')}>{t('settings.deleteTransfer')}</button>
+              </div>
+              {deleteAction === 'transfer' && <UserPicker users={transferTargets} value={transferTarget?.id ?? ''} label={t('settings.deleteTransferTarget')} disabled={busy} onChange={setTransferTargetID} />}
+              <button className="button button-secondary" disabled={busy || (maintenanceBusy && deleteAction === 'transfer')} onClick={() => void remove(user, deleteAction === 'transfer' ? transferTarget : undefined)}><Trash2 size={15} /> {t('settings.deleteConfirm')}</button>
+              <button className="text-button" type="button" onClick={() => setPanel(null)}>{t('common.cancel')}</button>
+            </div>}
+          </div>;
+        })}
       </div>
 
-      <div className="settings-section-heading scan-heading"><h2>{copy.importTitle}</h2><FolderInput size={17} /></div>
+      {otherTask && <p className="inline-state" role="status">{t('settings.maintenance.busy', { task: t(`settings.maintenance.task.${otherTask.kind}`) })}</p>}
+      <div className="settings-section-heading scan-heading"><h2>{t('settings.import.title')}</h2><FolderInput size={17} /></div>
       <label className="import-organize-option">
-        <input type="checkbox" checked={organizeByDate} onChange={(event) => setOrganizeByDate(event.target.checked)} disabled={importActive || scanActive} aria-describedby="import-organize-help" />
-        <span>{copy.organizeByDate}</span>
+        <input type="checkbox" checked={organizeByDate} onChange={(event) => setOrganizeByDate(event.target.checked)} disabled={maintenanceBusy} aria-describedby="import-organize-help" />
+        <span>{t('settings.import.organizeByDate')}</span>
       </label>
-      <p id="import-organize-help" className="inline-state">{copy.organizeHelp}</p>
+      <p id="import-organize-help" className="inline-state">{t('settings.import.organizeHelp')}</p>
       <form className="new-user-form" onSubmit={startImport}>
-        <input aria-label={copy.importSource} placeholder="." value={importSource} onChange={(event) => setImportSource(event.target.value)} disabled={importActive || scanActive} />
+        <input aria-label={t('settings.import.source')} placeholder="." value={importSource} onChange={(event) => setImportSource(event.target.value)} disabled={maintenanceBusy} />
         <UserPicker
-          users={users.filter((user) => user.is_active)}
-          value={importUserID}
-          label={copy.targetUser}
-          disabled={importActive || scanActive}
+          users={importTargets}
+          value={importTargetID}
+          label={t('settings.import.targetUser')}
+          disabled={maintenanceBusy}
           onChange={setImportUserID}
         />
-        <button className="button button-secondary" disabled={importActive || scanActive || !importUserID}>{importActive ? copy.importing : copy.startImport}</button>
+        <button className="button button-secondary" disabled={maintenanceBusy || !importTargetID}>{importActive ? t('settings.import.running') : t('settings.import.start')}</button>
       </form>
-      <p className="inline-state">{copy.importSourceHelp}</p>
-      <p className="inline-state">{copy.importWarning}</p>
+      <p className="inline-state">{t('settings.import.sourceHelp')}</p>
+      <p className="inline-state">{t('settings.import.warning')}</p>
       {importMessage && <p className="inline-state" role="alert">{importMessage}</p>}
       {importJob && <div className="scan-progress" role="status" aria-live="polite">
         <div className="scan-progress-heading"><span>{importStatusLabel}</span><span>{formatCount(importJob.counts.scanned)}</span></div>
@@ -577,21 +644,21 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
           <span className={importJob.status === 'completed' ? 'is-complete' : ''} />
         </div>
         <div className="scan-progress-counts">
-          <span>{copy.scanned}: {formatCount(importJob.counts.scanned)}</span>
-          <span>{copy.moved}: {formatCount(importJob.counts.moved)}</span>
-          <span>{copy.skipped}: {formatCount(importJob.counts.skipped)}</span>
-          <span>{copy.errors}: {formatCount(importJob.counts.failed)}</span>
+          <span>{t('settings.import.scanned')}: {formatCount(importJob.counts.scanned)}</span>
+          <span>{t('settings.import.moved')}: {formatCount(importJob.counts.moved)}</span>
+          <span>{t('settings.import.skipped')}: {formatCount(importJob.counts.skipped)}</span>
+          <span>{t('settings.import.errors')}: {formatCount(importJob.counts.failed)}</span>
         </div>
       </div>}
 
       <div className="settings-section-heading scan-heading">
         <h2>{t('settings.libraryIndex')}</h2>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button className="button button-secondary" disabled={scanActive || importActive} onClick={() => void rescan()}><RefreshCw size={15} /> {t('settings.rescanFiles')}</button>
-          <button className="button button-secondary" disabled={scanActive || thumbnailActive || importActive || cleanupBusy} onClick={() => void resetLibraryIndex()}><Trash2 size={15} /> {copy.resetIndex}</button>
+          <button className="button button-secondary" disabled={maintenanceBusy} onClick={() => void rescan()}><RefreshCw size={15} /> {t('settings.rescanFiles')}</button>
+          <button className="button button-secondary" disabled={maintenanceBusy} onClick={() => void resetLibraryIndex()}><Trash2 size={15} /> {t('settings.reset.action')}</button>
         </div>
       </div>
-      <p className="inline-state">{copy.resetHelp}</p>
+      <p className="inline-state">{t('settings.reset.help')}</p>
       {scanMessage && <p className="inline-state" role="alert">{scanMessage}</p>}
       {scanJob && counts && <div className="scan-progress" role="status" aria-live="polite">
         <div className="scan-progress-heading"><span>{scanStatusLabel}</span><span>{scanJob.total !== undefined && scanJob.phase !== 'discovering' && scanJob.phase !== 'resetting' ? `${formatCount(scanJob.processed ?? 0)} / ${formatCount(scanJob.total)}` : formatCount(counts.scanned)}</span></div>
@@ -608,29 +675,29 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
       </div>}
 
       <div className="settings-section-heading scan-heading">
-        <h2>{copy.thumbnailTitle}</h2>
+        <h2>{t('settings.thumbnail.title')}</h2>
         <div className="thumbnail-actions">
-          <div className="thumbnail-mode-toggle" role="group" aria-label={copy.thumbnailModeLabel}>
+          <div className="thumbnail-mode-toggle" role="group" aria-label={t('settings.thumbnail.modeLabel')}>
             <button
               type="button"
               className={`thumbnail-mode-button ${thumbnailMode === 'incremental' ? 'is-selected' : ''}`}
               aria-pressed={thumbnailMode === 'incremental'}
-              disabled={thumbnailActive || scanActive}
+              disabled={maintenanceBusy}
               onClick={() => setThumbnailMode('incremental')}
-            >{copy.thumbnailIncremental}</button>
+            >{t('settings.thumbnail.incremental')}</button>
             <button
               type="button"
               className={`thumbnail-mode-button ${thumbnailMode === 'full' ? 'is-selected' : ''}`}
               aria-pressed={thumbnailMode === 'full'}
-              disabled={thumbnailActive || scanActive}
+              disabled={maintenanceBusy}
               onClick={() => setThumbnailMode('full')}
-            >{copy.thumbnailFull}</button>
+            >{t('settings.thumbnail.full')}</button>
           </div>
-          <button className="button button-secondary" disabled={thumbnailActive || scanActive} onClick={() => void rebuildThumbnails()}><ImageIcon size={15} /> {thumbnailActive ? copy.rebuildingThumbnails : copy.rebuildThumbnails}</button>
+          <button className="button button-secondary" disabled={maintenanceBusy} onClick={() => void rebuildThumbnails()}><ImageIcon size={15} /> {thumbnailActive ? t('settings.thumbnail.running') : t('settings.thumbnail.rebuild')}</button>
         </div>
       </div>
-      <p className="inline-state">{thumbnailMode === 'incremental' ? copy.thumbnailIncrementalHelp : copy.thumbnailFullHelp}</p>
-      <p className="inline-state">{copy.thumbnailWarning}</p>
+      <p className="inline-state">{thumbnailMode === 'incremental' ? t('settings.thumbnail.incrementalHelp') : t('settings.thumbnail.fullHelp')}</p>
+      <p className="inline-state">{t('settings.thumbnail.warning')}</p>
       {thumbnailMessage && <p className="inline-state" role="alert">{thumbnailMessage}</p>}
       {thumbnailJob && thumbnailCounts && <div className="scan-progress" role="status" aria-live="polite">
         <div className="scan-progress-heading"><span>{thumbnailStatusLabel}</span><span>{thumbnailPercent}%</span></div>
@@ -638,29 +705,29 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
           <span className={thumbnailJob.status === 'completed' ? 'is-complete' : ''} style={{ width: `${thumbnailPercent}%` }} />
         </div>
         <div className="scan-progress-counts">
-          <span>{copy.thumbnailTotal}: {formatCount(thumbnailCounts.total)}</span>
-          <span>{copy.thumbnailProcessed}: {formatCount(thumbnailCounts.processed)}</span>
-          <span>{copy.thumbnailRegenerated}: {formatCount(thumbnailCounts.regenerated)}</span>
-          <span>{copy.errors}: {formatCount(thumbnailCounts.failed)}</span>
+          <span>{t('settings.thumbnail.total')}: {formatCount(thumbnailCounts.total)}</span>
+          <span>{t('settings.thumbnail.processed')}: {formatCount(thumbnailCounts.processed)}</span>
+          <span>{t('settings.thumbnail.regenerated')}: {formatCount(thumbnailCounts.regenerated)}</span>
+          <span>{t('settings.import.errors')}: {formatCount(thumbnailCounts.failed)}</span>
         </div>
       </div>}
 
       <div className="settings-section-heading scan-heading">
-        <h2>{copy.cleanupTitle}</h2>
+        <h2>{t('settings.cleanup.title')}</h2>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button className="button button-secondary" disabled={cleanupBusy || scanActive} onClick={() => void scanBrokenPhotos()}><RefreshCw size={15} /> {cleanupBusy ? copy.scanningBroken : copy.scanBroken}</button>
-          {cleanupScan && cleanupScan.broken > 0 && <button className="button button-secondary" disabled={cleanupBusy || scanActive} onClick={() => void cleanupBrokenPhotos()}><Trash2 size={15} /> {cleanupBusy ? copy.cleaningBroken : copy.cleanupBroken(cleanupScan.broken)}</button>}
+          <button className="button button-secondary" disabled={maintenanceBusy} onClick={() => void scanBrokenPhotos()}><RefreshCw size={15} /> {cleanupAction === 'scan' ? t('settings.cleanup.scanning') : t('settings.cleanup.scan')}</button>
+          {cleanupScan && cleanupScan.broken > 0 && <button className="button button-secondary" disabled={maintenanceBusy} onClick={() => void cleanupBrokenPhotos()}><Trash2 size={15} /> {cleanupAction === 'clean' ? t('settings.cleanup.cleaning') : t('settings.cleanup.clean', { count: formatCount(cleanupScan.broken) })}</button>}
         </div>
       </div>
-      <p className="inline-state">{copy.cleanupWarning}</p>
+      <p className="inline-state">{t('settings.cleanup.warning')}</p>
       {cleanupMessage && <p className="inline-state" role="status">{cleanupMessage}</p>}
       {cleanupScan && cleanupScan.broken > 0 && <div className="scan-progress" aria-live="polite">
         <div className="scan-progress-counts">
-          <span>{copy.scanned}: {formatCount(cleanupScan.scanned)}</span>
-          <span>{copy.cleanupTitle}: {formatCount(cleanupScan.broken)}</span>
+          <span>{t('settings.import.scanned')}: {formatCount(cleanupScan.scanned)}</span>
+          <span>{t('settings.cleanup.title')}: {formatCount(cleanupScan.broken)}</span>
         </div>
         <div className="scan-progress-counts">
-          {cleanupScan.items.slice(0, 8).map((item) => <span key={item.id}>{item.filename} · {item.reason === 'missing' ? copy.missingReason : copy.emptyReason}</span>)}
+          {cleanupScan.items.slice(0, 8).map((item) => <span key={item.id}>{item.filename} · {item.reason === 'missing' ? t('settings.cleanup.missingReason') : t('settings.cleanup.emptyReason')}</span>)}
           {cleanupScan.items.length > 8 && <span>+{formatCount(cleanupScan.items.length - 8)}</span>}
         </div>
       </div>}

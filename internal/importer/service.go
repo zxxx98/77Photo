@@ -14,6 +14,7 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/indexer"
+	"github.com/zxxx98/77Photo/internal/maintenance"
 	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/storage"
 )
@@ -70,14 +71,15 @@ type importCandidate struct {
 }
 
 type Service struct {
-	db         *sql.DB
-	storage    storage.Store
-	indexer    *indexer.Service
-	mediaTools *media.Tools
-	lifecycle  context.Context
-	mu         sync.RWMutex
-	job        *Job
-	done       chan struct{}
+	db          *sql.DB
+	storage     storage.Store
+	indexer     *indexer.Service
+	mediaTools  *media.Tools
+	lifecycle   context.Context
+	mu          sync.RWMutex
+	job         *Job
+	done        chan struct{}
+	maintenance *maintenance.Lock
 }
 
 func NewService(db *sql.DB, store storage.Store, indexerService *indexer.Service) *Service {
@@ -85,6 +87,8 @@ func NewService(db *sql.DB, store storage.Store, indexerService *indexer.Service
 }
 
 func (s *Service) SetMediaTools(tools *media.Tools) { s.mediaTools = tools }
+
+func (s *Service) SetMaintenanceLock(lock *maintenance.Lock) { s.maintenance = lock }
 
 func NewServiceWithContext(ctx context.Context, db *sql.DB, store storage.Store, indexerService *indexer.Service) *Service {
 	service := NewService(db, store, indexerService)
@@ -118,6 +122,11 @@ func (s *Service) StartWithOptions(ctx context.Context, principal acl.Principal,
 	}
 	now := time.Now().UTC()
 	job := &Job{ID: fmt.Sprintf("import_%d", now.UnixNano()), Status: StatusQueued, SourcePath: filepath.ToSlash(sourcePath), UserID: userID, StartedAt: now, OrganizeByDate: organizeByDate}
+	release, err := s.maintenance.Acquire(maintenance.KindImport, job.ID)
+	if err != nil {
+		s.mu.Unlock()
+		return Job{}, err
+	}
 	s.job = job
 	done := make(chan struct{})
 	s.done = done
@@ -128,7 +137,7 @@ func (s *Service) StartWithOptions(ctx context.Context, principal acl.Principal,
 	if runContext == nil {
 		runContext = context.WithoutCancel(ctx)
 	}
-	go s.run(runContext, principal, job, done)
+	go s.run(runContext, principal, job, done, release)
 	return snapshot, nil
 }
 
@@ -153,13 +162,14 @@ func (s *Service) Wait() {
 	}
 }
 
-func (s *Service) run(ctx context.Context, principal acl.Principal, job *Job, done chan struct{}) {
+func (s *Service) run(ctx context.Context, principal acl.Principal, job *Job, done chan struct{}, release func()) {
 	defer close(done)
 	s.mu.Lock()
 	job.Status = StatusRunning
 	s.mu.Unlock()
 
 	err := s.importFiles(ctx, principal, job)
+	release()
 	s.mu.Lock()
 	if err != nil {
 		job.Status = StatusFailed
@@ -203,13 +213,9 @@ func (s *Service) importFiles(ctx context.Context, principal acl.Principal, job 
 }
 
 func (s *Service) collectMoves(sourcePath, userID string, job *Job) ([]fileMove, error) {
-	root, err := s.storage.ResolvePath(sourcePath)
+	root, err := s.resolveSource(sourcePath)
 	if err != nil {
-		return nil, ErrInvalidSource
-	}
-	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
-		return nil, ErrInvalidSource
+		return nil, err
 	}
 
 	candidates := make([]importCandidate, 0)
@@ -391,7 +397,8 @@ func mediaPairKey(relative string) string {
 
 func (s *Service) rescan(ctx context.Context, principal acl.Principal) error {
 	for {
-		job, err := s.indexer.Start(ctx, principal)
+		// The import already holds the maintenance lock for its follow-up rescan.
+		job, err := s.indexer.StartUnderMaintenance(ctx, principal)
 		if err == nil {
 			for {
 				status, getErr := s.indexer.Get(ctx, principal, job.ID)
@@ -440,7 +447,7 @@ func (s *Service) validateUser(ctx context.Context, userID string) error {
 		return ErrUserNotFound
 	}
 	var exists int
-	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM users WHERE id=? AND deleted_at IS NULL", userID).Scan(&exists)
+	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM users WHERE id=? AND is_active=1 AND deleted_at IS NULL", userID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUserNotFound
 	}
@@ -454,15 +461,31 @@ func (s *Service) validateSource(sourcePath string) error {
 			return ErrInvalidSource
 		}
 	}
+	_, err := s.resolveSource(sourcePath)
+	return err
+}
+
+// resolveSource returns the absolute source directory. Every component must be
+// a real directory: a symlink anywhere in the path could redirect the import
+// into users/ or shared/ and move another user's originals.
+func (s *Service) resolveSource(sourcePath string) (string, error) {
 	path, err := s.storage.ResolvePath(sourcePath)
 	if err != nil {
-		return ErrInvalidSource
+		return "", ErrInvalidSource
 	}
 	info, err := os.Stat(path)
 	if err != nil || !info.IsDir() {
-		return ErrInvalidSource
+		return "", ErrInvalidSource
 	}
-	return nil
+	resolvedRoot, err := filepath.EvalSymlinks(s.storage.Root())
+	if err != nil {
+		return "", ErrInvalidSource
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || resolved != filepath.Join(resolvedRoot, sourcePath) {
+		return "", ErrInvalidSource
+	}
+	return path, nil
 }
 
 func normalizeSource(value string) (string, error) {

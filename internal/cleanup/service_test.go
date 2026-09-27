@@ -82,12 +82,12 @@ func TestScanAndCleanupOnlyClearlyBrokenOriginals(t *testing.T) {
 		t.Fatalf("reasons = %#v", reasons)
 	}
 
-	result, err := service.Cleanup(ctx, principal, true)
+	result, err := service.Cleanup(ctx, principal, true, []string{first.ID, second.ID, healthy.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Found != 2 || result.Deleted != 2 || result.Failed != 0 {
-		t.Fatalf("cleanup = %+v, want found=2 deleted=2 failed=0", result)
+	if result.Found != 2 || result.Deleted != 2 || result.Failed != 1 || result.Failures[0].ID != healthy.ID || result.Failures[0].Code != "NOT_BROKEN" {
+		t.Fatalf("cleanup = %+v, want found=2 deleted=2 and the healthy photo refused", result)
 	}
 	if _, err := photoService.Get(ctx, principal, healthy.ID); err != nil {
 		t.Fatalf("healthy photo was removed: %v", err)
@@ -105,8 +105,62 @@ func TestCleanupRequiresAdminAndConfirmation(t *testing.T) {
 	if _, err := service.Scan(context.Background(), acl.Principal{UserID: "u1", Role: acl.RoleUser}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("Scan error = %v, want ErrForbidden", err)
 	}
-	if _, err := service.Cleanup(context.Background(), acl.Principal{UserID: "u1", Role: acl.RoleAdmin}, false); !errors.Is(err, ErrConfirmationRequired) {
+	if _, err := service.Cleanup(context.Background(), acl.Principal{UserID: "u1", Role: acl.RoleAdmin}, false, []string{"p1"}); !errors.Is(err, ErrConfirmationRequired) {
 		t.Fatalf("Cleanup error = %v, want ErrConfirmationRequired", err)
+	}
+	if _, err := service.Cleanup(context.Background(), acl.Principal{UserID: "u1", Role: acl.RoleAdmin}, true, nil); !errors.Is(err, ErrConfirmationRequired) {
+		t.Fatalf("Cleanup(no ids) error = %v, want ErrConfirmationRequired", err)
+	}
+}
+
+func TestScanAndCleanupNeverTreatUnavailableRootAsMissing(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}
+	folder, err := folders.NewService(db, store).Create(ctx, principal, folders.CreateInput{Name: "Family"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	photoService := photos.NewService(db, store, 1<<20)
+	photo, err := photoService.Upload(ctx, principal, photos.UploadInput{FolderID: folder.ID, Filename: "a.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(testJPEG(t, 10))})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate an unmounted volume: the whole library root disappears.
+	if err := os.RemoveAll(filepath.Join(store.Root(), "users")); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(db, store, photoService)
+	scan, err := service.Scan(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scan.Broken != 0 || scan.Skipped != 1 {
+		t.Fatalf("scan = %+v, want the photo skipped rather than broken", scan)
+	}
+	result, err := service.Cleanup(ctx, principal, true, []string{photo.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 0 {
+		t.Fatalf("cleanup = %+v, want nothing deleted", result)
+	}
+	if _, err := photoService.Get(ctx, principal, photo.ID); err != nil {
+		t.Fatalf("photo on unavailable root was removed: %v", err)
 	}
 }
 

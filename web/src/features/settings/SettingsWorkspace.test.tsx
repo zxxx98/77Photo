@@ -3,7 +3,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApiClient, RescanJob } from '../../app/api';
+import { ApiError, type ApiClient, type RescanJob } from '../../app/api';
 import { I18nProvider } from '../../app/I18nProvider';
 import SettingsWorkspace from './SettingsWorkspace';
 
@@ -40,8 +40,9 @@ describe('settings rescan progress', () => {
   });
 
   async function renderWith(api: ApiClient) {
+    const withDefaults = { ...api, getMaintenance: api.getMaintenance ?? vi.fn().mockResolvedValue({ active: null }) } as ApiClient;
     await act(async () => {
-      root.render(<I18nProvider><SettingsWorkspace api={api} currentUser={admin} /></I18nProvider>);
+      root.render(<I18nProvider><SettingsWorkspace api={withDefaults} currentUser={admin} /></I18nProvider>);
       await Promise.resolve();
     });
   }
@@ -265,8 +266,8 @@ describe('settings rescan progress', () => {
     });
 
     expect(window.confirm).toHaveBeenCalled();
-    expect(cleanupBrokenPhotos).toHaveBeenCalledTimes(1);
-    expect(scanBrokenPhotos).toHaveBeenCalledTimes(2);
+    expect(cleanupBrokenPhotos).toHaveBeenCalledWith(['p1', 'p2']);
+    expect(scanBrokenPhotos).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain('已清理 2 张坏照片');
   });
 
@@ -291,4 +292,190 @@ describe('settings rescan progress', () => {
     await act(async () => { vi.advanceTimersByTime(2000); });
     expect(getRescan).toHaveBeenCalledTimes(calls);
   });
+
+  it('re-attaches to a running maintenance job and locks every maintenance action', async () => {
+    const getRescan = vi.fn().mockResolvedValue(running);
+    await renderWith({
+      listUsers: vi.fn().mockResolvedValue({ items: [admin] }),
+      getMaintenance: vi.fn().mockResolvedValue({ active: { kind: 'rescan', job_id: 'scan_1' } }),
+      getRescan,
+    } as unknown as ApiClient);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(getRescan).toHaveBeenCalledWith('scan_1');
+    expect(container.textContent).toContain('已扫描 12');
+    const labels = ['重新扫描', '重置并重新扫描', '重新生成缩略图', '扫描坏照片', '开始导入'];
+    for (const label of labels) {
+      const button = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((item) => item.textContent?.includes(label));
+      expect(button?.disabled, label).toBe(true);
+    }
+  });
+
+  it('shows the running task when the server rejects a start with 409', async () => {
+    const getMaintenance = vi.fn()
+      .mockResolvedValueOnce({ active: null })
+      .mockResolvedValueOnce({ active: { kind: 'cleanup' } })
+      .mockResolvedValue({ active: null });
+    await renderWith({
+      listUsers: vi.fn().mockResolvedValue({ items: [] }),
+      getMaintenance,
+      startRescan: vi.fn().mockRejectedValue(new ApiError(409, 'MAINTENANCE_IN_PROGRESS', 'busy')),
+    } as unknown as ApiClient);
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.scan-heading button')?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('坏照片清理正在进行');
+    expect(container.querySelector<HTMLButtonElement>('.scan-heading button')?.disabled).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).not.toContain('坏照片清理正在进行');
+    expect(container.querySelector<HTMLButtonElement>('.scan-heading button')?.disabled).toBe(false);
+  });
+
+  it('hides deleted accounts and never imports into an unavailable user', async () => {
+    const deleted = { ...admin, is_active: false, deleted_at: '2026-09-20T00:00:00Z' };
+    const disabled = { id: 'u3', username: 'disabled', role: 'user' as const, is_active: false };
+    const member = { id: 'u2', username: 'family', role: 'user' as const, is_active: true };
+    const job = { id: 'import_1', status: 'completed', counts: { scanned: 0, moved: 0, skipped: 0, failed: 0 } };
+    const startImport = vi.fn().mockResolvedValue(job);
+    await renderWith({
+      listUsers: vi.fn().mockResolvedValue({ items: [deleted, disabled, member] }),
+      startImport,
+      getImport: vi.fn().mockResolvedValue(job),
+    } as unknown as ApiClient);
+
+    const rows = Array.from(container.querySelectorAll('.user-row')).map((row) => row.textContent);
+    expect(rows.some((row) => row?.includes('admin'))).toBe(false);
+    expect(container.querySelector('[role="combobox"][aria-label="目标用户"]')?.textContent).toContain('family');
+
+    const form = container.querySelector('input[aria-label="导入目录"]')!.closest('form')!;
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    expect(startImport).toHaveBeenLastCalledWith({ source_path: '.', user_id: 'u2', organize_by_date: false });
+  });
+
+  it('explains why an account could not be created and clears the error on retry', async () => {
+    const member = { id: 'u2', username: 'family', role: 'user' as const, is_active: true };
+    const createUser = vi.fn()
+      .mockRejectedValueOnce(new ApiError(422, 'PASSWORD_INVALID', 'invalid'))
+      .mockResolvedValueOnce(member);
+    await renderWith({ listUsers: vi.fn().mockResolvedValue({ items: [admin] }), createUser } as unknown as ApiClient);
+
+    const username = container.querySelector<HTMLInputElement>('input[aria-label="用户名"]')!;
+    const password = container.querySelector<HTMLInputElement>('input[aria-label="临时密码"]')!;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setValue.call(username, 'family');
+      username.dispatchEvent(new Event('input', { bubbles: true }));
+      setValue.call(password, 'short');
+      password.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const form = username.closest('form')!;
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    expect(container.textContent).toContain('密码需为 12–256 个字符');
+
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    expect(container.textContent).not.toContain('密码需为 12–256 个字符');
+    expect(Array.from(container.querySelectorAll('.user-row')).some((row) => row.textContent?.includes('family'))).toBe(true);
+  });
+
+  function typeInto(input: HTMLInputElement, value: string) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function buttonWithText(text: string) {
+    return Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === text || button.textContent?.includes(text));
+  }
+
+  it('lets any user change their own password', async () => {
+    const changePassword = vi.fn()
+      .mockRejectedValueOnce(new ApiError(422, 'CURRENT_PASSWORD_INCORRECT', 'wrong'))
+      .mockResolvedValueOnce(undefined);
+    const member = { id: 'u2', username: 'family', role: 'user' as const, is_active: true };
+    await act(async () => {
+      root.render(<I18nProvider><SettingsWorkspace api={{ changePassword, getMaintenance: vi.fn() } as unknown as ApiClient} currentUser={member} /></I18nProvider>);
+      await Promise.resolve();
+    });
+    const current = container.querySelector<HTMLInputElement>('input[aria-label="当前密码"]')!;
+    const next = container.querySelector<HTMLInputElement>('input[aria-label="新密码"]')!;
+    const confirm = container.querySelector<HTMLInputElement>('input[aria-label="确认新密码"]')!;
+    const form = current.closest('form')!;
+    const submit = async () => { await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); }); };
+
+    await act(async () => { typeInto(current, 'old passphrase'); typeInto(next, 'a brand new passphrase'); typeInto(confirm, 'something else entirely'); });
+    await submit();
+    expect(container.textContent).toContain('两次输入的新密码不一致');
+    expect(changePassword).not.toHaveBeenCalled();
+
+    await act(async () => { typeInto(confirm, 'a brand new passphrase'); });
+    await submit();
+    expect(changePassword).toHaveBeenLastCalledWith('old passphrase', 'a brand new passphrase');
+    expect(container.textContent).toContain('当前密码不正确');
+
+    await submit();
+    expect(container.textContent).toContain('密码已更新');
+    expect(current.value).toBe('');
+  });
+
+  it('creates administrators, switches roles and resets member passwords', async () => {
+    const member = { id: 'u2', username: 'family', role: 'user' as const, is_active: true };
+    const createUser = vi.fn().mockResolvedValue({ id: 'u3', username: 'grandpa', role: 'admin', is_active: true });
+    const updateUser = vi.fn()
+      .mockResolvedValueOnce({ ...member, role: 'admin' })
+      .mockResolvedValueOnce({ ...member, role: 'admin' });
+    await renderWith({ listUsers: vi.fn().mockResolvedValue({ items: [admin, member] }), createUser, updateUser } as unknown as ApiClient);
+
+    const username = container.querySelector<HTMLInputElement>('input[aria-label="用户名"]')!;
+    await act(async () => {
+      typeInto(username, 'grandpa');
+      typeInto(container.querySelector<HTMLInputElement>('input[aria-label="临时密码"]')!, 'grandpa passphrase');
+    });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[role="group"][aria-label="角色"] button:last-child')!.click(); });
+    await act(async () => { username.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    expect(createUser).toHaveBeenCalledWith({ username: 'grandpa', password: 'grandpa passphrase', role: 'admin' });
+
+    const familyRow = () => Array.from(container.querySelectorAll('.user-row')).find((row) => row.textContent?.includes('family'))!;
+    const adminRow = Array.from(container.querySelectorAll('.user-row')).find((row) => row.textContent?.startsWith('admin'))!;
+    expect(Array.from(adminRow.querySelectorAll('button')).find((button) => button.textContent === '设为成员')?.disabled).toBe(true);
+    await act(async () => { Array.from(familyRow().querySelectorAll('button')).find((button) => button.textContent === '设为管理员')!.click(); });
+    expect(updateUser).toHaveBeenLastCalledWith('u2', { role: 'admin' });
+
+    await act(async () => { Array.from(familyRow().querySelectorAll('button')).find((button) => button.textContent === '重置密码')!.click(); });
+    const resetInput = container.querySelector<HTMLInputElement>('input[aria-label="family 的新密码"]')!;
+    await act(async () => { typeInto(resetInput, 'temporary passphrase'); });
+    await act(async () => { resetInput.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    expect(updateUser).toHaveBeenLastCalledWith('u2', { password: 'temporary passphrase' });
+    expect(container.textContent).toContain('已重置 family 的密码');
+    expect(container.querySelector('input[aria-label="family 的新密码"]')).toBeNull();
+  });
+
+  it('deletes a member and can transfer their photos to another member', async () => {
+    const family = { id: 'u2', username: 'family', role: 'user' as const, is_active: true };
+    const kid = { id: 'u3', username: 'kid', role: 'user' as const, is_active: true };
+    const deleteUser = vi.fn().mockResolvedValue(undefined);
+    await renderWith({ listUsers: vi.fn().mockResolvedValue({ items: [admin, family, kid] }), deleteUser } as unknown as ApiClient);
+
+    const kidRow = Array.from(container.querySelectorAll('.user-row')).find((row) => row.textContent?.includes('kid'))!;
+    await act(async () => { Array.from(kidRow.querySelectorAll('button')).find((button) => button.textContent === '删除')!.click(); });
+    expect(container.textContent).toContain('删除 kid？');
+    await act(async () => { buttonWithText('转给其他成员')!.click(); });
+    const picker = container.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="接收照片的成员"]')!;
+    expect(picker.textContent).toContain('admin');
+    await act(async () => { picker.click(); });
+    await act(async () => { Array.from(container.querySelectorAll<HTMLButtonElement>('[role="option"]')).find((option) => option.textContent?.includes('family'))!.click(); });
+    await act(async () => { buttonWithText('确认删除')!.click(); await Promise.resolve(); });
+
+    expect(deleteUser).toHaveBeenCalledWith('u3', { photo_action: 'transfer', transfer_to_user_id: 'u2' });
+    expect(container.textContent).toContain('已删除 kid，其照片已转给 family');
+    expect(Array.from(container.querySelectorAll('.user-row')).some((row) => row.textContent?.includes('kid'))).toBe(false);
+  });
 });
+

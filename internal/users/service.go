@@ -2,7 +2,9 @@ package users
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +12,8 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
+	"github.com/zxxx98/77Photo/internal/maintenance"
+	"github.com/zxxx98/77Photo/internal/storage"
 )
 
 var (
@@ -23,8 +27,10 @@ var (
 )
 
 type Service struct {
-	db   *sql.DB
-	auth *auth.Service
+	db          *sql.DB
+	auth        *auth.Service
+	storage     *storage.Store
+	maintenance *maintenance.Lock
 }
 
 type CreateInput struct {
@@ -34,27 +40,33 @@ type CreateInput struct {
 }
 
 type UpdateInput struct {
-	Username *string
-	Password *string
-	Role     *acl.Role
-	IsActive *bool
+	Username *string   `json:"username"`
+	Password *string   `json:"password"`
+	Role     *acl.Role `json:"role"`
+	IsActive *bool     `json:"is_active"`
 }
 
 type DeleteInput struct {
-	PhotoAction      string
-	TransferToUserID string
+	PhotoAction      string `json:"photo_action"`
+	TransferToUserID string `json:"transfer_to_user_id"`
 }
 
 func NewService(db *sql.DB, authService *auth.Service) *Service {
 	return &Service{db: db, auth: authService}
 }
 
+// SetStorage enables photo transfer on deletion, which moves the deleted
+// user's files into the recipient's storage root.
+func (s *Service) SetStorage(store storage.Store) { s.storage = &store }
+
+func (s *Service) SetMaintenanceLock(lock *maintenance.Lock) { s.maintenance = lock }
+
 func (s *Service) List(ctx context.Context, principal acl.Principal) ([]auth.Account, error) {
 	if !acl.CanManageUsers(principal) {
 		return nil, ErrAdminRequired
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, username, role, is_active, deleted_at, created_at, updated_at
-FROM users ORDER BY username COLLATE NOCASE, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, COALESCE(deleted_username, username) AS display_name, role, is_active, deleted_at, created_at, updated_at
+FROM users ORDER BY display_name COLLATE NOCASE, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
@@ -78,7 +90,7 @@ func (s *Service) Create(ctx context.Context, principal acl.Principal, input Cre
 		return auth.Account{}, ErrAdminRequired
 	}
 	if err := auth.ValidateCredentials(input.Username, input.Password); err != nil {
-		return auth.Account{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return auth.Account{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 	if input.Role != acl.RoleAdmin && input.Role != acl.RoleUser {
 		return auth.Account{}, fmt.Errorf("%w: invalid role", ErrInvalidInput)
@@ -123,18 +135,15 @@ func (s *Service) Update(ctx context.Context, principal acl.Principal, id string
 	sets := make([]string, 0, 4)
 	args := make([]any, 0, 5)
 	if input.Username != nil {
-		if err := auth.ValidateCredentials(*input.Username, "valid password"); err != nil && !strings.Contains(err.Error(), "password") {
-			return auth.Account{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
-		}
-		if strings.TrimSpace(*input.Username) == "" {
-			return auth.Account{}, ErrInvalidInput
+		if err := auth.ValidateCredentials(*input.Username, "valid password"); err != nil {
+			return auth.Account{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 		}
 		sets = append(sets, "username=?")
 		args = append(args, strings.TrimSpace(*input.Username))
 	}
 	if input.Password != nil {
 		if err := auth.ValidateCredentials("valid-user", *input.Password); err != nil {
-			return auth.Account{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+			return auth.Account{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 		}
 		hash, err := auth.HashPassword(*input.Password)
 		if err != nil {
@@ -207,6 +216,17 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 	if input.PhotoAction != "retain" && input.PhotoAction != "transfer" {
 		return ErrInvalidInput
 	}
+	if input.PhotoAction == "transfer" {
+		if s.storage == nil {
+			return errors.New("photo transfer requires storage")
+		}
+		// Moving files must not race a rescan, import or cleanup.
+		release, err := s.maintenance.Acquire(maintenance.KindUserTransfer, "")
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin user deletion: %w", err)
@@ -241,9 +261,17 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 	if err := s.auth.RevokeMobileSessionsForUserTx(ctx, tx, id); err != nil {
 		return fmt.Errorf("revoke deleted user mobile sessions: %w", err)
 	}
+	var moves []storageMove
+	committed := false
+	defer func() {
+		if !committed {
+			s.undoMoves(moves)
+		}
+	}()
 	if input.PhotoAction == "transfer" {
-		// T09 moves the corresponding filesystem roots atomically. Ownership is
-		// changed here so the index never grants the deleted user access again.
+		if moves, err = s.moveUserStorage(ctx, tx, id, input.TransferToUserID, now); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, "UPDATE folders SET owner_id=?, updated_at=? WHERE owner_id=?", input.TransferToUserID, now, id); err != nil {
 			return fmt.Errorf("transfer folders: %w", err)
 		}
@@ -254,7 +282,8 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 			return fmt.Errorf("delete transferred user: %w", err)
 		}
 	} else {
-		if _, err := tx.ExecContext(ctx, "UPDATE users SET is_active=0, deleted_at=?, updated_at=? WHERE id=?", now, now, id); err != nil {
+		// Free the username for reuse while keeping it for display.
+		if _, err := tx.ExecContext(ctx, "UPDATE users SET is_active=0, deleted_at=?, updated_at=?, deleted_username=username, username=? WHERE id=?", now, now, tombstoneUsername(id), id); err != nil {
 			return fmt.Errorf("tombstone user: %w", err)
 		}
 	}
@@ -263,6 +292,10 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit user deletion: %w", err)
+	}
+	committed = true
+	if input.PhotoAction == "transfer" {
+		_ = s.storage.RemoveEmptyDir("users/" + id)
 	}
 	return nil
 }
@@ -279,7 +312,7 @@ func ensureAnotherAdmin(ctx context.Context, tx *sql.Tx, excludingID string) err
 }
 
 func (s *Service) get(ctx context.Context, id string) (auth.Account, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, username, role, is_active, deleted_at, created_at, updated_at FROM users WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(deleted_username, username), role, is_active, deleted_at, created_at, updated_at FROM users WHERE id=?`, id)
 	account, err := scanAccount(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return auth.Account{}, ErrUserNotFound
@@ -316,6 +349,16 @@ func scanAccount(row rowScanner) (auth.Account, error) {
 
 func formatTime(value time.Time) string { return value.UTC().Format(time.RFC3339Nano) }
 
+// tombstoneUsername is stored in place of a deleted user's name. It contains a
+// control character, so it can never collide with a valid username.
+func tombstoneUsername(id string) string { return "\x1fdeleted\x1f" + id }
+
+// newUserID returns a random, unguessable ID. The ID also names the user's
+// storage directory, so it is hex only.
 func newUserID() string {
-	return fmt.Sprintf("u_%d", time.Now().UnixNano())
+	var raw [12]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic("crypto/rand unavailable")
+	}
+	return "u_" + hex.EncodeToString(raw[:])
 }

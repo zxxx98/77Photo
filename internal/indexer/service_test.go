@@ -18,6 +18,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/auth"
 	dbstore "github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/folders"
+	"github.com/zxxx98/77Photo/internal/maintenance"
 	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/storage"
@@ -751,5 +752,111 @@ func TestRescanExtractsMotionBehindEXIFThumbnailEOI(t *testing.T) {
 	}
 	if _, _, err := photoService.LiveVideoPath(ctx, principal, photoID); err != nil {
 		t.Fatalf("motion behind EXIF thumbnail EOI missing = %v", err)
+	}
+}
+
+func TestRescanIsRefusedWhileAnotherMaintenanceTaskRuns(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: "admin", Role: acl.RoleAdmin}
+	service := NewService(db, store, photos.NewService(db, store, 1<<20))
+	lock := &maintenance.Lock{}
+	service.SetMaintenanceLock(lock)
+
+	release, err := lock.Acquire(maintenance.KindThumbnailRebuild, "rebuild_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Start(ctx, principal); !errors.Is(err, maintenance.ErrBusy) {
+		t.Fatalf("Start() error = %v, want maintenance.ErrBusy", err)
+	}
+	if _, err := service.ResetAndStart(ctx, principal); !errors.Is(err, maintenance.ErrBusy) {
+		t.Fatalf("ResetAndStart() error = %v, want maintenance.ErrBusy", err)
+	}
+	release()
+
+	job, err := service.Start(ctx, principal)
+	if err != nil {
+		t.Fatalf("Start() after release error = %v", err)
+	}
+	waitForJob(t, service, principal, job.ID)
+	if _, ok := lock.Current(); ok {
+		t.Fatal("rescan did not release the maintenance lock")
+	}
+}
+
+type failingResetThumbnail struct{}
+
+func (failingResetThumbnail) WaitIdle(context.Context) error { return nil }
+
+func (failingResetThumbnail) ResetAll(context.Context) error {
+	return errors.New("cache volume is read-only")
+}
+
+func TestResetStillRebuildsIndexWhenCacheCleanupFails(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := folders.NewService(db, store).Create(ctx, principal, folders.CreateInput{Name: "imports"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.ResolvePath(filepath.Join(folder.StoragePath, "keep.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jpeg.Encode(file, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+
+	service := NewService(db, store, photos.NewService(db, store, 1<<20))
+	service.SetThumbnailResetter(failingResetThumbnail{})
+	job, err := service.ResetAndStart(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		job, err = service.Get(ctx, principal, job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job.Status == StatusCompleted || job.Status == StatusFailed || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if job.Status != StatusFailed || job.Error == nil || !strings.Contains(*job.Error, "cache volume is read-only") {
+		t.Fatalf("job = %+v, want failure reporting the cache error", job)
+	}
+	var indexed int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM photos WHERE scan_status='indexed'").Scan(&indexed); err != nil || indexed != 1 {
+		t.Fatalf("indexed photos = %d, err=%v, want the library rebuilt", indexed, err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
+	"github.com/zxxx98/77Photo/internal/maintenance"
 )
 
 type HTTPHandler struct {
@@ -85,6 +86,8 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 		writeError(w, r, http.StatusForbidden, "ADMIN_REQUIRED", "administrator access is required")
 	case errors.Is(err, ErrConflict):
 		writeError(w, r, http.StatusConflict, "IMPORT_IN_PROGRESS", "another import is already queued or running")
+	case errors.Is(err, maintenance.ErrBusy):
+		writeErrorWithDetails(w, r, http.StatusConflict, "MAINTENANCE_IN_PROGRESS", "another maintenance task is queued or running", maintenance.Details(err))
 	case errors.Is(err, ErrInvalidSource):
 		writeError(w, r, http.StatusBadRequest, "INVALID_IMPORT_SOURCE", "import source must be a readable directory inside the photo root and outside managed users/shared directories")
 	case errors.Is(err, ErrUserNotFound):
@@ -97,11 +100,19 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	writeErrorWithDetails(w, r, status, code, message, nil)
+}
+
+func writeErrorWithDetails(w http.ResponseWriter, r *http.Request, status int, code, message string, details map[string]any) {
 	requestID := r.Header.Get("X-Request-ID")
 	if requestID == "" {
 		requestID = "request-id-missing"
 	}
-	writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": requestID}})
+	body := map[string]any{"code": code, "message": message, "request_id": requestID}
+	if details != nil {
+		body["details"] = details
+	}
+	writeJSON(w, status, map[string]any{"error": body})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

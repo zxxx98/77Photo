@@ -4,10 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"sync"
 	"testing"
 	"testing/fstest"
+
+	"github.com/zxxx98/77Photo/migrations"
 )
 
 func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
@@ -51,8 +54,8 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 5 {
-		t.Fatalf("schema migration count = %d, want 5", migrationCount)
+	if migrationCount != 6 {
+		t.Fatalf("schema migration count = %d, want 6", migrationCount)
 	}
 }
 
@@ -87,8 +90,8 @@ VALUES ('u-restart', 'restart', 'hash', 'user', '2026-01-01T00:00:00Z', '2026-01
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 5 {
-		t.Fatalf("schema migration count = %d, want 5", migrationCount)
+	if migrationCount != 6 {
+		t.Fatalf("schema migration count = %d, want 6", migrationCount)
 	}
 }
 
@@ -251,4 +254,54 @@ func TestFailedMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 func sqlOpenForMigrationTest(t *testing.T) (*sql.DB, error) {
 	t.Helper()
 	return sql.Open(driverName, filepath.Join(t.TempDir(), "migration.db"))
+}
+
+func TestMigrationFreesUsernamesOfExistingTombstones(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open(driverName, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if err := configure(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	before := fstest.MapFS{}
+	entries, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range entries {
+		if version, _ := migrationVersion(name); version >= 6 {
+			continue
+		}
+		data, err := fs.ReadFile(migrations.FS, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[name] = &fstest.MapFile{Data: data}
+	}
+	if err := MigrateFS(ctx, db, before); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO users (id, username, password_hash, role, is_active, deleted_at, created_at, updated_at) VALUES
+('u_gone', 'alice', 'hash', 'user', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+('u_live', 'bob', 'hash', 'user', 1, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	var displayName string
+	if err := db.QueryRowContext(ctx, "SELECT deleted_username FROM users WHERE id='u_gone'").Scan(&displayName); err != nil || displayName != "alice" {
+		t.Fatalf("deleted_username = %q, %v", displayName, err)
+	}
+	var bob string
+	if err := db.QueryRowContext(ctx, "SELECT username FROM users WHERE id='u_live'").Scan(&bob); err != nil || bob != "bob" {
+		t.Fatalf("active username changed to %q, %v", bob, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES ('u_new', 'Alice', 'hash', 'user', '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z')`); err != nil {
+		t.Fatalf("reusing the deleted username failed: %v", err)
+	}
 }

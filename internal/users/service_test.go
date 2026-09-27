@@ -222,3 +222,37 @@ func assertNoUnrevokedMobileTokens(t *testing.T, db *sql.DB, deviceID string) {
 
 func boolPtr(value bool) *bool       { return &value }
 func stringPtr(value string) *string { return &value }
+
+func TestDeletedUsernameCanBeReusedAndStillDisplays(t *testing.T) {
+	service, authService, admin := newUserService(t)
+	ctx := context.Background()
+	alice, err := service.Create(ctx, admin, CreateInput{Username: "Alice", Password: "alice's secure password", Role: acl.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Delete(ctx, admin, alice.ID, DeleteInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := authService.Authenticate(ctx, "alice", "alice's secure password"); err == nil {
+		t.Fatal("deleted account can still sign in")
+	}
+	again, err := service.Create(ctx, admin, CreateInput{Username: "alice", Password: "another secure password", Role: acl.RoleUser})
+	if err != nil {
+		t.Fatalf("re-create deleted username error = %v", err)
+	}
+	if again.ID == alice.ID {
+		t.Fatal("re-created account reused the tombstone id")
+	}
+	users, err := service.List(ctx, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range users {
+		if user.ID == alice.ID && user.Username != "Alice" {
+			t.Fatalf("tombstone username = %q, want original name", user.Username)
+		}
+	}
+	if _, _, err := authService.Authenticate(ctx, "alice", "another secure password"); err != nil {
+		t.Fatalf("new account cannot sign in: %v", err)
+	}
+}

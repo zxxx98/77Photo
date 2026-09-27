@@ -92,3 +92,49 @@ func TestCopyAndRemovePreservesTimelineFallbackTime(t *testing.T) {
 		t.Fatalf("source still present: %v", err)
 	}
 }
+
+func TestRenameNeverReplacesAnExistingDestination(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.jpg", "b.jpg"} {
+		if err := os.WriteFile(filepath.Join(store.Root(), name), []byte(name), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Rename("a.jpg", "b.jpg"); !os.IsExist(err) {
+		t.Fatalf("Rename onto existing file error = %v, want ErrExist", err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(store.Root(), "b.jpg")); string(data) != "b.jpg" {
+		t.Fatalf("destination was overwritten: %q", data)
+	}
+	if err := store.Rename("a.jpg", "c.jpg"); err != nil {
+		t.Fatalf("Rename to new name error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(store.Root(), "a.jpg")); !os.IsNotExist(err) {
+		t.Fatalf("source still present after rename: %v", err)
+	}
+}
+
+func TestRenameNoReplaceFallbackRefusesExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	source, destination := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	for _, path := range []string{source, destination} {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := renameNoReplaceFallback(source, destination); !os.IsExist(err) {
+		t.Fatalf("fallback error = %v, want ErrExist", err)
+	}
+	if err := os.Remove(destination); err != nil {
+		t.Fatal(err)
+	}
+	if err := renameNoReplaceFallback(source, destination); err != nil {
+		t.Fatalf("fallback rename error = %v", err)
+	}
+	if data, _ := os.ReadFile(destination); string(data) != "a" {
+		t.Fatalf("destination = %q, want moved source", data)
+	}
+}

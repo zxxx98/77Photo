@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/zxxx98/77Photo/internal/acl"
+	"github.com/zxxx98/77Photo/internal/maintenance"
 	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/storage"
@@ -92,6 +93,7 @@ type Service struct {
 	done              chan struct{}
 	mediaTools        *media.Tools
 	thumbnailResetter ThumbnailResetter
+	maintenance       *maintenance.Lock
 }
 
 func NewService(db *sql.DB, store storage.Store, photoService *photos.Service) *Service {
@@ -101,6 +103,8 @@ func NewService(db *sql.DB, store storage.Store, photoService *photos.Service) *
 func (s *Service) SetMediaTools(tools *media.Tools) { s.mediaTools = tools }
 
 func (s *Service) SetThumbnailResetter(resetter ThumbnailResetter) { s.thumbnailResetter = resetter }
+
+func (s *Service) SetMaintenanceLock(lock *maintenance.Lock) { s.maintenance = lock }
 
 // NewServiceWithContext ties asynchronous scans to the process lifecycle. The
 // HTTP request context is still ignored for the scan itself, so returning a
@@ -112,16 +116,22 @@ func NewServiceWithContext(ctx context.Context, db *sql.DB, store storage.Store,
 }
 
 func (s *Service) Start(ctx context.Context, principal acl.Principal) (Job, error) {
-	return s.start(ctx, principal, false)
+	return s.start(ctx, principal, false, false)
+}
+
+// StartUnderMaintenance starts a rescan on behalf of a caller that already
+// holds the maintenance lock, such as an import indexing its moved files.
+func (s *Service) StartUnderMaintenance(ctx context.Context, principal acl.Principal) (Job, error) {
+	return s.start(ctx, principal, false, true)
 }
 
 // ResetAndStart clears all derived library state while preserving original
 // media files, then rebuilds the index from disk using the normal rescan flow.
 func (s *Service) ResetAndStart(ctx context.Context, principal acl.Principal) (Job, error) {
-	return s.start(ctx, principal, true)
+	return s.start(ctx, principal, true, false)
 }
 
-func (s *Service) start(ctx context.Context, principal acl.Principal, reset bool) (Job, error) {
+func (s *Service) start(ctx context.Context, principal acl.Principal, reset, lockHeld bool) (Job, error) {
 	if principal.Role != acl.RoleAdmin {
 		return Job{}, ErrForbidden
 	}
@@ -133,6 +143,14 @@ func (s *Service) start(ctx context.Context, principal acl.Principal, reset bool
 	}
 	now := time.Now().UTC()
 	job := &Job{ID: newJobID(), Status: StatusQueued, StartedAt: now}
+	release := func() {}
+	if !lockHeld {
+		var err error
+		if release, err = s.maintenance.Acquire(maintenance.KindRescan, job.ID); err != nil {
+			s.mu.Unlock()
+			return Job{}, err
+		}
+	}
 	s.job = job
 	done := make(chan struct{})
 	s.done = done
@@ -144,7 +162,7 @@ func (s *Service) start(ctx context.Context, principal acl.Principal, reset bool
 		// sent. A queued rescan must outlive that request.
 		scanContext = context.WithoutCancel(ctx)
 	}
-	go s.run(scanContext, job, done, reset)
+	go s.run(scanContext, job, done, reset, release)
 	return snapshot, nil
 }
 
@@ -171,23 +189,35 @@ func (s *Service) Get(_ context.Context, principal acl.Principal, id string) (Jo
 	return *s.job, nil
 }
 
-func (s *Service) run(ctx context.Context, job *Job, done chan struct{}, reset bool) {
+func (s *Service) run(ctx context.Context, job *Job, done chan struct{}, reset bool, release func()) {
 	defer close(done)
 	s.mu.Lock()
 	job.Status = StatusRunning
 	s.mu.Unlock()
-	var err error
+	var err, cleanupErr error
 	if reset {
 		s.setPhase(job, "resetting")
-		err = s.resetLibraryIndex(ctx)
+		var committed bool
+		committed, err = s.resetLibraryIndex(ctx)
+		if committed && err != nil {
+			// The index is already empty. Rebuild it anyway so the library stays
+			// usable, and report the cache cleanup failure afterwards.
+			cleanupErr, err = err, nil
+		}
 	}
 	if err == nil {
 		err = s.scan(ctx, job)
+	}
+	if err == nil && cleanupErr != nil {
+		err = fmt.Errorf("library was rescanned but cache cleanup failed: %w", cleanupErr)
 	}
 	if err == nil && reset && s.thumbnailResetter != nil {
 		s.setPhase(job, "thumbnails")
 		err = s.thumbnailResetter.WaitIdle(ctx)
 	}
+	// Release before publishing the terminal status so a client that observes
+	// completion can immediately start the next maintenance task.
+	release()
 	s.mu.Lock()
 	if err != nil {
 		job.Status = StatusFailed
@@ -201,48 +231,50 @@ func (s *Service) run(ctx context.Context, job *Job, done chan struct{}, reset b
 	s.mu.Unlock()
 }
 
-func (s *Service) resetLibraryIndex(ctx context.Context) error {
+// resetLibraryIndex clears the photo index and derived caches. committed
+// reports whether the index was cleared, even if later cache cleanup failed.
+func (s *Service) resetLibraryIndex(ctx context.Context) (committed bool, err error) {
 	if s.db == nil {
-		return errors.New("database is required")
+		return false, errors.New("database is required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin library reset: %w", err)
+		return false, fmt.Errorf("begin library reset: %w", err)
 	}
 	rollback := func() { _ = tx.Rollback() }
 	if _, err := tx.ExecContext(ctx, "DELETE FROM share_link_access WHERE share_link_id IN (SELECT id FROM share_links WHERE resource_type='photo')"); err != nil {
 		rollback()
-		return fmt.Errorf("clear photo share access: %w", err)
+		return false, fmt.Errorf("clear photo share access: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM share_links WHERE resource_type='photo'"); err != nil {
 		rollback()
-		return fmt.Errorf("clear photo share links: %w", err)
+		return false, fmt.Errorf("clear photo share links: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM photos"); err != nil {
 		rollback()
-		return fmt.Errorf("clear photo index: %w", err)
+		return false, fmt.Errorf("clear photo index: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit library reset: %w", err)
+		return false, fmt.Errorf("commit library reset: %w", err)
 	}
 
 	if s.thumbnailResetter != nil {
 		if err := s.thumbnailResetter.WaitIdle(ctx); err != nil {
-			return fmt.Errorf("wait for thumbnail work: %w", err)
+			return true, fmt.Errorf("wait for thumbnail work: %w", err)
 		}
 		if err := s.thumbnailResetter.ResetAll(ctx); err != nil {
-			return err
+			return true, err
 		}
 	}
 
 	liveDir, err := s.storage.ResolvePath(filepath.ToSlash(filepath.Join(".77photo", "live")))
 	if err != nil {
-		return fmt.Errorf("resolve live photo cache: %w", err)
+		return true, fmt.Errorf("resolve live photo cache: %w", err)
 	}
 	if err := os.RemoveAll(liveDir); err != nil {
-		return fmt.Errorf("reset live photo cache: %w", err)
+		return true, fmt.Errorf("reset live photo cache: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 func (s *Service) scan(ctx context.Context, job *Job) error {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
+	"github.com/zxxx98/77Photo/internal/maintenance"
 )
 
 const usersPath = "/api/v1/users"
@@ -157,6 +158,12 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 		writeError(w, r, http.StatusUnprocessableEntity, "USER_TRANSFER_REQUIRED", "photo transfer target is required", nil)
 	case errors.Is(err, ErrTransferInvalid):
 		writeError(w, r, http.StatusUnprocessableEntity, "USER_TRANSFER_INVALID", "photo transfer target is invalid", nil)
+	case errors.Is(err, maintenance.ErrBusy):
+		writeError(w, r, http.StatusConflict, "MAINTENANCE_IN_PROGRESS", "another maintenance task is queued or running", maintenance.Details(err))
+	case errors.Is(err, auth.ErrInvalidUsername):
+		writeError(w, r, http.StatusUnprocessableEntity, "USERNAME_INVALID", "username must be 1-64 printable characters", nil)
+	case errors.Is(err, auth.ErrInvalidPassword):
+		writeError(w, r, http.StatusUnprocessableEntity, "PASSWORD_INVALID", "password must be 12-256 characters", nil)
 	case errors.Is(err, ErrInvalidInput):
 		writeError(w, r, http.StatusUnprocessableEntity, "INVALID_REQUEST", "user input is invalid", nil)
 	default:

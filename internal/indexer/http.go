@@ -8,6 +8,7 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
+	"github.com/zxxx98/77Photo/internal/maintenance"
 )
 
 type HTTPHandler struct {
@@ -111,6 +112,8 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 			details = map[string]any{"job_id": conflict.JobID}
 		}
 		writeErrorWithDetails(w, r, http.StatusConflict, "RESCAN_IN_PROGRESS", "another rescan is already queued or running", details)
+	case errors.Is(err, maintenance.ErrBusy):
+		writeErrorWithDetails(w, r, http.StatusConflict, "MAINTENANCE_IN_PROGRESS", "another maintenance task is queued or running", maintenance.Details(err))
 	case errors.Is(err, ErrNotFound):
 		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "rescan job not found")
 	default:

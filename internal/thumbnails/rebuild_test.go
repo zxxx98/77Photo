@@ -26,10 +26,7 @@ func TestRebuildRegeneratesExistingVariants(t *testing.T) {
 	if _, _, err := thumbnailService.Ensure(ctx, photo.ID, 256); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool {
-		_, err := os.Stat(thumbnailService.CachePath(photo.ID, photo.SourceRevision, 1280))
-		return err == nil
-	})
+	waitFor(t, func() bool { return thumbnailService.PendingJobs() == 0 })
 	for _, size := range []int{256, 512, 1280} {
 		if err := os.WriteFile(thumbnailService.CachePath(photo.ID, photo.SourceRevision, size), []byte("stale"), 0o640); err != nil {
 			t.Fatal(err)
@@ -85,10 +82,7 @@ func TestIncrementalRebuildOnlyRepairsMissingVariants(t *testing.T) {
 	if _, _, err := thumbnailService.Ensure(ctx, photo.ID, 256); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool {
-		_, err := os.Stat(thumbnailService.CachePath(photo.ID, photo.SourceRevision, 1280))
-		return err == nil
-	})
+	waitFor(t, func() bool { return thumbnailService.PendingJobs() == 0 })
 
 	path256 := thumbnailService.CachePath(photo.ID, photo.SourceRevision, 256)
 	path512 := thumbnailService.CachePath(photo.ID, photo.SourceRevision, 512)
@@ -222,4 +216,76 @@ func newRebuildTestDB(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func TestFullRebuildKeepsThumbnailsWhenSourceIsUnreadableAndPrunesOldRevisions(t *testing.T) {
+	store, loader, photo := newThumbnailFixture(t, "p_full", "rev-2")
+	thumbnailService, err := NewService(loader, store, filepath.Join(t.TempDir(), "cache"), 1, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	thumbnailService.Start(ctx)
+	defer thumbnailService.Close()
+	if _, _, err := thumbnailService.Ensure(ctx, photo.ID, 256); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return thumbnailService.PendingJobs() == 0 })
+	oldRevision := thumbnailService.CachePath(photo.ID, "rev-1", 256)
+	if err := os.WriteFile(oldRevision, []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	db := newRebuildTestDB(t)
+	if _, err := db.Exec(`INSERT INTO photos (id, mime_type, scan_status, deleted_at) VALUES (?, ?, 'indexed', NULL)`, photo.ID, photo.MIMEType); err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: "u_admin", Role: acl.RoleAdmin}
+	rebuild := NewRebuildServiceWithContext(ctx, db, thumbnailService)
+
+	// With the original unreadable, the rebuild fails but the cache survives.
+	source, err := store.ResolvePath(photo.StoragePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	started, err := rebuild.StartWithMode(ctx, principal, RebuildModeFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuild.Wait()
+	job, err := rebuild.Get(ctx, principal, started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Counts.Failed != 1 {
+		t.Fatalf("counts = %+v, want one failure", job.Counts)
+	}
+	for _, size := range []int{256, 512, 1280} {
+		if _, err := os.Stat(thumbnailService.CachePath(photo.ID, photo.SourceRevision, size)); err != nil {
+			t.Fatalf("variant %d removed by failed rebuild: %v", size, err)
+		}
+	}
+
+	// Once the original is back, a full rebuild prunes the old revision.
+	if err := os.WriteFile(source, original, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rebuild.StartWithMode(ctx, principal, RebuildModeFull); err != nil {
+		t.Fatal(err)
+	}
+	rebuild.Wait()
+	if _, err := os.Stat(oldRevision); !os.IsNotExist(err) {
+		t.Fatalf("old revision variant still present: %v", err)
+	}
+	if _, err := os.Stat(thumbnailService.CachePath(photo.ID, photo.SourceRevision, 256)); err != nil {
+		t.Fatalf("current variant missing after rebuild: %v", err)
+	}
 }

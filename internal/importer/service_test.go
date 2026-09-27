@@ -267,3 +267,57 @@ func TestImportSkipsBothFilesWhenMP4PairedStillDestinationExists(t *testing.T) {
 		t.Fatalf("paired MP4 target stat error = %v, want not exists", statErr)
 	}
 }
+
+func TestImportRejectsSourcesReachedThroughSymlinks(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbstore.Open(ctx, filepath.Join(t.TempDir(), "77photo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authService := auth.NewService(db, time.Hour, false)
+	admin, _, err := authService.SetupAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: admin.ID, Role: acl.RoleAdmin}
+
+	// The storage root itself sits behind a symlink, as with many NAS mounts;
+	// that must keep working.
+	realRoot := filepath.Join(t.TempDir(), "real")
+	if err := os.MkdirAll(realRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	linkedRoot := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(realRoot, linkedRoot); err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.New(linkedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{filepath.Join("users", "bob", "sub"), filepath.Join("legacy", "2024")} {
+		if err := store.MakeDir(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(realRoot, "users", "bob"), filepath.Join(realRoot, "incoming")); err != nil {
+		t.Fatal(err)
+	}
+
+	photoService := photos.NewService(db, store, 1<<20)
+	service := NewService(db, store, indexer.NewService(db, store, photoService))
+	for _, source := range []string{"incoming", "incoming/sub"} {
+		if _, err := service.Start(ctx, principal, source, admin.ID); err != ErrInvalidSource {
+			t.Fatalf("Start(%q) error = %v, want ErrInvalidSource", source, err)
+		}
+	}
+	job, err := service.Start(ctx, principal, "legacy/2024", admin.ID)
+	if err != nil {
+		t.Fatalf("Start(real directory) error = %v", err)
+	}
+	service.Wait()
+	if got, err := service.Get(ctx, principal, job.ID); err != nil || got.Status != StatusCompleted {
+		t.Fatalf("import = %+v, %v, want completed", got, err)
+	}
+}

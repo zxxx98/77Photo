@@ -49,6 +49,7 @@ type Services struct {
 	Thumbnails       photos.ThumbnailService
 	ThumbnailRebuild http.Handler
 	PhotoCleanup     http.Handler
+	Maintenance      http.Handler
 	Shares           *shares.Service
 	ShareLinks       *sharelinks.Service
 	Indexer          *indexer.Service
@@ -102,6 +103,9 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 	}
 	if services.Auth != nil && services.PhotoCleanup != nil {
 		mux.Handle("/api/v1/admin/photos/cleanup", services.PhotoCleanup)
+	}
+	if services.Auth != nil && services.Maintenance != nil {
+		mux.Handle("/api/v1/admin/maintenance", services.Maintenance)
 	}
 	if services.Auth != nil && services.Importer != nil {
 		importHandler := importer.NewHTTPHandler(services.Importer, services.Auth)
