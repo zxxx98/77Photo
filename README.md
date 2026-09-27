@@ -36,6 +36,10 @@ Compose 将原图、缓存和 SQLite 分到三个持久化卷。生产环境应�
 
 Web 端「地图」页按拍摄位置浏览照片，照片详情显示位置和小地图，底图使用天地图。在天地图控制台申请「浏览器端」key，写入 Compose 同目录的 `.env`（`PHOTO_MAP_TIANDITU_KEY=…`，不要提交到 Git）后重启服务。升级前已入库的照片需要管理员在设置中执行一次「重新扫描文件」来读取位置。详见[部署文档](docs/operations/deployment.md)。
 
+## 功能开发设计
+
+本地人脸识别通过可选的 Windows NVIDIA GPU 容器按需处理照片，R5S 保存人物数据并支持手动增量扫描。安装见 [部署文档](docs/operations/face-recognition.md)，设计与验收边界见 [开发设计](docs/superpowers/specs/2026-09-27-local-face-recognition-design.md)。该功能默认关闭。
+
 ## 备份与性能
 
 原图和 SQLite（包括 WAL）必须备份，缓存可以删除后重建；恢复步骤见 [备份恢复文档](docs/operations/backup-restore.md)。

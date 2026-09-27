@@ -1,0 +1,36 @@
+const en = {
+ title: 'People', description: 'Recognize faces on your own computer. Browse and organize the results here.',
+ scan: 'Face scanning', privacy: 'Photo previews are sent to your computer. Face data and names remain on this photo server.',
+ disabled: 'Face scanning is not configured. Set the face worker connection in the server deployment settings.',
+ manual: 'Automatic matching is disabled until the model threshold is calibrated. You can merge people manually.',
+ test: 'Test connection', online: 'Computer connected and GPU ready.', start: 'Scan new photos', retry: 'Retry failed photos',
+ pause: 'Pause', resume: 'Continue', cancel: 'Cancel remaining', history: 'Recent scan', error: 'The request failed. Try again or check the connection.',
+ running: 'Scanning', paused: 'Paused', paused_offline: 'Computer offline — continue when it is available', completed: 'Completed',
+ completed_with_errors: 'Completed with errors', failed: 'Failed', cancelled: 'Cancelled',
+ unnamed: 'Unnamed person', empty: 'No people yet. Start a scan to find faces in your photos.',
+ back: 'All people', name: 'Person name', save: 'Save name', merge: 'Merge into selected person', target: 'Choose a person',
+ newPerson: 'New person', move: 'Move face', ignore: 'Ignore face', restore: 'Restore face', open: 'Open photo', more: 'Load more',
+ unassigned: 'Unassigned and ignored faces', refresh: 'Refresh', loading: 'Loading…', count: 'photos',
+ mergeWarning: 'The current person will be merged into the selected person. The selected name is kept.',
+ owner: 'Photo owner', allOwners: 'All owners', confirm: 'Confirm merge', dismiss: 'Cancel',
+ progress: 'Processed', failures: 'failed', noFaces: 'No faces in this group.',
+};
+const zh: Record<keyof typeof en, string> = {
+ title: '人物', description: '使用自己的电脑识别人脸，在这里浏览和整理结果。',
+ scan: '人脸扫描', privacy: '照片预览会发送到你的电脑，人脸数据和名称保存在照片服务器。',
+ disabled: '尚未配置人脸扫描，请在服务器部署设置中填写识别服务连接信息。',
+ manual: '模型阈值尚未校准，自动匹配已关闭。扫描后可以手动合并人物。',
+ test: '测试连接', online: '电脑已连接，GPU 已就绪。', start: '扫描新增照片', retry: '重试失败照片',
+ pause: '暂停', resume: '继续', cancel: '取消剩余任务', history: '最近扫描', error: '操作失败，请重试或检查连接。',
+ running: '扫描中', paused: '已暂停', paused_offline: '电脑已离线，恢复连接后可继续', completed: '已完成',
+ completed_with_errors: '已完成，部分照片失败', failed: '失败', cancelled: '已取消',
+ unnamed: '未命名人物', empty: '还没有人物，请先扫描照片。',
+ back: '全部人物', name: '人物名称', save: '保存名称', merge: '合并到所选人物', target: '选择人物',
+ newPerson: '新人物', move: '移动人脸', ignore: '忽略人脸', restore: '恢复人脸', open: '打开照片', more: '加载更多',
+ unassigned: '未归类及已忽略的人脸', refresh: '刷新', loading: '加载中…', count: '张照片',
+ mergeWarning: '当前人物将合并到所选人物，并保留所选人物的名称。',
+ owner: '照片所有者', allOwners: '全部所有者', confirm: '确认合并', dismiss: '取消',
+ progress: '已处理', failures: '失败', noFaces: '此分组没有人脸。',
+};
+export type FaceStrings = typeof en;
+export const faceStrings = (locale: string): FaceStrings => locale === 'zh' ? zh : en;

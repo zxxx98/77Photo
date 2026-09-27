@@ -33,6 +33,8 @@ photos.example.test {
 | `PHOTO_COOKIE_SECURE` | `true`（容器） | HTTPS 环境保持 true；本地 HTTP 开发可设 false |
 | `PHOTO_MAP_TIANDITU_KEY` | 空 | 天地图「浏览器端」key；为空时地图页只显示启用说明，其余功能不受影响 |
 
+本地人脸识别的 Windows GPU 容器与手动扫描配置见 [人脸识别部署](face-recognition.md)。
+
 发布镜像由 `.github/workflows/release.yml` 在 `vMAJOR.MINOR.PATCH` 标签上构建并推送 `linux/arm64` 镜像，同时上传带嵌入 Web 资源的 CGO-free ARM64 二进制。二进制运行时需要能写入配置的照片、缓存和数据库目录；不依赖 libvips 或系统图像库。
 
 升级时先备份原图和数据库，执行 `docker compose pull && docker compose up -d`，再检查 `/healthz` 和管理员 rescan。不要在升级过程中复用旧的缓存目录作为数据库卷。部署后应确认 `ffmpeg -version`、`ffprobe -version`、`heif-convert --version` 和 `curl -fsS http://127.0.0.1:8080/healthz` 均成功。

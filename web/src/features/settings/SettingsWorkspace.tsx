@@ -1,3 +1,4 @@
+import FaceScanPanel from '../people/FaceScanPanel';
 import { FormEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Check, ChevronDown, FolderInput, ImageIcon, KeyRound, RefreshCw, ShieldCheck, Trash2, UserRound } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
@@ -617,6 +618,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
         })}
       </div>
 
+      {api.faces && <FaceScanPanel api={api.faces} />}
       {otherTask && <p className="inline-state" role="status">{t('settings.maintenance.busy', { task: t(`settings.maintenance.task.${otherTask.kind}`) })}</p>}
       <div className="settings-section-heading scan-heading"><h2>{t('settings.import.title')}</h2><FolderInput size={17} /></div>
       <label className="import-organize-option">

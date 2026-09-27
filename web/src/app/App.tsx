@@ -1,5 +1,5 @@
 import { ChangeEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Folder, Image, LogOut, Map as MapIcon, Menu, Search, Settings, Upload, X } from 'lucide-react';
+import { Folder, Image, LogOut, Map as MapIcon, Menu, Search, Settings, Upload, Users, X } from 'lucide-react';
 import { createApiClient, type Folder as FolderRecord } from './api';
 import { SessionStore } from './auth';
 import { useI18n } from './I18nProvider';
@@ -21,6 +21,8 @@ import { AppShellSkeleton, MapSkeleton } from '../features/loading/LoadingStates
 // Leaflet and clustering only load when the map is opened.
 const MapWorkspace = lazy(() => import('../features/map/MapWorkspace'));
 
+const PeopleWorkspace = lazy(() => import('../features/people/PeopleWorkspace'));
+
 type View = AppView;
 type FolderLocation = Pick<FolderRecord, 'id' | 'name'>;
 
@@ -28,6 +30,7 @@ const navItems: Array<{ id: View; labelKey: TranslationKey; icon: typeof Image }
   { id: 'gallery', labelKey: 'shell.gallery', icon: Image },
   { id: 'folders', labelKey: 'shell.folders', icon: Folder },
   { id: 'map', labelKey: 'shell.map', icon: MapIcon },
+  { id: 'people', labelKey: 'shell.people', icon: Users },
   { id: 'settings', labelKey: 'shell.settings', icon: Settings },
 ];
 
@@ -109,7 +112,7 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
         </div>
         <nav className="primary-nav">
           <span className="nav-caption">{t('shell.library')}</span>
-          {navItems.map(({ id, labelKey, icon: Icon }) => (
+          {navItems.filter(item => item.id !== 'people' || user?.role === 'admin').map(({ id, labelKey, icon: Icon }) => (
             <button key={id} className={`nav-item ${view === id ? 'is-active' : ''}`} onClick={() => { onViewChange(id); setSidebarOpen(false); }}>
               <Icon size={18} strokeWidth={1.7} /><span>{t(labelKey)}</span>
             </button>
@@ -152,6 +155,7 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
 }
 
 function Workspace({ api, currentUser, view, uploadSelection, onUploadSelectionConsumed, folderContext, onFolderChange, onUpload, onUploadComplete }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View; uploadSelection: UploadSelection | null; onUploadSelectionConsumed: (id: number) => void; folderContext: FolderLocation | null; onFolderChange: (folder: FolderLocation | null) => void; onUpload: (folder?: FolderLocation | null) => void; onUploadComplete: (destination: UploadDestination) => void }) {
+  if (view === 'people' && currentUser.role === 'admin') return <Suspense fallback={<MapSkeleton />}><PeopleWorkspace api={api} currentUser={currentUser} /></Suspense>;
   if (view === 'gallery') return <GalleryWorkspace api={api} />;
   if (view === 'map') return <Suspense fallback={<MapSkeleton />}><MapWorkspace api={api} currentUser={currentUser} /></Suspense>;
   if (view === 'folders') return <FoldersWorkspace api={api} initialFolder={folderContext} onFolderChange={onFolderChange} onUpload={onUpload} />;

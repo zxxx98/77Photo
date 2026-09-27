@@ -18,6 +18,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/cleanup"
 	"github.com/zxxx98/77Photo/internal/config"
 	"github.com/zxxx98/77Photo/internal/database"
+	"github.com/zxxx98/77Photo/internal/faces"
 	"github.com/zxxx98/77Photo/internal/folders"
 	"github.com/zxxx98/77Photo/internal/httpapi"
 	"github.com/zxxx98/77Photo/internal/importer"
@@ -108,9 +109,15 @@ func run(parent context.Context, logger *slog.Logger) error {
 	photoCleanupService.SetMaintenanceLock(maintenanceLock)
 	photoCleanupHandler := cleanup.NewHTTPHandler(photoCleanupService, authService)
 
+	faceService, err := faces.NewService(ctx, db, cfg.Faces, faces.NewClient(cfg.Faces), faces.PreviewFromThumbnails(thumbnailService), maintenanceLock)
+	if err != nil {
+		return fmt.Errorf("initialize faces: %w", err)
+	}
+	defer faceService.Close()
+
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
 	shareLinkService := sharelinks.NewService(db, photoStore, thumbnailService, secureCookies)
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db, mediaTools), logger, httpapi.Services{Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, ThumbnailRebuild: thumbnailRebuildHandler, PhotoCleanup: photoCleanupHandler, Maintenance: maintenance.NewHTTPHandler(maintenanceLock, authService), Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler(), Map: photos.TiandituMapConfig(cfg.TiandituKey)})
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db, mediaTools), logger, httpapi.Services{Faces: faces.NewHandler(faceService, authService), Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, ThumbnailRebuild: thumbnailRebuildHandler, PhotoCleanup: photoCleanupHandler, Maintenance: maintenance.NewHTTPHandler(maintenanceLock, authService), Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler(), Map: photos.TiandituMapConfig(cfg.TiandituKey)})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,

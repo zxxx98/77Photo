@@ -1,3 +1,4 @@
+import type { FacesAPI } from '../features/people/types';
 export type Role = 'admin' | 'user';
 
 export interface User {
@@ -193,7 +194,7 @@ export interface BrokenPhotoScanResult {
   items: BrokenPhoto[];
 }
 
-export type MaintenanceKind = 'rescan' | 'thumbnail_rebuild' | 'import' | 'cleanup' | 'user_transfer';
+export type MaintenanceKind = 'rescan' | 'thumbnail_rebuild' | 'import' | 'cleanup' | 'user_transfer' | 'face_scan';
 
 export interface MaintenanceActivity {
   kind: MaintenanceKind;
@@ -242,6 +243,7 @@ export class ApiError extends Error {
 }
 
 export interface ApiClient {
+  faces?: FacesAPI;
   setupStatus(): Promise<{ required: boolean }>;
   setupAdmin(username: string, password: string): Promise<AuthResponse>;
   login(username: string, password: string): Promise<AuthResponse>;
@@ -387,6 +389,18 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
   }
 
   return {
+    faces: {
+      config: () => request('/api/v1/admin/faces/config') as ReturnType<FacesAPI['config']>,
+      test: () => request('/api/v1/admin/faces/test', { method: 'POST' }) as ReturnType<FacesAPI['test']>,
+      jobs: () => request('/api/v1/admin/faces/jobs') as ReturnType<FacesAPI['jobs']>,
+      start: (mode, key) => request('/api/v1/admin/faces/jobs', { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify({ mode }) }) as ReturnType<FacesAPI['start']>,
+      control: (id, action) => request(`/api/v1/admin/faces/jobs/${encodeURIComponent(id)}/${action}`, { method: 'POST' }) as ReturnType<FacesAPI['control']>,
+      people: (cursor = '') => request(`/api/v1/admin/people?cursor=${encodeURIComponent(cursor)}`) as ReturnType<FacesAPI['people']>,
+      listFaces: (id, cursor = '') => request(`/api/v1/admin/people/${encodeURIComponent(id)}/faces?cursor=${encodeURIComponent(cursor)}`) as ReturnType<FacesAPI['listFaces']>,
+      rename: (p, name) => request(`/api/v1/admin/people/${encodeURIComponent(p.id)}`, { method: 'PATCH', body: JSON.stringify({ name, revision: p.revision }) }),
+      merge: (target, source) => request(`/api/v1/admin/people/${encodeURIComponent(target.id)}/merge`, { method: 'POST', body: JSON.stringify({ source_id: source.id, revision: target.revision, source_revision: source.revision }) }),
+      assign: (face, personId, ignored) => request(`/api/v1/admin/faces/${encodeURIComponent(face.id)}`, { method: 'PATCH', body: JSON.stringify({ person_id: personId, ignored, revision: face.revision }) }),
+    },
     setupStatus: () => request<{ required: boolean }>('/api/v1/setup/status') as Promise<{ required: boolean }>,
     setupAdmin: (username, password) => request<AuthResponse>('/api/v1/setup/admin', { method: 'POST', body: JSON.stringify({ username, password }) }) as Promise<AuthResponse>,
     login: (username, password) => request<AuthResponse>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }) as Promise<AuthResponse>,

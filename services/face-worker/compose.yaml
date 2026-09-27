@@ -1,0 +1,25 @@
+services:
+  face-worker:
+    build: .
+    image: 77photo-face-worker:0.1.0
+    platform: linux/amd64
+    ports:
+      - "${FACE_BIND_IP:?set Windows LAN IP}:8091:8091"
+    environment:
+      FACE_API_KEY: ${FACE_API_KEY:?set a random secret}
+      FACE_MODEL_DIR: /models
+    volumes:
+      - ./models:/models:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    restart: "no"
+    mem_limit: 6g
+    cpus: 4
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

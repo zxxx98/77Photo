@@ -1,0 +1,10 @@
+{
+  "license": "REPLACE: record detector and recognizer weight licenses",
+  "source": "REPLACE: record model download sources and versions",
+  "embedding_model_id": "opencv-sface-2021dec-rgb-v1",
+  "embedding_dim": 128,
+  "input_mean": 0,
+  "input_std": 1,
+  "detector": {"file": "yunet.onnx", "sha256": "REPLACE_WITH_SHA256"},
+  "recognizer": {"file": "sface.onnx", "sha256": "REPLACE_WITH_SHA256"}
+}

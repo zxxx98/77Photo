@@ -3,7 +3,7 @@
 必须备份：
 
 1. `PHOTO_DATA_DIR` 中的原图和视频；
-2. `PHOTO_DB_PATH` 对应的 SQLite 数据库及其同目录的 `-wal`、`-shm` 文件（或使用 SQLite 一致性备份 API）；
+2. `PHOTO_DB_PATH` 对应的 SQLite 数据库及其同目录的 `-wal`、`-shm` 文件（或使用 SQLite 一致性备份 API）；启用人脸识别后，人物名称、关联、向量和扫描进度也在此库中；
 3. 缓存无需备份，缩略图会按 `photo ID + source revision` 重建。
 
 最安全的简单方式是停止服务后复制照片根和数据库目录：

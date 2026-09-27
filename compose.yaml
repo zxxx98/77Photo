@@ -1,6 +1,6 @@
 services:
   77photo:
-    image: ghcr.io/zxxx98/77photo:latest
+    image: ${PHOTO_IMAGE:-ghcr.io/zxxx98/77photo:latest}
     restart: unless-stopped
     # The bind-mounted host directories may be owned by root.
     user: "0:0"
@@ -20,6 +20,11 @@ services:
       PHOTO_COOKIE_SECURE: "false"
       # Tianditu browser key for the map page. Put it in a .env file next to
       # this compose file (ignored by Git); leave it unset to disable the map.
+      PHOTO_FACE_ENABLED: ${PHOTO_FACE_ENABLED:-false}
+      PHOTO_FACE_WORKER_URL: ${PHOTO_FACE_WORKER_URL:-}
+      PHOTO_FACE_WORKER_TOKEN: ${PHOTO_FACE_WORKER_TOKEN:-}
+      PHOTO_FACE_ALLOW_INSECURE_LAN: ${PHOTO_FACE_ALLOW_INSECURE_LAN:-false}
+      PHOTO_FACE_MATCH_THRESHOLD: ${PHOTO_FACE_MATCH_THRESHOLD:-0.55}
       PHOTO_MAP_TIANDITU_KEY: ${PHOTO_MAP_TIANDITU_KEY:-}
     volumes:
       # Original photos and videos: HDD

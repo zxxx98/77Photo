@@ -42,6 +42,7 @@ func NewHandler(checks HealthChecks, logger *slog.Logger) http.Handler {
 }
 
 type Services struct {
+	Faces            http.Handler
 	Auth             *auth.Service
 	Users            *users.Service
 	Folders          *folders.Service
@@ -64,6 +65,11 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 		logger = slog.Default()
 	}
 	mux := http.NewServeMux()
+	if services.Faces != nil {
+		mux.Handle("/api/v1/admin/faces/", services.Faces)
+		mux.Handle("/api/v1/admin/people", services.Faces)
+		mux.Handle("/api/v1/admin/people/", services.Faces)
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		healthz(w, r, checks)
 	})

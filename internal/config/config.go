@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/zxxx98/77Photo/internal/faces"
 	"net"
 	"os"
 	"path/filepath"
@@ -30,6 +31,7 @@ const (
 // Config contains process-wide settings. Paths are resolved relative to the
 // process working directory when supplied as relative paths.
 type Config struct {
+	Faces            faces.Config
 	DataDir          string
 	CacheDir         string
 	DBPath           string
@@ -66,7 +68,16 @@ func LoadFromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("PHOTO_MEDIA_TIMEOUT: %w", err)
 	}
 
+	faceTimeout, err := envDuration("PHOTO_FACE_REQUEST_TIMEOUT", 60*time.Second)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid face timeout")
+	}
+	threshold, err := strconv.ParseFloat(envString("PHOTO_FACE_MATCH_THRESHOLD", "0.55"), 64)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid face match threshold")
+	}
 	cfg := Config{
+		Faces:            faces.Config{Enabled: envString("PHOTO_FACE_ENABLED", "false") == "true", URL: envString("PHOTO_FACE_WORKER_URL", ""), Token: envString("PHOTO_FACE_WORKER_TOKEN", ""), Timeout: faceTimeout, AllowHTTP: envString("PHOTO_FACE_ALLOW_INSECURE_LAN", "false") == "true", MatchThreshold: threshold, MatchMargin: 0.08},
 		DataDir:          envString("PHOTO_DATA_DIR", defaultDataDir),
 		CacheDir:         envString("PHOTO_CACHE_DIR", defaultCacheDir),
 		DBPath:           envString("PHOTO_DB_PATH", defaultDBPath),
@@ -87,6 +98,9 @@ func LoadFromEnv() (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if err := c.Faces.Validate(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(c.DataDir) == "" {
 		return fmt.Errorf("PHOTO_DATA_DIR must not be empty")
 	}

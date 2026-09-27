@@ -11,6 +11,8 @@ export interface LocaleStorage {
 export type TranslationParams = Record<string, string | number>;
 
 const english = {
+  'shell.people': 'People',
+  'settings.maintenance.task.face_scan': 'Face scanning',
   'common.close': 'Close',
   'common.cancel': 'Cancel',
   'common.retry': 'Retry',
@@ -359,6 +361,8 @@ const english = {
 export type TranslationKey = keyof typeof english;
 
 const chinese: Record<TranslationKey, string> = {
+  'shell.people': '人物',
+  'settings.maintenance.task.face_scan': '人脸扫描',
   'common.close': '关闭',
   'common.cancel': '取消',
   'common.retry': '重试',
