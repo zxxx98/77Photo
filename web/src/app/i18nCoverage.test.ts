@@ -8,6 +8,11 @@ const workspaceSources = import.meta.glob([
   '../features/upload/UploadWorkspace.tsx',
   '../features/viewer/Viewer.tsx',
   '../features/settings/SettingsWorkspace.tsx',
+  '../features/settings/AccountSection.tsx',
+  '../features/settings/MembersSection.tsx',
+  '../features/settings/LibrarySection.tsx',
+  '../features/settings/SettingsCard.tsx',
+  '../features/settings/UserPicker.tsx',
 ], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 const sharingSources = import.meta.glob([
   '../features/sharing/ShareDialog.tsx',

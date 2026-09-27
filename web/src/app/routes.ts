@@ -34,6 +34,21 @@ export function mapFocusHash(focus: MapFocus): string {
   return `#/map?lat=${focus.lat.toFixed(6)}&lng=${focus.lng.toFixed(6)}&z=${focus.zoom}`;
 }
 
+export type SettingsSection = 'account' | 'members' | 'library';
+
+const settingsSections: SettingsSection[] = ['account', 'members', 'library'];
+
+/** Reads which settings tab the URL asks for; anything unknown opens the account tab. */
+export function readSettingsSection(hash: string): SettingsSection {
+  const match = /^#\/settings\?(.*)$/.exec(hash);
+  const value = match ? new URLSearchParams(match[1]).get('section') : null;
+  return settingsSections.includes(value as SettingsSection) ? value as SettingsSection : 'account';
+}
+
+export function settingsSectionHash(section: SettingsSection): string {
+  return section === 'account' ? '#/settings' : `#/settings?section=${section}`;
+}
+
 function coordinate(value: string | null): number | null {
   if (value === null || value.trim() === '') return null;
   const number = Number(value);

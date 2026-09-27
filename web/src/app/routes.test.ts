@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapFocusHash, readMapFocus, readPublicShareToken, readView } from './routes';
+import { mapFocusHash, readMapFocus, readPublicShareToken, readSettingsSection, readView, settingsSectionHash } from './routes';
 
 describe('hash routes', () => {
   it('accepts only a complete public share route', () => {
@@ -39,4 +39,18 @@ describe('hash routes', () => {
     expect(source).not.toContain('Start upload');
     expect(source).toContain("t('common.retry')");
   });
+
+  it('reads and writes the settings tab without changing the view', () => {
+    expect(readView('#/settings?section=library')).toBe('settings');
+    expect(readSettingsSection('#/settings?section=members')).toBe('members');
+    expect(readSettingsSection('#/settings?section=library')).toBe('library');
+    for (const hash of ['#/settings', '#/settings?section=unknown', '#/gallery?section=library', '']) {
+      expect(readSettingsSection(hash)).toBe('account');
+    }
+    for (const section of ['account', 'members', 'library'] as const) {
+      expect(readSettingsSection(settingsSectionHash(section))).toBe(section);
+    }
+    expect(settingsSectionHash('account')).toBe('#/settings');
+  });
 });
+

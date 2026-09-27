@@ -33,6 +33,7 @@ describe('settings rescan progress', () => {
   });
 
   afterEach(() => {
+    window.history.replaceState(null, '', '#/');
     act(() => root.unmount());
     container.remove();
     vi.useRealTimers();
@@ -57,13 +58,13 @@ describe('settings rescan progress', () => {
     await renderWith(api);
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('.scan-heading button')?.click();
+      rescanButton()?.click();
       await Promise.resolve();
       await Promise.resolve();
     });
     expect(getRescan).toHaveBeenCalledWith('scan_1');
     expect(container.textContent).toContain('已扫描 12');
-    expect(container.querySelector<HTMLButtonElement>('.scan-heading button')?.disabled).toBe(true);
+    expect(rescanButton()?.disabled).toBe(true);
     expect(container.querySelector('[role="progressbar"]')).not.toBeNull();
 
     await act(async () => {
@@ -73,7 +74,7 @@ describe('settings rescan progress', () => {
     });
     expect(container.textContent).toContain('扫描完成');
     expect(container.textContent).toContain('新增 3');
-    expect(container.querySelector<HTMLButtonElement>('.scan-heading button')?.disabled).toBe(false);
+    expect(rescanButton()?.disabled).toBe(false);
     expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100');
   });
 
@@ -84,7 +85,7 @@ describe('settings rescan progress', () => {
       .mockResolvedValueOnce({ ...completed, total: 12, processed: 12 });
     await renderWith({ listUsers: vi.fn().mockResolvedValue({ items: [] }),
       startRescan: vi.fn().mockResolvedValue(queued), getRescan } as unknown as ApiClient);
-    await act(async () => { container.querySelector<HTMLButtonElement>('.scan-heading button')?.click(); });
+    await act(async () => { rescanButton()?.click(); });
     expect(container.textContent).toContain('6 / 12');
     expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('50');
     await act(async () => { vi.advanceTimersByTime(1000); });
@@ -282,12 +283,12 @@ describe('settings rescan progress', () => {
     await renderWith(api);
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('.scan-heading button')?.click();
+      rescanButton()?.click();
       await Promise.resolve();
       await Promise.resolve();
     });
     expect(container.textContent).toContain('扫描失败');
-    expect(container.querySelector<HTMLButtonElement>('.scan-heading button')?.disabled).toBe(false);
+    expect(rescanButton()?.disabled).toBe(false);
     const calls = getRescan.mock.calls.length;
     await act(async () => { vi.advanceTimersByTime(2000); });
     expect(getRescan).toHaveBeenCalledTimes(calls);
@@ -323,13 +324,13 @@ describe('settings rescan progress', () => {
     } as unknown as ApiClient);
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('.scan-heading button')?.click();
+      rescanButton()?.click();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
     expect(container.textContent).toContain('坏照片清理正在进行');
-    expect(container.querySelector<HTMLButtonElement>('.scan-heading button')?.disabled).toBe(true);
+    expect(rescanButton()?.disabled).toBe(true);
 
     await act(async () => {
       vi.advanceTimersByTime(2000);
@@ -337,7 +338,7 @@ describe('settings rescan progress', () => {
       await Promise.resolve();
     });
     expect(container.textContent).not.toContain('坏照片清理正在进行');
-    expect(container.querySelector<HTMLButtonElement>('.scan-heading button')?.disabled).toBe(false);
+    expect(rescanButton()?.disabled).toBe(false);
   });
 
   it('hides deleted accounts and never imports into an unavailable user', async () => {
@@ -389,6 +390,10 @@ describe('settings rescan progress', () => {
   function typeInto(input: HTMLInputElement, value: string) {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function rescanButton() {
+    return buttonWithText('重新扫描文件');
   }
 
   function buttonWithText(text: string) {
@@ -476,6 +481,65 @@ describe('settings rescan progress', () => {
     expect(deleteUser).toHaveBeenCalledWith('u3', { photo_action: 'transfer', transfer_to_user_id: 'u2' });
     expect(container.textContent).toContain('已删除 kid，其照片已转给 family');
     expect(Array.from(container.querySelectorAll('.user-row')).some((row) => row.textContent?.includes('kid'))).toBe(false);
+  });
+
+  it('shows tabs only to administrators and keeps the selected tab in the URL', async () => {
+    window.history.replaceState(null, '', '#/settings?section=library');
+    await renderWith({ listUsers: vi.fn().mockResolvedValue({ items: [admin] }) } as unknown as ApiClient);
+    const tab = (name: string) => Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((item) => item.textContent?.includes(name))!;
+    const panel = (id: string) => container.querySelector<HTMLElement>(`#settings-panel-${id}`)!;
+
+    expect(Array.from(container.querySelectorAll('[role="tab"]')).map((item) => item.textContent)).toEqual(['我的账户', '家庭成员', '图库维护']);
+    expect(tab('图库维护').getAttribute('aria-selected')).toBe('true');
+    expect(panel('library').hidden).toBe(false);
+    expect(panel('account').hidden).toBe(true);
+
+    await act(async () => { tab('家庭成员').click(); });
+    expect(window.location.hash).toBe('#/settings?section=members');
+    expect(panel('members').hidden).toBe(false);
+    expect(panel('library').hidden).toBe(true);
+
+    await act(async () => { tab('家庭成员').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); });
+    expect(tab('图库维护').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tab('图库维护'));
+    await act(async () => { tab('图库维护').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })); });
+    expect(tab('我的账户').getAttribute('aria-selected')).toBe('true');
+    expect(window.location.hash).toBe('#/settings');
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    const member = { id: 'u2', username: 'family', role: 'user' as const, is_active: true };
+    await act(async () => {
+      root.render(<I18nProvider><SettingsWorkspace api={{} as ApiClient} currentUser={member} /></I18nProvider>);
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="tablist"]')).toBeNull();
+    expect(container.querySelector('#settings-panel-members')).toBeNull();
+    expect(container.textContent).toContain('修改密码');
+  });
+
+  it('keeps the reset action in the danger zone with its notes collapsed', async () => {
+    await renderWith({ listUsers: vi.fn().mockResolvedValue({ items: [admin] }) } as unknown as ApiClient);
+    const danger = container.querySelector('.settings-card.is-danger')!;
+    expect(danger.textContent).toContain('危险操作');
+    expect(Array.from(danger.querySelectorAll('button')).some((button) => button.textContent?.includes('重置并重新扫描'))).toBe(true);
+    const scanCard = rescanButton()!.closest('.settings-card')!;
+    expect(Array.from(scanCard.querySelectorAll('button')).some((button) => button.textContent?.includes('重置'))).toBe(false);
+    const details = danger.querySelector('details')!;
+    expect(details.open).toBe(false);
+    expect(details.textContent).toContain('原始照片/视频、用户和文件夹不会被删除');
+  });
+
+  it('shows a running face scan as the current maintenance task', async () => {
+    await renderWith({
+      listUsers: vi.fn().mockResolvedValue({ items: [admin] }),
+      getMaintenance: vi.fn().mockResolvedValue({ active: { kind: 'face_scan' } }),
+    } as unknown as ApiClient);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(container.textContent).toContain('人脸扫描正在进行');
+    expect(container.querySelector('#settings-tab-library .settings-tab-dot')).not.toBeNull();
+    expect(rescanButton()?.disabled).toBe(true);
   });
 });
 

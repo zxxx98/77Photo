@@ -233,8 +233,6 @@ const english = {
 
   'settings.yourAccount': 'Your account',
   'settings.title': 'Settings',
-  'settings.familyAccounts': 'Family accounts',
-  'settings.adminAccess': 'Admin access',
   'settings.newUsername': 'Username',
   'settings.temporaryPassword': 'Temporary password',
   'settings.addMember': 'Add member',
@@ -356,6 +354,22 @@ const english = {
   'settings.deleteDone': '{name} was deleted.',
   'settings.deleteTransferred': '{name} was deleted and their photos moved to {target}.',
   'settings.maintenance.task.user_transfer': 'A photo transfer',
+  'settings.adminEyebrow': 'Account & library',
+  'settings.tabs.account': 'My account',
+  'settings.tabs.members': 'Members',
+  'settings.tabs.library': 'Library',
+  'settings.learnMore': 'Learn more',
+  'settings.password.summary': 'Your other devices are signed out after you change it.',
+  'settings.members.title': 'Members',
+  'settings.members.summary': '{count} accounts. Disabled members cannot sign in; deleting lets you keep or transfer their photos.',
+  'settings.members.addTitle': 'Add a member',
+  'settings.members.addSummary': 'Set a temporary password. They can change it under My account after signing in.',
+  'settings.scan.summary': 'Rescan after adding, changing or removing files on disk to keep the library in sync.',
+  'settings.import.summary': 'Move loose files in the photo root into a member’s Imported folder.',
+  'settings.thumbnail.summary': 'Regenerate the cache when thumbnails are missing or look wrong. Originals are never modified.',
+  'settings.cleanup.summary': 'Find photos whose original is missing or empty, then remove them after you confirm.',
+  'settings.danger.title': 'Danger zone',
+  'settings.reset.summary': 'Clear the index and caches, then rebuild the whole library from the originals. Originals are kept, but photo share links stop working.',
 } as const;
 
 export type TranslationKey = keyof typeof english;
@@ -583,8 +597,6 @@ const chinese: Record<TranslationKey, string> = {
 
   'settings.yourAccount': '你的账户',
   'settings.title': '设置',
-  'settings.familyAccounts': '家庭账户',
-  'settings.adminAccess': '管理员权限',
   'settings.newUsername': '用户名',
   'settings.temporaryPassword': '临时密码',
   'settings.addMember': '添加成员',
@@ -706,6 +718,22 @@ const chinese: Record<TranslationKey, string> = {
   'settings.deleteDone': '已删除 {name}。',
   'settings.deleteTransferred': '已删除 {name}，其照片已转给 {target}。',
   'settings.maintenance.task.user_transfer': '照片转移',
+  'settings.adminEyebrow': '账户与图库',
+  'settings.tabs.account': '我的账户',
+  'settings.tabs.members': '家庭成员',
+  'settings.tabs.library': '图库维护',
+  'settings.learnMore': '了解更多',
+  'settings.password.summary': '修改后，你的其他设备会退出登录。',
+  'settings.members.title': '成员',
+  'settings.members.summary': '共 {count} 个账户。停用的成员无法登录；删除时可以保留或转移其照片。',
+  'settings.members.addTitle': '添加成员',
+  'settings.members.addSummary': '先设一个临时密码，成员登录后可以在「我的账户」里自行修改。',
+  'settings.scan.summary': '在磁盘上新增、修改或删除照片后，重新扫描让图库保持同步。',
+  'settings.import.summary': '把照片根目录里散放的文件移入某个成员的 Imported 文件夹。',
+  'settings.thumbnail.summary': '缩略图缺失或显示异常时重新生成缓存，原图不会被修改。',
+  'settings.cleanup.summary': '找出原文件已丢失或为 0 字节的照片，确认后再删除。',
+  'settings.danger.title': '危险操作',
+  'settings.reset.summary': '清空索引和缓存，再从原图重建整个图库。原图不会被删除，但照片分享链接会失效。',
 };
 
 const translations: Record<Locale, Record<TranslationKey, string>> = { en: english, zh: chinese };
