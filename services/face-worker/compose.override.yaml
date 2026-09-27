@@ -1,0 +1,9 @@
+# 本地覆盖（不改动仓库里的 compose.yaml）：
+# Docker Desktop(WSL2) 把端口绑到具体 LAN IP 时，Windows 网络栈上不会创建监听，
+# 连本机 127.0.0.1 都访问不到。这里改为 0.0.0.0 发布，来源限制交给 Windows 防火墙，
+# 只放行运行 77Photo 的那台设备即可。
+# 需要显式加载：docker compose -f compose.yaml -f compose.override.yaml up -d
+services:
+  face-worker:
+    ports: !override
+      - "8091:8091"
