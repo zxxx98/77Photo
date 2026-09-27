@@ -170,6 +170,35 @@ paths:
               schema: { $ref: '#/components/schemas/User' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /api/v1/auth/password:
+    post:
+      tags: [auth]
+      summary: Change the current user's password
+      description: |
+        Requires the current password. On success every other browser session
+        and mobile device of the user is signed out; the calling session or
+        device stays signed in. Repeated wrong current passwords are rate
+        limited per user.
+      operationId: changePassword
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
+      responses:
+        '204': { description: Password changed; other sessions and devices revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CSRFForbidden' }
+        '422':
+          description: CURRENT_PASSWORD_INCORRECT when the current password is wrong (not 401, so clients keep the session), or PASSWORD_INVALID when the new password is not 12-256 characters
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '429':
+          description: Too many wrong current passwords (LOGIN_RATE_LIMITED)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
   /api/v1/mobile/auth/login:
     post:
       tags: [mobile]
@@ -277,6 +306,7 @@ paths:
       summary: List users
       operationId: listUsers
       security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      description: Includes deleted (tombstoned) accounts with deleted_at set; clients normally hide them.
       responses:
         '200':
           description: Users without password hashes or session secrets
@@ -312,8 +342,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
         '409':
-          description: Username already exists
+          description: Username already belongs to an existing account (USERNAME_TAKEN). Usernames of deleted accounts are free for reuse.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '422': { $ref: '#/components/responses/InvalidCredentials' }
 
   /api/v1/users/{id}:
     parameters:
@@ -338,11 +369,19 @@ paths:
         '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Operation would remove the last active administrator
+          description: Operation would remove the last active administrator (LAST_ADMIN) or the username is taken (USERNAME_TAKEN)
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '422': { $ref: '#/components/responses/InvalidCredentials' }
     delete:
       tags: [users]
       summary: Delete a user while retaining or transferring their photos
+      description: |
+        retain keeps the account as a tombstone that still owns its photos and
+        frees the username for reuse. transfer moves every file under the
+        user's storage root into the recipient's root (clashing names get a
+        " (2)" style suffix), rewrites folder and photo paths, hands ownership
+        to the recipient and removes the account. A transfer holds the shared
+        maintenance lock and is rolled back on disk if it fails.
       operationId: deleteUser
       security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
@@ -358,7 +397,7 @@ paths:
         '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Last active administrator cannot be deleted
+          description: Last active administrator cannot be deleted (LAST_ADMIN), or a transfer was requested while another maintenance task runs (MAINTENANCE_IN_PROGRESS, see MaintenanceConflict)
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
         '422':
           description: A transfer target is required or invalid
@@ -1070,8 +1109,38 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
         '409':
-          description: Another scan is queued or running
+          description: A rescan is already queued or running (RESCAN_IN_PROGRESS, details.job_id), or another maintenance task holds the lock (MAINTENANCE_IN_PROGRESS)
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/admin/rescan/reset:
+    post:
+      tags: [admin]
+      summary: Clear the photo index and caches, then rescan from originals
+      description: |
+        Deletes photo index rows, photo share links, thumbnail caches and Live
+        Photo derived files, then runs a normal rescan. Original media, users,
+        folders and folder shares are kept. If cache cleanup fails after the
+        index was cleared, the rescan still runs and the job finishes as failed
+        with the cleanup error. Progress is read from GET /api/v1/admin/rescan/{jobId}.
+      operationId: resetLibraryIndex
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfirmRequest' }
+      responses:
+        '202':
+          description: Reset queued
+          content: { application/json: { schema: { $ref: '#/components/schemas/RescanJob' } } }
+        '400':
+          description: confirm was missing or false (RESET_CONFIRM_REQUIRED)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
+        '409': { $ref: '#/components/responses/MaintenanceConflict' }
 
   /api/v1/admin/rescan/{jobId}:
     get:
@@ -1088,6 +1157,182 @@ paths:
         '200':
           description: Current or completed scan status
           content: { application/json: { schema: { $ref: '#/components/schemas/RescanJob' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/admin/maintenance:
+    get:
+      tags: [admin]
+      summary: Get the maintenance task currently holding the lock
+      description: |
+        Rescan/reset, thumbnail rebuild, import, broken photo cleanup and user
+        photo transfer share one server-side lock, so at most one runs at a
+        time. Clients use this endpoint to re-attach to a running job after a
+        reload (job_id is set for rescan, thumbnail_rebuild and import) and
+        after receiving MAINTENANCE_IN_PROGRESS.
+      operationId: getMaintenance
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: Active maintenance task, or null when idle
+          content: { application/json: { schema: { $ref: '#/components/schemas/MaintenanceStatus' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminRequired' }
+
+  /api/v1/admin/thumbnails/rebuild:
+    post:
+      tags: [admin]
+      summary: Start a thumbnail rebuild
+      description: |
+        incremental only renders photos with a missing variant. full re-renders
+        every supported photo and video, replacing variants in place so a
+        failed render keeps the existing thumbnails, and prunes cached variants
+        of older source revisions. Original media is never modified.
+      operationId: startThumbnailRebuild
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ThumbnailRebuildRequest' }
+      responses:
+        '202':
+          description: Rebuild queued
+          content: { application/json: { schema: { $ref: '#/components/schemas/ThumbnailRebuildJob' } } }
+        '400':
+          description: Invalid JSON (INVALID_REQUEST) or unknown mode (INVALID_REBUILD_MODE)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
+        '409':
+          description: A rebuild is already running (THUMBNAIL_REBUILD_IN_PROGRESS, details.job_id), or another maintenance task holds the lock (MAINTENANCE_IN_PROGRESS)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/admin/thumbnails/rebuild/{jobId}:
+    get:
+      tags: [admin]
+      summary: Get thumbnail rebuild progress and result
+      operationId: getThumbnailRebuild
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/ID' }
+      responses:
+        '200':
+          description: Current or completed rebuild status
+          content: { application/json: { schema: { $ref: '#/components/schemas/ThumbnailRebuildJob' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/admin/photos/cleanup:
+    get:
+      tags: [admin]
+      summary: Scan for clearly broken photos
+      description: |
+        Reports indexed photos whose original is missing or zero bytes. A photo
+        is only reported missing when its library root (users/{id} or
+        shared/{id}) is present, so an unmounted volume never looks like mass
+        deletion; such photos and unreadable entries are counted in skipped.
+        The scan is synchronous and holds the maintenance lock while it runs.
+      operationId: scanBrokenPhotos
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: Scan result; nothing is deleted
+          content: { application/json: { schema: { $ref: '#/components/schemas/BrokenPhotoScanResult' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminRequired' }
+        '409': { $ref: '#/components/responses/MaintenanceConflict' }
+    post:
+      tags: [admin]
+      summary: Permanently delete confirmed broken photos
+      description: |
+        Deletes only the IDs the administrator confirmed from a previous scan,
+        and only if each is still clearly broken now. IDs that are no longer
+        broken or no longer exist are reported in failures and left untouched.
+      operationId: cleanupBrokenPhotos
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BrokenPhotoCleanupRequest' }
+      responses:
+        '200':
+          description: Cleanup result
+          content: { application/json: { schema: { $ref: '#/components/schemas/BrokenPhotoCleanupResult' } } }
+        '400':
+          description: Invalid JSON (INVALID_REQUEST)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
+        '409': { $ref: '#/components/responses/MaintenanceConflict' }
+        '422':
+          description: confirm was not true or ids was empty (CONFIRMATION_REQUIRED), or more than 10000 ids (BATCH_TOO_LARGE)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/admin/imports:
+    post:
+      tags: [admin]
+      summary: Move loose files from the photo root into a user's library
+      description: |
+        source_path is the one client-supplied filesystem location in the API.
+        It must be relative to the photo root, must not contain "..", absolute
+        paths, backslashes or NUL, must not start with users/, shared/ or a
+        dot directory, and no component may be a symlink. "." imports root
+        files outside users/, shared/ and hidden directories. Files move to
+        users/{user_id}/Imported, keeping subfolders or, with
+        organize_by_date, as Imported/YYYY/MM/DD using the timeline capture
+        date. Existing destination files are never overwritten. Moved files
+        are indexed by a follow-up rescan before the job completes.
+      operationId: startImport
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportRequest' }
+      responses:
+        '202':
+          description: Import queued
+          content: { application/json: { schema: { $ref: '#/components/schemas/ImportJob' } } }
+        '400':
+          description: Invalid JSON (INVALID_JSON) or rejected source directory (INVALID_IMPORT_SOURCE)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/AdminOrCSRFForbidden' }
+        '404':
+          description: Target user does not exist, is disabled or deleted (USER_NOT_FOUND)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '409':
+          description: An import is already running (IMPORT_IN_PROGRESS), or another maintenance task holds the lock (MAINTENANCE_IN_PROGRESS)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/admin/imports/{jobId}:
+    get:
+      tags: [admin]
+      summary: Get import progress and result
+      operationId: getImport
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/ID' }
+      responses:
+        '200':
+          description: Current or completed import status
+          content: { application/json: { schema: { $ref: '#/components/schemas/ImportJob' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/AdminRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1240,6 +1485,20 @@ components:
     NameConflict:
       description: Destination already contains a different item with this name
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    InvalidCredentials:
+      description: USERNAME_INVALID (username must be 1-64 printable characters after trimming) or PASSWORD_INVALID (password must be 12-256 characters)
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    MaintenanceConflict:
+      description: Another maintenance task holds the shared lock (MAINTENANCE_IN_PROGRESS). details.kind names the running task and details.job_id is set when it has a job; see GET /api/v1/admin/maintenance.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            error:
+              code: MAINTENANCE_IN_PROGRESS
+              message: another maintenance task is queued or running
+              request_id: req_01JABC
+              details: { kind: import, job_id: import_1758873600000000000 }
   schemas:
     ID:
       type: string
@@ -1256,7 +1515,11 @@ components:
       required: [id, username, role, is_active, created_at, updated_at]
       properties:
         id: { $ref: '#/components/schemas/ID' }
-        username: { type: string, minLength: 1, maxLength: 64 }
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: For deleted accounts this is the name the account had; the name itself is free for reuse.
         role: { $ref: '#/components/schemas/Role' }
         is_active: { type: boolean }
         deleted_at:
@@ -1353,12 +1616,19 @@ components:
           type: string
           enum: [retain, transfer]
           default: retain
-          description: Retain leaves a deleted-user tombstone and its photos intact; transfer moves ownership first.
+          description: retain leaves a deleted-user tombstone and its photos intact; transfer moves the files and ownership to transfer_to_user_id and removes the account.
         transfer_to_user_id:
           anyOf:
             - $ref: '#/components/schemas/ID'
             - type: 'null'
           description: Required when photo_action is transfer; must identify another active user.
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      additionalProperties: false
+      properties:
+        current_password: { type: string, format: password }
+        new_password: { type: string, minLength: 12, maxLength: 256, format: password }
     Folder:
       type: object
       required: [id, owner_id, name, is_shared, created_at, updated_at]
@@ -1606,6 +1876,136 @@ components:
             missing: { type: integer, minimum: 0 }
             failed: { type: integer, minimum: 0 }
         error: { type: [string, 'null'] }
+    ConfirmRequest:
+      type: object
+      required: [confirm]
+      properties:
+        confirm: { type: boolean, const: true }
+    MaintenanceKind:
+      type: string
+      enum: [rescan, thumbnail_rebuild, import, cleanup, user_transfer]
+    MaintenanceActivity:
+      type: object
+      required: [kind]
+      properties:
+        kind: { $ref: '#/components/schemas/MaintenanceKind' }
+        job_id:
+          $ref: '#/components/schemas/ID'
+          description: Set for rescan, thumbnail_rebuild and import; poll the matching job endpoint.
+    MaintenanceStatus:
+      type: object
+      required: [active]
+      properties:
+        active:
+          anyOf:
+            - $ref: '#/components/schemas/MaintenanceActivity'
+            - type: 'null'
+    ThumbnailRebuildRequest:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [incremental, full]
+          default: full
+          description: Omitted or empty means full.
+    ThumbnailRebuildJob:
+      type: object
+      required: [id, mode, status, started_at, counts]
+      properties:
+        id: { $ref: '#/components/schemas/ID' }
+        mode: { type: string, enum: [incremental, full] }
+        status: { type: string, enum: [queued, running, completed, failed] }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        counts:
+          type: object
+          required: [total, processed, regenerated, failed]
+          properties:
+            total: { type: integer, minimum: 0 }
+            processed: { type: integer, minimum: 0 }
+            regenerated: { type: integer, minimum: 0 }
+            failed: { type: integer, minimum: 0 }
+        error: { type: string }
+    BrokenPhoto:
+      type: object
+      required: [id, filename, reason]
+      properties:
+        id: { $ref: '#/components/schemas/ID' }
+        filename: { type: string }
+        reason: { type: string, enum: [missing, empty] }
+    BrokenPhotoScanResult:
+      type: object
+      required: [scanned, broken, skipped, items]
+      properties:
+        scanned: { type: integer, minimum: 0 }
+        broken: { type: integer, minimum: 0 }
+        skipped:
+          type: integer
+          minimum: 0
+          description: Photos not classified because their library root is unavailable or the original could not be inspected; never deleted.
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BrokenPhoto' }
+    BrokenPhotoCleanupRequest:
+      type: object
+      required: [confirm, ids]
+      properties:
+        confirm: { type: boolean, const: true }
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items: { $ref: '#/components/schemas/ID' }
+          description: Photo IDs from a previous scan that the administrator confirmed.
+    BrokenPhotoCleanupResult:
+      type: object
+      required: [scanned, found, deleted, failed, failures]
+      properties:
+        scanned: { type: integer, minimum: 0, description: Distinct IDs received }
+        found: { type: integer, minimum: 0, description: IDs still broken at cleanup time }
+        deleted: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        failures:
+          type: array
+          items:
+            type: object
+            required: [id, code]
+            properties:
+              id: { $ref: '#/components/schemas/ID' }
+              code:
+                type: string
+                enum: [NOT_FOUND, NOT_BROKEN, WRITE_FORBIDDEN, INTERNAL_ERROR]
+                description: NOT_BROKEN means the photo was left untouched because it is no longer clearly broken.
+    ImportRequest:
+      type: object
+      required: [source_path, user_id]
+      properties:
+        source_path:
+          type: string
+          default: .
+          description: Directory relative to the photo root; empty means ".".
+        user_id: { $ref: '#/components/schemas/ID' }
+        organize_by_date: { type: boolean, default: false }
+    ImportJob:
+      type: object
+      required: [id, status, source_path, user_id, organize_by_date, started_at, counts]
+      properties:
+        id: { $ref: '#/components/schemas/ID' }
+        status: { type: string, enum: [queued, running, completed, failed] }
+        source_path: { type: string }
+        user_id: { $ref: '#/components/schemas/ID' }
+        organize_by_date: { type: boolean }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        counts:
+          type: object
+          required: [scanned, moved, skipped, failed]
+          properties:
+            scanned: { type: integer, minimum: 0 }
+            moved: { type: integer, minimum: 0 }
+            skipped: { type: integer, minimum: 0, description: 'Files left in place: destination already exists, hidden or temporary files, and symlinks.' }
+            failed: { type: integer, minimum: 0 }
+        error: { type: string }
     HealthResponse:
       type: object
       required: [status, database, storage, media, request_id]
@@ -1649,12 +2049,24 @@ components:
         - DUPLICATE_PHOTO
         - FOLDER_NOT_EMPTY
         - FOLDER_DESCENDANT
-        - RESCAN_ALREADY_RUNNING
+        - RESCAN_IN_PROGRESS
+        - THUMBNAIL_REBUILD_IN_PROGRESS
+        - IMPORT_IN_PROGRESS
+        - MAINTENANCE_IN_PROGRESS
+        - RESET_CONFIRM_REQUIRED
+        - INVALID_REBUILD_MODE
+        - INVALID_IMPORT_SOURCE
+        - INVALID_JSON
+        - USER_NOT_FOUND
+        - BATCH_TOO_LARGE
         - UPLOAD_TOO_LARGE
         - UNSUPPORTED_MEDIA_TYPE
         - INVALID_MEDIA
         - PIXEL_LIMIT_EXCEEDED
         - USERNAME_TAKEN
+        - USERNAME_INVALID
+        - PASSWORD_INVALID
+        - CURRENT_PASSWORD_INCORRECT
         - LAST_ADMIN
         - USER_TRANSFER_REQUIRED
         - USER_TRANSFER_INVALID
