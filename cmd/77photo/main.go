@@ -66,6 +66,10 @@ func run(parent context.Context, logger *slog.Logger) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
+	identity, err := httpapi.LoadServerIdentity(ctx, db)
+	if err != nil {
+		return fmt.Errorf("load server identity: %w", err)
+	}
 	authService := auth.NewService(db, cfg.SessionTTL, os.Getenv("PHOTO_COOKIE_SECURE") != "false")
 	userService := users.NewService(db, authService)
 	photoStore, err := storage.New(cfg.DataDir)
@@ -117,7 +121,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
 	shareLinkService := sharelinks.NewService(db, photoStore, thumbnailService, secureCookies)
-	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db, mediaTools), logger, httpapi.Services{Faces: faces.NewHandler(faceService, authService), Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, ThumbnailRebuild: thumbnailRebuildHandler, PhotoCleanup: photoCleanupHandler, Maintenance: maintenance.NewHTTPHandler(maintenanceLock, authService), Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler(), Map: photos.TiandituMapConfig(cfg.TiandituKey)})
+	handler := httpapi.NewHandlerWithServices(configuredHealthChecks(cfg, db, mediaTools), logger, httpapi.Services{Identity: identity, Faces: faces.NewHandler(faceService, authService), Auth: authService, Users: userService, Folders: folderService, Photos: photoService, Thumbnails: thumbnailService, ThumbnailRebuild: thumbnailRebuildHandler, PhotoCleanup: photoCleanupHandler, Maintenance: maintenance.NewHTTPHandler(maintenanceLock, authService), Shares: shareService, ShareLinks: shareLinkService, Indexer: indexerService, Importer: importerService, SecureCookies: secureCookies, Static: webassets.Handler(), Map: photos.TiandituMapConfig(cfg.TiandituKey)})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,

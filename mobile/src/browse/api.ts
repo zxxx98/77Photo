@@ -1,3 +1,4 @@
+import {ServerConnection, type ServerProfile} from '../auth/connection';
 import {ApiError, refresh} from '../auth/api';
 import {clearSession, saveSession, type MobileSession} from '../auth/session';
 
@@ -37,19 +38,65 @@ export function groupPhotos(items: Photo[]): {date: string; items: Photo[]}[] {
 export class BrowseApi {
   private session: MobileSession;
   private refreshing: Promise<MobileSession> | null = null;
+  readonly connection = new ServerConnection();
+  private listeners = new Set<() => void>();
+  private revision = 0;
+  subscribe = (listener: () => void) => {this.listeners.add(listener); return () => {this.listeners.delete(listener);};};
+  getRevision = () => this.revision;
+  private notifyConnection() {this.revision++; this.listeners.forEach(listener => listener());}
+  private reconnecting: Promise<MobileSession> | null = null;
+  private reconnectedAt = 0;
+  private saving: Promise<void> = Promise.resolve();
   private folderPermissions = new Map<string, 'read' | 'write'>();
   constructor(session: MobileSession, private onSession: (session: MobileSession) => void) {
     this.session = session;
+  }
+
+  private async commit(next: MobileSession) {
+    const changedAddress = this.session.server !== next.server;
+    this.session = next;
+    this.saving = this.saving.catch(() => {}).then(() => saveSession(next));
+    await this.saving;
+    if (this.session === next) {this.onSession(next); if (changedAddress) {this.notifyConnection();}}
+  }
+
+  async updateProfile(profile: ServerProfile) {
+    if (this.refreshing) {await this.refreshing;}
+    this.connection.invalidate();
+    this.reconnecting = null;
+    this.reconnectedAt = 0;
+    await this.commit({...this.session, profile});
+  }
+
+  async reconnect(force = false): Promise<MobileSession> {
+    if (this.reconnecting) {return this.reconnecting;}
+    if (!force && Date.now() - this.reconnectedAt < 3000) {return this.connectedSession();}
+    this.connection.invalidate();
+    const previous = this.session.server;
+    const pending = this.connectedSession().then(next => {
+      this.reconnectedAt = Date.now();
+      if (previous === next.server) {this.notifyConnection();}
+      return next;
+    }).finally(() => {if (this.reconnecting === pending) {this.reconnecting = null;}});
+    this.reconnecting = pending;
+    return pending;
+  }
+
+  private async connectedSession(): Promise<MobileSession> {
+    const snapshot = this.session;
+    const server = await this.connection.resolve(snapshot);
+    if (snapshot.profile !== this.session.profile) {return this.connectedSession();}
+    if (server !== this.session.server) {await this.commit({...this.session, server});}
+    return this.session;
   }
 
   private async rotate(): Promise<MobileSession> {
     if (!this.refreshing) {
       this.refreshing = (async () => {
         try {
-          const next = await refresh(this.session);
-          await saveSession(next);
-          this.session = next;
-          this.onSession(next);
+          const renewed = await refresh(this.session);
+          const next = {...renewed, server: this.session.server, profile: this.session.profile};
+          await this.commit(next);
           return next;
         } catch (error) {
           if (error instanceof ApiError && error.status === 401) {await clearSession();}
@@ -61,31 +108,41 @@ export class BrowseApi {
   }
 
   async validSession(): Promise<MobileSession> {
+    await this.connectedSession();
     const expiry = Date.parse(this.session.accessExpiresAt);
     if (!Number.isFinite(expiry) || expiry <= Date.now() + 60_000) {return this.rotate();}
     return this.session;
   }
 
-  async request<T>(path: string, retried = false): Promise<T> {
+  async request<T>(path: string, retried = false, connectionRetried = false): Promise<T> {
     const session = await this.validSession();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
+    let response: Response;
     try {
-      const response = await fetch(session.server + path, {
+      response = await fetch(session.server + path, {
         headers: {Accept: 'application/json', Authorization: `Bearer ${session.accessToken}`},
         signal: controller.signal,
       });
-      if (response.status === 401 && !retried) {
-        // Another request may have rotated the pair while this one was in flight.
-        if (session.accessToken === this.session.accessToken) {await this.rotate();}
-        return this.request<T>(path, true);
+    } catch (error) {
+      // Only replay the GET itself. A failed refresh POST may already have
+      // rotated the token pair and must never be retried by this fallback.
+      if (!connectionRetried && this.session.profile?.publicKey &&
+          (error instanceof TypeError || (error instanceof Error && error.name === 'AbortError'))) {
+        if (session.server === this.session.server) {await this.reconnect();}
+        return this.request<T>(path, retried, true);
       }
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new ApiError(response.status, body?.error?.code ?? '', body?.error?.message ?? '请求失败');
-      }
-      return await response.json() as T;
+      throw error;
     } finally {clearTimeout(timer);}
+    if (response.status === 401 && !retried) {
+      if (session.accessToken === this.session.accessToken) {await this.rotate();}
+      return this.request<T>(path, true, connectionRetried);
+    }
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new ApiError(response.status, body?.error?.code ?? '', body?.error?.message ?? '请求失败');
+    }
+    return await response.json() as T;
   }
 
   listPhotos(folderId?: string, cursor?: string, limit = 50): Promise<PhotoPage> {
@@ -135,5 +192,9 @@ export class BrowseApi {
       `/api/v1/photos/${encodeURIComponent(id)}/${kind}${kind === 'thumbnail' ? '?size=256' : ''}`;
     return {uri: session.server + route, headers: {Authorization: `Bearer ${session.accessToken}`}};
   }
-  async retryMedia() {await this.rotate();}
+  async retryMedia() {
+    const previous = this.session.server;
+    await this.reconnect();
+    if (previous === this.session.server) {await this.rotate();}
+  }
 }

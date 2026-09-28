@@ -3,8 +3,9 @@ import {ActivityIndicator, Pressable, ScrollView, StatusBar, StyleSheet, Text, T
 import {SafeAreaProvider, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {ApiError, checkServer, login, revokeDevice} from './src/auth/api';
 import {restoreSession} from './src/auth/controller';
+import {IdentityError, IdentityUnavailableError, ServerConnection, verifyAddress, type ServerProfile} from './src/auth/connection';
 import {normalizeServer} from './src/auth/server';
-import {clearSession, loadLastServer, loadSession, saveSession, type MobileSession} from './src/auth/session';
+import {clearSession, loadLastServer, loadLastProfile, loadSession, saveSession, type MobileSession} from './src/auth/session';
 import BrowseApp from './src/browse/BrowseApp';
 import {clearQueue} from './src/upload/queue';
 
@@ -28,6 +29,7 @@ function message(error: unknown): string {
 function Main() {
   const insets = useSafeAreaInsets();
   const [server, setServer] = useState('');
+  const [backups, setBackups] = useState<string[]>([]);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -81,8 +83,28 @@ function Main() {
     }
     setPending(true);
     try {
+      const extraAddresses = backups.filter(value => value.trim()).map(normalizeServer);
+      const previous = await loadLastProfile();
+      let profile: ServerProfile = {id: address, addresses: [{url: address, name: '默认地址', verified: false}]};
+      if (previous?.publicKey && previous.addresses.some(a => a.url === address && a.verified)) {
+        profile = previous;
+        address = await new ServerConnection().resolve({server: address, profile});
+      }
+      try {
+        const publicKey = await verifyAddress(address, profile.publicKey);
+        profile = {...profile, publicKey, addresses: profile.addresses.map(a => a.url === address ? {...a, verified: true} : a)};
+      } catch (problem) {
+        if (!(problem instanceof IdentityUnavailableError) || profile.publicKey || extraAddresses.length) {throw problem;}
+      }
+      for (const url of extraAddresses) {
+        if (profile.addresses.some(a => a.url === url)) {continue;}
+        if (profile.addresses.length >= 8) {throw new Error('最多添加 8 个地址');}
+        let verified = false;
+        try {await verifyAddress(url, profile.publicKey); verified = true;} catch (problem) {if (problem instanceof IdentityError) {throw problem;}}
+        profile.addresses.push({url, name: '备用地址', verified});
+      }
       await checkServer(address);
-      const signedIn = await login(address, username.trim(), password);
+      const signedIn = {...await login(address, username.trim(), password), profile};
       try {
         await saveSession(signedIn);
       } catch (storageError) {
@@ -141,6 +163,15 @@ function Main() {
           keyboardType="url" accessibilityLabel="服务器地址" editable={!pending} />
         {server.trim().toLowerCase().startsWith('http://') ?
           <Text style={styles.warning}>HTTP 连接未加密，账号和照片可能被同一网络中的设备读取。请仅在可信内网使用。</Text> : null}
+        {backups.map((value, index) => <View key={index}>
+          <TextInput style={styles.input} value={value} onChangeText={text => setBackups(old => old.map((item, i) => i === index ? text : item))}
+            placeholder="备用地址，例如 http://100.90.1.10:8080" autoCapitalize="none" autoCorrect={false}
+            keyboardType="url" accessibilityLabel={`备用地址 ${index + 1}`} editable={!pending} />
+          <Pressable disabled={pending} accessibilityRole="button" style={styles.secondary} onPress={() => setBackups(old => old.filter((_, i) => i !== index))}><Text style={styles.secondaryText}>删除备用地址</Text></Pressable>
+          {value.trim().toLowerCase().startsWith('http://') ? <Text style={styles.warning}>HTTP 连接未加密，请仅在可信内网或加密组网中使用。</Text> : null}
+        </View>)}
+        {backups.length < 7 ? <Pressable disabled={pending} accessibilityRole="button" style={styles.secondary} onPress={() => setBackups(old => [...old, ''])}><Text style={styles.secondaryText}>添加备用地址</Text></Pressable> : null}
+        {backups.length ? <Text style={styles.hint}>备用地址验证通过后自动启用；离线地址可登录后在设置中验证。</Text> : null}
         <Text style={styles.label}>账号</Text>
         <TextInput style={styles.input} value={username} onChangeText={setUsername}
           placeholder="用户名" autoCapitalize="none" autoCorrect={false}

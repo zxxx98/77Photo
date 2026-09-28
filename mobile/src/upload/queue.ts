@@ -14,7 +14,7 @@ const picker = NativeModules.Photo77Picker as {
   pick(): Promise<PickedFile[]>; deleteFile(path: string): Promise<boolean>;
 };
 export const pickMedia = () => picker.pick();
-const keyFor = (session: MobileSession) => `upload-queue:v1:${encodeURIComponent(session.server)}:${encodeURIComponent(session.username)}`;
+const keyFor = (session: MobileSession) => `upload-queue:v1:${encodeURIComponent(session.profile?.id ?? session.server)}:${encodeURIComponent(session.username)}`;
 const blockedScopes = new Set<string>();
 const writes = new Map<string, Promise<void>>();
 const baseName = (name: string) => name.replace(/\.[^.]+$/, '').toLocaleLowerCase();
@@ -91,7 +91,7 @@ export async function uploadOne(api: BrowseApi, item: UploadItem, progress: (val
       ...(item.motion ? [{name: 'motion', filename: item.motion.name, type: item.motion.mime, data: ReactNativeBlobUtil.wrap(item.motion.path)}] : []),
     ];
     const route = live ? 'live-upload' : 'upload';
-    const request = ReactNativeBlobUtil.config({timeout: 120000}).fetch('POST', `${session.server}/api/v1/photos/${route}`,
+    const request = ReactNativeBlobUtil.config({timeout: 120000, followRedirect: false}).fetch('POST', `${session.server}/api/v1/photos/${route}`,
       {Authorization: `Bearer ${session.accessToken}`, Accept: 'application/json'}, body);
     request.uploadProgress({interval: 250}, (sent, total) => {if (total > 0) {progress(Math.min(99, Math.round(sent / total * 100)));}});
     const response = await request;

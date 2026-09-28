@@ -1,8 +1,9 @@
-import {useCallback, useEffect, useRef, useState} from 'react';
+import {useCallback, useEffect, useRef, useState, useSyncExternalStore} from 'react';
 import {ApiError} from '../auth/api';
 import {BrowseApi, errorState, type LoadState, type Photo} from './api';
 
 export function usePhotos(api: BrowseApi, folderId?: string) {
+  const revision = useSyncExternalStore(api.subscribe, api.getRevision);
   const [items, setItems] = useState<Photo[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>('loading');
@@ -51,6 +52,6 @@ export function usePhotos(api: BrowseApi, folderId?: string) {
     load(true);
     const currentGeneration = generation.current;
     return () => {generation.current = currentGeneration + 1; busy.current = false;};
-  }, [load]);
+  }, [load, revision]);
   return {items, cursor, state, moreState, refresh: () => load(true), loadMore: () => load(false)};
 }

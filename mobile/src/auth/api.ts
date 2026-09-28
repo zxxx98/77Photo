@@ -74,7 +74,7 @@ export async function refresh(session: MobileSession): Promise<MobileSession> {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({refresh_token: session.refreshToken}),
   });
-  return sessionFromResponse(session.server, data);
+  return {...session, ...sessionFromResponse(session.server, data)};
 }
 
 export async function me(session: MobileSession): Promise<string> {

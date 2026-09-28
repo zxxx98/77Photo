@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -42,6 +43,7 @@ func NewHandler(checks HealthChecks, logger *slog.Logger) http.Handler {
 }
 
 type Services struct {
+	Identity         ed25519.PrivateKey
 	Faces            http.Handler
 	Auth             *auth.Service
 	Users            *users.Service
@@ -65,6 +67,9 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 		logger = slog.Default()
 	}
 	mux := http.NewServeMux()
+	if len(services.Identity) == ed25519.PrivateKeySize {
+		mux.HandleFunc("/api/v1/server/identity", identityHandler(services.Identity))
+	}
 	if services.Faces != nil {
 		mux.Handle("/api/v1/admin/faces/", services.Faces)
 		mux.Handle("/api/v1/admin/people", services.Faces)

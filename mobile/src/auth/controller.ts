@@ -1,3 +1,4 @@
+import {ServerConnection} from './connection';
 import {ApiError, me, refresh} from './api';
 import {clearSession, saveSession, type MobileSession} from './session';
 
@@ -28,6 +29,8 @@ async function refreshOnce(session: MobileSession): Promise<MobileSession> {
 
 /** Validates the device with the server; offline errors leave credentials intact. */
 export async function restoreSession(session: MobileSession): Promise<MobileSession> {
+  const server = await new ServerConnection().resolve(session);
+  if (server !== session.server) {session = {...session, server}; await saveSession(session);}
   let current = session;
   try {
     if (expiresSoon(current)) {

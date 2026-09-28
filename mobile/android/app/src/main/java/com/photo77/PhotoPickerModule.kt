@@ -32,6 +32,13 @@ class PhotoPickerModule(private val context: ReactApplicationContext) : ReactCon
   override fun getName() = "Photo77Picker"
 
   @ReactMethod
+  fun identityChallenge(promise: Promise) {
+    val bytes = ByteArray(32)
+    java.security.SecureRandom().nextBytes(bytes)
+    promise.resolve(bytes.joinToString("") { "%02x".format(it.toInt() and 255) })
+  }
+
+  @ReactMethod
   fun shareMedia(url: String, bearer: String, mime: String, name: String, promise: Promise) {
     executor.execute {
       var connection: HttpURLConnection? = null

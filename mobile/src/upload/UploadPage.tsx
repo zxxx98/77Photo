@@ -11,7 +11,7 @@ const muted = '#75808A';
 type Props = {api: BrowseApi; session: MobileSession; active: boolean; incomingFolder: Folder | null; clearIncoming: () => void};
 
 export default function UploadPage({api, session, active, incomingFolder, clearIncoming}: Props) {
-  const accountKey = `${session.server}\n${session.username}`;
+  const accountKey = `${session.profile?.id ?? session.server}\n${session.username}`;
   const [items, setItems] = useState<UploadItem[]>([]);
   const itemsRef = useRef<UploadItem[]>([]);
   const saving = useRef<Promise<void>>(Promise.resolve());

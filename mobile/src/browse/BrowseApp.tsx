@@ -1,4 +1,6 @@
-import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import NetInfo from '@react-native-community/netinfo';
+import ServerAddresses from '../auth/ServerAddresses';
+import React, {useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore} from 'react';
 import {ActivityIndicator, AppState, BackHandler, FlatList, Image, NativeModules, Pressable, ScrollView, StatusBar, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
 import Video from 'react-native-video';
 import ReactNativeBlobUtil from 'react-native-blob-util';
@@ -29,16 +31,18 @@ function StateView({state, retry}: {state: LoadState; retry: () => void}) {
 }
 
 function MediaTile({api, photo, size, open}: {api: BrowseApi; photo: Photo; size: number; open: () => void}) {
+  const revision = useSyncExternalStore(api.subscribe, api.getRevision);
   const [source, setSource] = useState<{uri: string; headers: {Authorization: string}}>();
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
+    setFailed(false);
     api.mediaSource(photo.id, 'thumbnail').then(value => {if (live) {setSource(value);}}).catch(() => {if (live) {setFailed(true);}});
     return () => {live = false;};
-  }, [api, photo.id, attempt]);
+  }, [api, photo.id, attempt, revision]);
   function imageError() {
-    if (attempt < 2) {setTimeout(() => setAttempt(attempt + 1), 1200 * (attempt + 1));}
+    if (attempt < 2) {api.reconnect().then(() => {setFailed(false); setAttempt(attempt + 1);}).catch(() => setFailed(true));}
     else {setFailed(true);}
   }
   return <Pressable style={[styles.tile, {width: size, height: size}]} accessibilityRole="button"
@@ -57,13 +61,14 @@ function MediaGrid({api, photos, open}: {api: BrowseApi; photos: Photo[]; open: 
 }
 
 function FolderCover({api, folder}: {api: BrowseApi; folder: Folder}) {
+  const revision = useSyncExternalStore(api.subscribe, api.getRevision);
   const [source, setSource] = useState<{uri: string; headers: {Authorization: string}}>();
   useEffect(() => {
     let active = true;
     api.listPhotos(folder.id, undefined, 1).then(page => page.items[0] ? api.mediaSource(page.items[0].id, 'thumbnail') : undefined)
       .then(value => {if (active) {setSource(value);}}).catch(() => {});
     return () => {active = false;};
-  }, [api, folder.id]);
+  }, [api, folder.id, revision]);
   return <View style={styles.folderIcon}>{source ? <Image source={source} style={styles.folderImage} /> : <Icon name="folders" size={24} />}</View>;
 }
 
@@ -90,6 +95,7 @@ function Photos({api, open, settings}: {api: BrowseApi; open: (photo: Photo, all
 }
 
 function Folders({api, stack, setStack, open, settings, upload}: {api: BrowseApi; stack: Folder[]; setStack: (folders: Folder[]) => void; open: (photo: Photo, all: Photo[]) => void; settings: () => void; upload: (folder: Folder) => void}) {
+  const revision = useSyncExternalStore(api.subscribe, api.getRevision);
   const current = stack[stack.length - 1];
   const viewportHeight = useRef(0);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -100,7 +106,7 @@ function Folders({api, stack, setStack, open, settings, upload}: {api: BrowseApi
     try {const result = await api.listFolders(current?.id); setFolders(result); setState(result.length ? 'ready' : 'empty');}
     catch (error) {setState(errorState(error));}
   }, [api, current?.id]);
-  useEffect(() => {load();}, [load]);
+  useEffect(() => {load();}, [load, revision]);
   const loadNearEnd = (remaining: number) => {
     if (current && remaining < 320 && page.cursor && page.moreState === 'ready') {page.loadMore();}
   };
@@ -132,6 +138,7 @@ function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; 
   const selected = photos[index] ?? initial;
   const [photo, setPhoto] = useState(selected);
   const [folderName, setFolderName] = useState('');
+  const revision = useSyncExternalStore(api.subscribe, api.getRevision);
   const [source, setSource] = useState<{uri: string; headers: {Authorization: string}}>();
   const [motionSource, setMotionSource] = useState<{uri: string; headers: {Authorization: string}}>();
   const [motionState, setMotionState] = useState<'none' | 'loading' | 'playing' | 'failed'>('none');
@@ -165,7 +172,7 @@ function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; 
       }
     }).catch(error => {if (active) {setState(errorState(error));}});
     return () => {active = false;};
-  }, [api, selected, mediaRetry, motionRetry]);
+  }, [api, selected, mediaRetry, motionRetry, revision]);
   async function mediaFailed() {
     if (mediaRetry < 1) {
       try {await api.retryMedia(); setMediaRetry(value => value + 1); return;} catch (error) {setState(errorState(error));}
@@ -249,6 +256,26 @@ function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; 
 
 export default function BrowseApp({session, onSession, onSignOut, error}: {session: MobileSession; onSession: (session: MobileSession) => void; onSignOut: () => void; error: string}) {
   const [api] = useState(() => new BrowseApi(session, onSession));
+  const [connectionNotice, setConnectionNotice] = useState('');
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const reconnect = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        api.reconnect(true).then(() => {if (active) {setConnectionNotice('');}})
+          .catch(problem => {if (active) {setConnectionNotice(problem instanceof Error ? problem.message : '无法连接服务器');}});
+      }, 500);
+    };
+    const foreground = AppState.addEventListener('change', state => {if (state === 'active') {reconnect();}});
+    let networkSignature: string | undefined;
+    const network = NetInfo.addEventListener(state => {
+      const signature = JSON.stringify([state.type, state.isConnected, state.details && 'ipAddress' in state.details ? state.details.ipAddress : null]);
+      if (signature !== networkSignature) {networkSignature = signature; reconnect();}
+    });
+    const connected = api.subscribe(() => {if (active) {setConnectionNotice('');}});
+    return () => {active = false; clearTimeout(timer); foreground.remove(); network(); connected();};
+  }, [api]);
   const [tab, setTab] = useState<'photos' | 'folders' | 'backup'>('photos');
   const [stack, setStack] = useState<Folder[]>([]);
   const [uploadFolder, setUploadFolder] = useState<Folder | null>(null);
@@ -267,13 +294,16 @@ export default function BrowseApp({session, onSession, onSignOut, error}: {sessi
   const open = (photo: Photo, photos: Photo[]) => setViewer({photo, photos});
   return <SafeAreaView style={[styles.root, viewer && styles.viewerRoot]} edges={viewer ? ['top'] : ['top', 'bottom']}>
     <StatusBar barStyle="dark-content" />
+    {connectionNotice ? <Text accessibilityRole="alert" style={styles.error}>{connectionNotice}</Text> : null}
     {viewer ? <Viewer api={api} initial={viewer.photo} photos={viewer.photos} close={() => setViewer(null)} /> : settings ?
-      <View style={styles.page}><Pressable accessibilityRole="button" style={styles.back} onPress={() => setSettings(false)}><Icon name="back" size={22} /><Text style={styles.backLabel}>返回</Text></Pressable>
-        <Text style={styles.title}>设置</Text><Text style={styles.meta}>{session.username}</Text><Text style={styles.meta}>{session.server}</Text>
+      <ScrollView style={styles.page} keyboardShouldPersistTaps="handled"><Pressable accessibilityRole="button" style={styles.back} onPress={() => setSettings(false)}><Icon name="back" size={22} /><Text style={styles.backLabel}>返回</Text></Pressable>
+        <Text style={styles.title}>设置</Text><Text style={styles.meta}>{session.username}</Text>
+        <ServerAddresses api={api} session={session} />
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-        <Pressable accessibilityRole="button" style={styles.retry} onPress={onSignOut}><Text style={styles.retryText}>退出当前设备</Text></Pressable></View> : <>
+        <Pressable accessibilityRole="button" style={styles.retry} onPress={onSignOut}><Text style={styles.retryText}>退出当前设备</Text></Pressable></ScrollView> : null}
+    <View style={[styles.content, (settings || !!viewer) && styles.hidden]} accessibilityElementsHidden={settings || !!viewer} importantForAccessibility={settings || viewer ? 'no-hide-descendants' : 'auto'}>
       <View style={styles.content}>{tab === 'photos' ? <Photos api={api} open={open} settings={() => setSettings(true)} /> : tab === 'folders' ? <Folders api={api} stack={stack} setStack={setStack} open={open} settings={() => setSettings(true)} upload={folder => {setUploadFolder(folder); setTab('backup');}} /> : null}
-        <UploadPage api={api} session={session} active={tab === 'backup'} incomingFolder={uploadFolder} clearIncoming={() => setUploadFolder(null)} /></View>
+        <UploadPage api={api} session={session} active={tab === 'backup' && !settings && !viewer} incomingFolder={uploadFolder} clearIncoming={() => setUploadFolder(null)} /></View>
       <View style={styles.tabs}>{(['photos', 'folders', 'backup'] as const).map(item => {
         const label = {photos: '照片', folders: '文件夹', backup: '备份'}[item];
         const active = tab === item;
@@ -281,12 +311,12 @@ export default function BrowseApp({session, onSession, onSignOut, error}: {sessi
           <Icon name={item} tone={active ? 'ink' : 'muted'} size={23} /><Text style={[styles.tabText, active && styles.tabActive]}>{label}</Text>
         </Pressable>;
       })}</View>
-    </>}
+    </View>
   </SafeAreaView>;
 }
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: paper}, viewerRoot: {backgroundColor: '#161B22'}, content: {flex: 1}, page: {flex: 1, paddingTop: 14},
+  root: {flex: 1, backgroundColor: paper}, viewerRoot: {backgroundColor: '#161B22'}, content: {flex: 1}, hidden: {display: 'none'}, page: {flex: 1, paddingTop: 14},
   title: {fontSize: 26, color: ink, fontWeight: '700', marginHorizontal: 20, marginBottom: 14},
   headingRow: {flexDirection: 'row', alignItems: 'center'}, back: {minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center'}, backText: {color: ink, fontSize: 30}, backLabel: {color: ink, fontSize: 15, marginRight: 12},
   folderHeading: {flex: 1, minWidth: 0, fontSize: 26, color: ink, fontWeight: '700', marginLeft: 20, marginRight: 8}, headingActions: {flexDirection: 'row', alignItems: 'center', marginRight: 12}, headerAction: {width: 48, height: 48, alignItems: 'center', justifyContent: 'center'}, moreSpinner: {marginVertical: 20},

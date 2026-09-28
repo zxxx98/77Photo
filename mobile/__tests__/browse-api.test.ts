@@ -80,3 +80,40 @@ test('classifies authentication, permission and network failures separately', ()
   expect(errorState(new ApiError(403, 'FORBIDDEN', 'denied'))).toBe('forbidden');
   expect(errorState(new TypeError('Network request failed'))).toBe('offline');
 });
+
+test('verified failover sends authenticated reads to the selected address and preserves queue scope', async () => {
+  const {ServerConnection} = require('../src/auth/connection');
+  const vpn = 'http://100.90.1.5:8080';
+  const profile = {id: session.server, publicKey: 'pinned', addresses: [
+    {url: session.server, name: '家中', verified: true}, {url: vpn, name: '组网', verified: true},
+  ]};
+  const resolve = jest.spyOn(ServerConnection.prototype, 'resolve').mockResolvedValueOnce(session.server).mockResolvedValue(vpn);
+  const urls: string[] = [];
+  globalThis.fetch = jest.fn(async url => {
+    urls.push(String(url));
+    if (String(url).startsWith(session.server)) {throw new TypeError('network changed');}
+    return {ok: true, status: 200, json: async () => ({items: [], next_cursor: null})} as Response;
+  });
+  const onSession = jest.fn();
+  const api = new BrowseApi({...session, profile}, onSession);
+  await expect(api.listPhotos()).resolves.toEqual({items: [], next_cursor: null});
+  expect(urls).toEqual([`${session.server}/api/v1/photos?limit=50`, `${vpn}/api/v1/photos?limit=50`]);
+  expect(onSession).toHaveBeenLastCalledWith(expect.objectContaining({server: vpn, profile}));
+  expect((await api.mediaSource('photo', 'preview')).uri).toBe(`${vpn}/api/v1/photos/photo/preview`);
+  resolve.mockRestore();
+});
+
+test('does not replay a refresh whose response was lost during a read retry', async () => {
+  const {ServerConnection} = require('../src/auth/connection');
+  const resolve = jest.spyOn(ServerConnection.prototype, 'resolve').mockResolvedValue(session.server);
+  const profile = {id: session.server, publicKey: 'pinned', addresses: [{url: session.server, name: '家中', verified: true}]};
+  globalThis.fetch = jest.fn(async () => ({ok: false, status: 401}) as Response);
+  (refresh as jest.Mock).mockRejectedValue(new TypeError('refresh response lost'));
+  const api = new BrowseApi({...session, profile}, jest.fn());
+  const reconnect = jest.spyOn(api, 'reconnect');
+  await expect(api.listPhotos()).rejects.toThrow('refresh response lost');
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(reconnect).not.toHaveBeenCalled();
+  resolve.mockRestore();
+});
