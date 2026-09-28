@@ -5,6 +5,7 @@ import type {MobileSession} from '../auth/session';
 import {BrowseApi, type Folder} from '../browse/api';
 import {allowQueue, deleteStagedFiles, isCompleted, loadQueue, pairMedia, pickMedia, saveQueue, uploadError, uploadOne, type UploadItem} from './queue';
 import Icon from '../browse/Icon';
+import BackupSettings from '../backup/BackupSettings';
 
 const ink = '#3D4A5C';
 const muted = '#75808A';
@@ -123,7 +124,8 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
   };
   return <View style={[styles.root, !active && styles.hidden]} accessibilityElementsHidden={!active} importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}>
     <Text style={styles.title}>备份</Text>
-    <Text style={styles.subtitle}>只上传您在系统选择器中选中的照片和视频。离开应用后上传可能中断，返回时可重试。</Text>
+    <Text style={styles.subtitle}>自动备份系统相册照片，或手动选择照片与视频上传。</Text>
+    <BackupSettings session={session} api={api} folder={folder} />
     <View style={styles.summary}><Text style={styles.summaryText}>等待 {summary.waiting}</Text><Text style={styles.summaryText}>上传中 {summary.uploading}</Text><Text style={styles.summaryText}>失败 {summary.failed}</Text></View>
     {choosing ? <View style={styles.chooser}>
       <View style={styles.row}><Text style={styles.section}>选择服务器目标文件夹</Text><Pressable style={styles.action} accessibilityRole="button" accessibilityLabel="关闭文件夹选择" onPress={() => setChoosing(false)}><Text style={styles.actionText}>关闭</Text></Pressable></View>

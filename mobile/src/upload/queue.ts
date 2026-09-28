@@ -77,12 +77,16 @@ function decodeError(status: number, body: string): ApiError {
   return new ApiError(status, error.code ?? '', error.message ?? `服务器错误 ${status}`);
 }
 
-export async function uploadOne(api: BrowseApi, item: UploadItem, progress: (value: number) => void): Promise<'success' | 'skipped'> {
+export async function uploadOne(api: BrowseApi, item: UploadItem, progress: (value: number) => void, signal?: AbortSignal): Promise<'success' | 'skipped'> {
+  const checkCancelled = () => {if (signal?.aborted) {throw new Error('上传已暂停');}};
+  checkCancelled();
   // A deleted or newly unreadable target fails early. The upload endpoint is
   // authoritative for write permission, including inherited shared grants.
   await api.request<Folder>(`/api/v1/folders/${encodeURIComponent(item.folderId)}`);
   const send = async (conflict: 'reject' | 'rename', retried = false): Promise<'success' | 'skipped'> => {
+    checkCancelled();
     const session = await api.validSession();
+    checkCancelled();
     // The ordinary upload route also extracts motion embedded in JPEG/HEIC.
     const live = !!item.motion;
     const body = [
@@ -94,7 +98,12 @@ export async function uploadOne(api: BrowseApi, item: UploadItem, progress: (val
     const request = ReactNativeBlobUtil.config({timeout: 120000, followRedirect: false}).fetch('POST', `${session.server}/api/v1/photos/${route}`,
       {Authorization: `Bearer ${session.accessToken}`, Accept: 'application/json'}, body);
     request.uploadProgress({interval: 250}, (sent, total) => {if (total > 0) {progress(Math.min(99, Math.round(sent / total * 100)));}});
-    const response = await request;
+    const cancel = () => {request.cancel(() => {});};
+    signal?.addEventListener('abort', cancel);
+    let response;
+    try {response = await request;}
+    finally {signal?.removeEventListener('abort', cancel);}
+    checkCancelled();
     const status = response.info().status;
     if (status === 201) {progress(100); return 'success';}
     const error = decodeError(status, response.data);

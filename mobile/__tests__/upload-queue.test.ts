@@ -72,3 +72,23 @@ test('a lost upload response is not automatically replayed on a different addres
   expect(send).toHaveBeenCalledTimes(1);
   expect(api.retryMedia).not.toHaveBeenCalled();
 });
+
+test('backup cancellation aborts the active upload and never starts another request', async () => {
+  const controller = new AbortController();
+  let rejectRequest!: (error: Error) => void;
+  let started!: () => void;
+  const waiting = new Promise<void>(resolve => {started = resolve;});
+  const request = Object.assign(new Promise((_resolve, reject) => {rejectRequest = reject;}), {
+    uploadProgress: jest.fn(), cancel: jest.fn(() => rejectRequest(new Error('cancelled'))),
+  });
+  const send = jest.fn(() => {started(); return request;});
+  (ReactNativeBlobUtil.config as jest.Mock).mockReturnValue({fetch: send});
+  const api = {request: jest.fn().mockResolvedValue(folder), validSession: jest.fn().mockResolvedValue({server: 'http://192.168.1.5', accessToken: 'a'})} as unknown as BrowseApi;
+  const item = pairMedia([{path: '/upload', name: 'upload.jpg', mime: 'image/jpeg', size: 20}], folder)[0];
+  const result = uploadOne(api, item, jest.fn(), controller.signal);
+  await waiting;
+  controller.abort();
+  await expect(result).rejects.toThrow('cancelled');
+  expect(request.cancel).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledTimes(1);
+});

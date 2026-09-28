@@ -1,6 +1,6 @@
 # 77Photo Android
 
-React Native 0.87.1 + TypeScript Android client. The current milestone includes server connection, mobile Bearer login, secure session storage, photo timeline, real folder browsing, authenticated preview/video, on-demand original downloads, and a persistent manual upload queue. Uploads run while the app is active. Android may interrupt them after the app leaves the foreground; unfinished items are retried when the app is opened again. There is no automatic backup or resumable byte-range transfer.
+React Native 0.87.1 + TypeScript Android client. The current milestone includes server connection, mobile Bearer login, secure session storage, photo timeline, real folder browsing, authenticated preview/video, on-demand original downloads, a persistent manual upload queue, and opt-in automatic photo backup. Manual uploads run while the app is active. Android may interrupt them after the app leaves the foreground; unfinished items are retried when the app is opened again. Automatic photo backup uses Android background jobs; byte-range transfer resumption is not supported.
 
 ## Requirements
 
@@ -39,6 +39,18 @@ Upgrade the server together with the app. Migration 009 stores an Ed25519 identi
 Automatic selection tries the last working address first and then verified addresses in list order, with an eight-second timeout per probe. Successful probes are shared and cached for 30 seconds; failed rounds are cached for five seconds. Foreground/network changes and the reconnect button trigger a new check. Reads can retry once after a connection failure. Uploads and token refreshes are not automatically replayed when their response is lost; interrupted uploads remain available for manual retry. The upload queue keeps its original server/account scope, so switching IPs neither hides nor restarts it. All addresses being offline preserves the login session. An older server can still be used at the address entered on the login screen; alternatives stay pending until the server supports identity checks.
 
 Manual device checks (ARM64 only): configure LAN and overlay addresses, switch Wi-Fi to cellular with the overlay enabled, disable the overlay to verify offline recovery, reject a different server, reconnect after token expiry, and interrupt an upload before switching addresses. Confirm media reloads, login survives offline periods, and pending uploads remain visible.
+
+## Automatic photo backup
+
+In **Backup**, select a writable server folder, enable **自动备份照片**, and grant access to all photos. Android 14+ selected-photo access is insufficient for automatic backup; manual uploads remain available without full library access. Automatic backup includes all existing and newly added photos visible in Android MediaStore, including images with embedded motion. Standalone videos and separate MOV companions still use manual upload.
+
+**仅 Wi-Fi** defaults to on. Turn it off to allow cellular uploads. The destination is saved independently of the manual upload selection; to change it, disable backup, select a new folder, and re-enable. Backup is upload-only and never deletes device or server photos. The status card shows confirmed photo count, last completed scan, and errors.
+
+Android schedules a persisted job approximately every 15 minutes when a network is available; Wi-Fi settings are checked before each file. Opening the app and network changes also trigger checks. Each run has a time budget and saves its scan position for the next run. Doze, battery restrictions and manufacturer policies can delay jobs. Force-stopping the app prevents background work until it is opened again. Use a standalone staging/release APK for background checks; debug builds require Metro.
+
+Successful uploads and server-confirmed duplicates are recorded per server identity, account and destination. Address failover preserves this history. Interrupted uploads retry as whole files, with server content deduplication handling lost responses. Unreadable or unsupported photos are retried on subsequent scans without blocking other photos. Permission, authentication and target-folder errors appear in the status card. Disabling backup cancels an active backup upload; signing out also disables scheduled backup. Backup uses the existing secure session store and server identity checks, and keeps at most one staged backup file.
+
+ARM64 device verification: enable backup with existing photos, add a photo while the app is closed, reboot, and verify eventual upload without opening the app. Check Wi-Fi/cellular transitions, revoked/limited photo permission, an expired access token, an unavailable/deleted destination, interrupted uploads, disabling during transfer, and signing into another account. Reopen after force-stop and confirm scheduling resumes. Native background scheduling and battery-policy behavior require a device check.
 
 ## Checks
 

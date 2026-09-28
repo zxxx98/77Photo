@@ -8,6 +8,7 @@ import {normalizeServer} from './src/auth/server';
 import {clearSession, loadLastServer, loadLastProfile, loadSession, saveSession, type MobileSession} from './src/auth/session';
 import BrowseApp from './src/browse/BrowseApp';
 import {clearQueue} from './src/upload/queue';
+import {disableBackup, enterBackupUI, leaveBackupUI} from './src/backup/service';
 
 const ink = '#3D4A5C';
 const muted = '#75808A';
@@ -57,6 +58,7 @@ function Main() {
     let active = true;
     (async () => {
       try {
+        await enterBackupUI();
         const [lastServer, saved] = await Promise.all([loadLastServer(), loadSession()]);
         if (!active) {return;}
         setServer(saved?.server ?? lastServer);
@@ -67,7 +69,7 @@ function Main() {
         if (active) {setBooting(false);}
       }
     })();
-    return () => {active = false;};
+    return () => {active = false; leaveBackupUI();};
   }, []);
 
   async function submitLogin() {
@@ -146,7 +148,9 @@ function Main() {
     setPending(true);
     setError('');
     try {
-      const valid = await restoreSession(session);
+      await disableBackup(session);
+      // A background backup may have rotated credentials before cancellation.
+      const valid = await restoreSession(await loadSession() ?? session);
       await clearQueue(valid);
       await revokeDevice(valid);
       await clearSession();
