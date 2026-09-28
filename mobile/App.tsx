@@ -3,7 +3,7 @@ import {ActivityIndicator, Pressable, ScrollView, StatusBar, StyleSheet, Text, T
 import {SafeAreaProvider, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {ApiError, checkServer, login, revokeDevice} from './src/auth/api';
 import {restoreSession} from './src/auth/controller';
-import {IdentityError, IdentityUnavailableError, ServerConnection, verifyAddress, type ServerProfile} from './src/auth/connection';
+import {IdentityError, ServerConnection, verifyAddress, type ServerProfile} from './src/auth/connection';
 import {normalizeServer} from './src/auth/server';
 import {clearSession, loadLastServer, loadLastProfile, loadSession, saveSession, type MobileSession} from './src/auth/session';
 import BrowseApp from './src/browse/BrowseApp';
@@ -91,20 +91,40 @@ function Main() {
         address = await new ServerConnection().resolve({server: address, profile});
       }
       try {
+        await checkServer(address);
+      } catch (problem) {
+        if (problem instanceof TypeError || (problem instanceof Error && problem.name === 'AbortError')) {
+          throw new Error(`App 无法访问 ${address}/healthz，请检查地址和 Android 网络权限`);
+        }
+        throw problem;
+      }
+      try {
         const publicKey = await verifyAddress(address, profile.publicKey);
         profile = {...profile, publicKey, addresses: profile.addresses.map(a => a.url === address ? {...a, verified: true} : a)};
       } catch (problem) {
-        if (!(problem instanceof IdentityUnavailableError) || profile.publicKey || extraAddresses.length) {throw problem;}
+        // The address was entered by the user and passed the health check.
+        // Existing servers can still use it for login; alternative addresses
+        // stay pending until this server can prove its identity.
+        if (problem instanceof IdentityError || profile.publicKey) {throw problem;}
       }
       for (const url of extraAddresses) {
         if (profile.addresses.some(a => a.url === url)) {continue;}
         if (profile.addresses.length >= 8) {throw new Error('最多添加 8 个地址');}
         let verified = false;
-        try {await verifyAddress(url, profile.publicKey); verified = true;} catch (problem) {if (problem instanceof IdentityError) {throw problem;}}
+        if (profile.publicKey) {
+          try {await verifyAddress(url, profile.publicKey); verified = true;} catch (problem) {if (problem instanceof IdentityError) {throw problem;}}
+        }
         profile.addresses.push({url, name: '备用地址', verified});
       }
-      await checkServer(address);
-      const signedIn = {...await login(address, username.trim(), password), profile};
+      let signedIn: MobileSession;
+      try {
+        signedIn = {...await login(address, username.trim(), password), profile};
+      } catch (problem) {
+        if (problem instanceof TypeError || (problem instanceof Error && problem.name === 'AbortError')) {
+          throw new Error(`已连接 ${address}，但发送登录请求时网络中断`);
+        }
+        throw problem;
+      }
       try {
         await saveSession(signedIn);
       } catch (storageError) {

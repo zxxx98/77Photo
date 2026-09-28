@@ -104,6 +104,11 @@ jobs:
             echo "Release APK contains an unexpected target ABI: $abis" >&2
             exit 1
           fi
+          manifest="$("$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$apk")"
+          if ! grep -Fq 'android:usesCleartextTraffic="true"' <<< "$manifest"; then
+            echo "Release APK blocks HTTP access to private and overlay IP addresses" >&2
+            exit 1
+          fi
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

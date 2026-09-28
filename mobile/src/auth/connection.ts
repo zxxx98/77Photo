@@ -21,10 +21,14 @@ export const profileFor = (session: MobileSession): ServerProfile => session.pro
 
 export async function verifyAddress(input: string, expectedKey?: string): Promise<string> {
   const url = normalizeServer(input);
+  const createChallenge = NativeModules.Photo77Picker?.identityChallenge;
+  if (typeof createChallenge !== 'function') {
+    throw new IdentityUnavailableError('当前安装的 App 缺少服务器验证组件，请安装完整的新版 APK');
+  }
   const challenge: string = await NativeModules.Photo77Picker.identityChallenge();
   if (!/^[0-9a-f]{64}$/.test(challenge)) {throw new Error('无法生成服务器验证请求');}
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3000);
+  const timer = setTimeout(() => controller.abort(), 8000);
   try {
     // Discovery sends no credentials. Reject redirects before trusting the address.
     const response = await fetch(`${url}/api/v1/server/identity?challenge=${challenge}`, {
@@ -68,6 +72,7 @@ export class ServerConnection {
       const eligible = profile.addresses.filter(a => a.verified && (!profile.manual || a.url === profile.manual));
       const current = eligible.find(a => a.url === session.server);
       const ordered = current ? [current, ...eligible.filter(a => a !== current)] : eligible;
+      const errors: unknown[] = [];
       for (const address of ordered) {
         try {
           await verifyAddress(address.url, profile.publicKey);
@@ -77,10 +82,15 @@ export class ServerConnection {
           return address.url;
         } catch (error) {
           if (generation !== this.generation) {throw error;}
+          errors.push(error);
           this.statuses.set(address.url, error instanceof IdentityError ? '身份不匹配' : '不可连接');
         }
       }
-      const failure = new TypeError('无法连接服务器，请检查网络或开启组网工具后重试');
+      const failure = errors.length > 0 && errors.every(error => error instanceof IdentityError) ?
+        new IdentityError('所有已验证地址的服务器身份都不匹配，请检查服务端是否更换了数据库') :
+        errors.length > 0 && errors.every(error => error instanceof IdentityUnavailableError) ?
+          new IdentityUnavailableError('服务器身份接口不可用，请确认服务端已升级') :
+          new TypeError('无法连接服务器，请检查网络或开启组网工具后重试');
       this.failure = failure; this.checkedAt = Date.now();
       throw failure;
     };
