@@ -49,6 +49,8 @@ jobs:
     if: needs.version.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -102,12 +104,25 @@ jobs:
             echo "Release APK contains an unexpected target ABI: $abis" >&2
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: 77photo-android-v${{ needs.version.outputs.version }}-arm64-release
-          path: mobile/android/app/build/outputs/apk/release/app-release.apk
-          if-no-files-found: error
-          retention-days: 30
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANDROID_VERSION: ${{ needs.version.outputs.version }}
+          ANDROID_TAG: android-${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          apk="mobile/android/app/build/outputs/apk/release/app-release.apk"
+          test -s "$apk"
+          asset="$apk#77photo-android-$ANDROID_VERSION-arm64-release.apk"
+          if gh release view "$ANDROID_TAG" >/dev/null 2>&1; then
+            echo "Release $ANDROID_TAG already exists; replacing its APK."
+            gh release upload "$ANDROID_TAG" "$asset" --clobber
+          else
+            notes="Signed ARM64 (arm64-v8a) release APK for 77Photo $ANDROID_VERSION. An existing installation can only be updated in place when it was signed with the same key."
+            gh release create "$ANDROID_TAG" "$asset" \
+              --title "77Photo Android $ANDROID_VERSION" \
+              --notes "$notes"
+          fi
       - name: Remove signing key
         if: always()
         run: rm -f "$RUNNER_TEMP/77photo-release.keystore"
