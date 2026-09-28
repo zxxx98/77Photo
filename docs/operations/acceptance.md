@@ -30,4 +30,4 @@
 | Docker 镜像/Compose 启动与备份恢复 | 未完成 | 当前 Docker daemon socket 返回 permission denied |
 | 浏览器视口、键盘焦点与 NanoPi R5S 负载 | 未完成 | 当前环境没有目标浏览器记录或 NanoPi R5S 实机 |
 
-Android 客户端已移除，不属于当前版本的发布验收范围。重新实现后需另建客户端设备矩阵与发布门禁。
+重写后的 Android 客户端位于 `mobile/`。JavaScript 类型检查、Lint 和测试纳入主分支 CI；设备兼容性、原生 APK 构建及发布签名仍需按 [移动端说明](../../mobile/README.md) 在兼容 Android SDK 工具的 x86_64 环境中验证。

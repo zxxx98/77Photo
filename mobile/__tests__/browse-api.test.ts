@@ -1,0 +1,82 @@
+import {ApiError, refresh} from '../src/auth/api';
+import {saveSession, type MobileSession} from '../src/auth/session';
+import {BrowseApi, errorState, groupPhotos} from '../src/browse/api';
+
+jest.mock('../src/auth/api', () => ({
+  ApiError: class extends Error {
+    status: number;
+    code: string;
+    constructor(httpStatus: number, errorCode: string, errorMessage: string) {
+      super(errorMessage);
+      this.status = httpStatus;
+      this.code = errorCode;
+    }
+  },
+  refresh: jest.fn(),
+}));
+jest.mock('../src/auth/session', () => ({saveSession: jest.fn(), clearSession: jest.fn()}));
+
+const session: MobileSession = {
+  server: 'http://192.168.1.5:8080', username: 'lin', accessToken: 'old',
+  accessExpiresAt: '2030-01-01T00:00:00Z', refreshToken: 'refresh', refreshExpiresAt: '2030-02-01T00:00:00Z',
+};
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  (saveSession as jest.Mock).mockResolvedValue(undefined);
+});
+
+test('parallel 401 responses share one token rotation and retry once', async () => {
+  (refresh as jest.Mock).mockResolvedValue({...session, accessToken: 'new'});
+  const seen: string[] = [];
+  globalThis.fetch = jest.fn(async (_url, init) => {
+    const token = (init as RequestInit).headers as {Authorization: string};
+    seen.push(token.Authorization);
+    return {ok: token.Authorization === 'Bearer new', status: token.Authorization === 'Bearer new' ? 200 : 401,
+      json: async () => token.Authorization === 'Bearer new' ? {items: [], next_cursor: null} : {error: {code: 'AUTH_REQUIRED'}}} as Response;
+  });
+  const api = new BrowseApi(session, jest.fn());
+  await Promise.all([api.listPhotos(), api.listPhotos()]);
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(saveSession).toHaveBeenCalledTimes(1);
+  expect(seen.filter(value => value === 'Bearer new')).toHaveLength(2);
+});
+
+test('uses captured_at date without client timezone conversion', () => {
+  const base = {id: '1', owner_id: 'o', folder_id: 'f', filename: 'a', mime_type: 'image/jpeg', size: 1};
+  const groups = groupPhotos([
+    {...base, id: '1', captured_at: '2026-09-25T23:50:00-07:00'},
+    {...base, id: '2', captured_at: '2026-09-26T00:01:00+09:00'},
+  ]);
+  expect(groups.map(group => group.date)).toEqual(['2026-09-26', '2026-09-25']);
+});
+
+test('lists shared roots and carries read permission into child folders', async () => {
+  const folder = (id: string, owner_id: string, parent_id: string | null) =>
+    ({id, owner_id, parent_id, name: id, is_shared: false});
+  globalThis.fetch = jest.fn(async url => {
+    const path = String(url).replace(session.server, '');
+    const data = path === '/api/v1/folders' ? {items: [folder('mine', 'me', null)]} :
+      path === '/api/v1/auth/me' ? {id: 'me', role: 'user'} :
+      path === '/api/v1/shares' ? {items: [{resource_id: 'shared', user_id: 'me', permission: 'read'}]} :
+      path === '/api/v1/folders/shared' ? folder('shared', 'other', null) :
+      path === '/api/v1/folders?parent_id=mine' ? {items: [folder('mine-child', 'me', 'mine')]} :
+      path === '/api/v1/folders?parent_id=mine-child' ? {items: [folder('mine-grandchild', 'me', 'mine-child')]} :
+      path === '/api/v1/folders?parent_id=shared' ? {items: [folder('child', 'other', 'shared')]} :
+      path === '/api/v1/folders?parent_id=child' ? {items: [folder('grandchild', 'other', 'child')]} : {};
+    return {ok: true, status: 200, json: async () => data} as Response;
+  });
+  const api = new BrowseApi(session, jest.fn());
+  const roots = await api.listFolders();
+  expect(roots.map(item => [item.id, item.effective_permission])).toEqual([['mine', 'write'], ['shared', 'read']]);
+  expect((await api.listFolders('shared'))[0].effective_permission).toBe('read');
+  expect((await api.listFolders('child'))[0].effective_permission).toBe('read');
+  expect((await api.listFolders('mine'))[0].effective_permission).toBe('write');
+  expect((await api.listFolders('mine-child'))[0].effective_permission).toBe('write');
+});
+
+test('classifies authentication, permission and network failures separately', () => {
+  expect(errorState(new ApiError(401, 'AUTH_REQUIRED', 'expired'))).toBe('expired');
+  expect(errorState(new ApiError(403, 'FORBIDDEN', 'denied'))).toBe('forbidden');
+  expect(errorState(new TypeError('Network request failed'))).toBe('offline');
+});
