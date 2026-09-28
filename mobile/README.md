@@ -38,3 +38,9 @@ npm test -- --runInBand
 ```
 
 The app ID is `com.photo77`, and the existing 77Photo launcher assets are copied from `assets/android/launcher/res`. A new release APK can update an old installation only with the original production signing key; the repository does not contain that key.
+
+## Release APK
+
+The [Android release workflow](../.github/workflows/android-release.yml) builds a signed ARM64 release APK after a push to `main` changes the `version` in `mobile/package.json`. It compares the version before and after the push, so edits to other package fields alone do not start a build. To bump the app version, run `npm version patch --no-git-tag-version` in `mobile/` (or update both `package.json` and `package-lock.json`) and commit the change. Gradle reads this version for `versionName` and derives an increasing `versionCode` from `MAJOR.MINOR.PATCH`.
+
+The workflow uses the repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` to sign the APK. The result is stored as a GitHub Actions artifact for 30 days; the workflow does not publish a GitHub Release. The build always targets `arm64-v8a`, regardless of the build host architecture.

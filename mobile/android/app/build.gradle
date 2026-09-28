@@ -2,6 +2,27 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
+def appVersion = new groovy.json.JsonSlurper().parse(file("../../package.json")).version.toString()
+def versionParts = (appVersion =~ /^(\d+)\.(\d+)\.(\d+)$/)
+if (!versionParts.matches()) {
+    throw new GradleException("Android release version must be MAJOR.MINOR.PATCH in mobile/package.json")
+}
+def versionMajor = versionParts[0][1].toInteger()
+def versionMinor = versionParts[0][2].toInteger()
+def versionPatch = versionParts[0][3].toInteger()
+if (versionMajor > 2100 || versionMinor > 999 || versionPatch > 999) {
+    throw new GradleException("Android release version components exceed the supported versionCode range")
+}
+def appVersionCode = versionMajor * 1000000 + versionMinor * 1000 + versionPatch
+if (appVersionCode < 1 || appVersionCode > 2100000000) {
+    throw new GradleException("Android versionCode must be between 1 and 2100000000")
+}
+def releaseKeystoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
+def releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+def releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+def releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+def hasReleaseSigning = [releaseKeystoreFile, releaseKeystorePassword, releaseKeyAlias, releaseKeyPassword].every { it?.trim() }
+
 if ((project.findProperty("reactNativeArchitectures") ?: "arm64-v8a").toString() != "arm64-v8a") {
     throw new GradleException("77Photo Android supports only the arm64-v8a target ABI")
 }
@@ -90,8 +111,8 @@ android {
         applicationId "com.photo77"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 5
-        versionName "0.4.1"
+        versionCode appVersionCode
+        versionName appVersion
         ndk {
             abiFilters "arm64-v8a"
         }
@@ -103,6 +124,14 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseKeystoreFile)
+                storePassword releaseKeystorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
     }
     buildTypes {
         debug {
@@ -110,8 +139,9 @@ android {
             manifestPlaceholders = [usesCleartextTraffic: "true"]
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             manifestPlaceholders = [usesCleartextTraffic: "true"]
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
