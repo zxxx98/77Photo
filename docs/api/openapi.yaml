@@ -1349,11 +1349,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [enabled, configured, automatic_matching]
+                required: [enabled, configured, automatic_matching, match_threshold, match_margin, concurrency]
                 properties:
                   enabled: { type: boolean }
                   configured: { type: boolean }
                   automatic_matching: { type: boolean }
+                  match_threshold: { type: number, minimum: 0, maximum: 1 }
+                  match_margin: { type: number, minimum: 0, maximum: 1 }
+                  concurrency: { type: integer, minimum: 1, maximum: 8 }
   /api/v1/admin/faces/test:
     post:
       tags: [admin]
@@ -1399,8 +1402,8 @@ paths:
             schema:
               type: object
               properties:
-                mode: { type: string, enum: [incremental, retry_failed], default: incremental }
-                folder_id: { type: string, description: Optional folder and descendants }
+                mode: { type: string, enum: [incremental, retry_failed, regroup, full], default: incremental }
+                folder_id: { type: string, description: Optional folder and descendants for incremental/retry_failed only }
       responses:
         '200':
           description: Existing or newly started job
@@ -1445,6 +1448,37 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/FaceJob' }
         '409': { description: Invalid transition or maintenance conflict }
+  /api/v1/admin/faces/jobs/{jobId}/failed:
+    parameters:
+      - in: path
+        name: jobId
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List failed face scan photos and reason codes
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        '200':
+          description: Up to 100 failed photos per page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        photo_id: { type: string }
+                        filename: { type: string }
+                        error: { type: string }
+                  next_cursor: { type: string }
   /api/v1/admin/people:
     get:
       tags: [admin]
@@ -1515,6 +1549,32 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/DetectedFace' }
                   next_cursor: { type: string }
+  /api/v1/admin/people/{personId}/similar:
+    parameters:
+      - in: path
+        name: personId
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Suggest up to five similar people from saved face vectors
+      description: Read-only suggestions within the same photo owner; similarity is not an identity decision.
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: Possible matches ordered by cosine similarity
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        person: { $ref: '#/components/schemas/FacePerson' }
+                        score: { type: number, minimum: 0, maximum: 1 }
   /api/v1/admin/people/{personId}/merge:
     parameters:
       - in: path
@@ -1757,7 +1817,7 @@ components:
       required: [id, mode, status, error, created_at, updated_at, counts]
       properties:
         id: { type: string }
-        mode: { type: string, enum: [incremental, retry_failed] }
+        mode: { type: string, enum: [incremental, retry_failed, regroup, full] }
         status: { type: string, enum: [running, paused, paused_offline, completed, completed_with_errors, failed, cancelled] }
         error: { type: string }
         created_at: { type: string, format: date-time }

@@ -3,7 +3,7 @@ import type { ApiClient, Photo, User } from '../../app/api';
 import { useI18n } from '../../app/I18nProvider';
 import Viewer from '../viewer/Viewer';
 import FaceScanPanel from './FaceScanPanel';
-import { faceThumbnail, type Face, type Person } from './types';
+import { faceThumbnail, type Face, type Person, type SimilarPerson } from './types';
 import { faceStrings } from './strings';
 import './PeopleWorkspace.css';
 
@@ -11,6 +11,7 @@ export default function PeopleWorkspace({ api, currentUser }: { api: ApiClient; 
   const { locale } = useI18n(); const s = faceStrings(locale); const faces = api.faces;
   const [people, setPeople] = useState<Person[]>([]); const [next, setNext] = useState('');
   const [selected, setSelected] = useState<string>(''); const [items, setItems] = useState<Face[]>([]); const [faceNext, setFaceNext] = useState('');
+  const [suggestions, setSuggestions] = useState<SimilarPerson[]>([]);
   const [name, setName] = useState(''); const [target, setTarget] = useState(''); const [confirmMerge, setConfirmMerge] = useState(false);
   const [busy, setBusy] = useState(false); const [message, setMessage] = useState(''); const [photo, setPhoto] = useState<Photo>();
   const [owner, setOwner] = useState('');
@@ -21,9 +22,10 @@ export default function PeopleWorkspace({ api, currentUser }: { api: ApiClient; 
   }, [faces, currentUser.role]);
   useEffect(() => { void reload().catch(() => setMessage(s.error)); }, [reload, s.error]);
   useEffect(() => {
-    let alive = true; setItems([]); setFaceNext(''); setTarget(''); setConfirmMerge(false); setName(person?.name ?? '');
+    let alive = true; setItems([]); setFaceNext(''); setSuggestions([]); setTarget(''); setConfirmMerge(false); setName(person?.name ?? '');
     if (selected && faces && currentUser.role === 'admin') {
       void faces.listFaces(selected).then(page => { if (alive) { setItems(page.items); setFaceNext(page.next_cursor); } }).catch(() => { if (alive) setMessage(s.error); });
+      if (selected !== 'unassigned') void faces.similarPeople(selected).then(result => { if (alive) setSuggestions(result.items); }).catch(() => { if (alive) setMessage(s.error); });
     }
     return () => { alive = false; };
   }, [selected, faces, currentUser.role, s.error]);
@@ -38,9 +40,10 @@ export default function PeopleWorkspace({ api, currentUser }: { api: ApiClient; 
     const page = await faceApi.listFaces(selected); setItems(page.items); setFaceNext(page.next_cursor); await reload();
   }
   const label = (p: Person) => p.name || `${s.unnamed} · ${p.id.slice(-6)}`;
+  const targets = [...people, ...suggestions.map(item => item.person).filter(p => !people.some(existing => existing.id === p.id))];
   return <section className="people-workspace">
     <div className="workspace-heading"><div><h1>{s.title}</h1><p>{s.description}</p></div></div>
-    <FaceScanPanel api={faces} />
+    <FaceScanPanel api={faces} onCompleted={reload} />
     {message && <p role="alert">{message}</p>}
     {!selected ? <>
       <div className="face-actions">
@@ -60,11 +63,12 @@ export default function PeopleWorkspace({ api, currentUser }: { api: ApiClient; 
         <form className="face-actions" onSubmit={e => { e.preventDefault(); void act(async () => { await faceApi.rename(person, name); await reload(); }); }}>
           <input aria-label={s.name} maxLength={80} value={name} onChange={e => setName(e.target.value)} /><button className="button button-secondary" disabled={busy}>{s.save}</button>
         </form>
-        <div className="face-actions"><select aria-label={s.target} value={target} onChange={e => { setTarget(e.target.value); setConfirmMerge(false); }}><option value="">{s.target}</option>{people.filter(p => p.id !== selected && p.owner_id === person.owner_id).map(p => <option key={p.id} value={p.id}>{label(p)}</option>)}</select>
+        <div className="face-actions"><select aria-label={s.target} value={target} onChange={e => { setTarget(e.target.value); setConfirmMerge(false); }}><option value="">{s.target}</option>{targets.filter(p => p.id !== selected && p.owner_id === person.owner_id).map(p => <option key={p.id} value={p.id}>{label(p)}</option>)}</select>
           <button className="button button-secondary" disabled={busy || !target} onClick={() => setConfirmMerge(true)}>{s.merge}</button>
           {next && <button className="text-button" disabled={busy} onClick={() => void act(async () => { const page = await faceApi.people(next); setPeople(p => [...p, ...page.items]); setNext(page.next_cursor); })}>{s.more}</button>}
         </div>
-        {confirmMerge && <div role="group" aria-label={s.confirm}><p>{s.mergeWarning}</p><button className="button button-secondary" disabled={busy} onClick={() => void act(async () => { const to = people.find(p => p.id === target); if (!to) return; await faceApi.merge(to, person); setSelected(''); await reload(); })}>{s.confirm}</button><button className="text-button" onClick={() => setConfirmMerge(false)}>{s.dismiss}</button></div>}
+        {confirmMerge && <div role="group" aria-label={s.confirm}><p>{s.mergeWarning}</p><button className="button button-secondary" disabled={busy} onClick={() => void act(async () => { const to = targets.find(p => p.id === target); if (!to) return; await faceApi.merge(to, person); setSelected(''); await reload(); })}>{s.confirm}</button><button className="text-button" onClick={() => setConfirmMerge(false)}>{s.dismiss}</button></div>}
+        {suggestions.length > 0 && <section aria-label={s.similar}><h3>{s.similar}</h3><p className="inline-state">{s.reviewSimilar}</p><div className="people-grid">{suggestions.map(({ person: candidate, score }) => <button className="person-card" key={candidate.id} onClick={() => { setTarget(candidate.id); setConfirmMerge(true); }}><img src={faceThumbnail(candidate.cover_face_id)} alt="" loading="lazy" /><strong>{label(candidate)}</strong><span>{s.similarity}: {score.toFixed(2)}</span></button>)}</div></section>}
       </div>}
       {items.length === 0 && <p className="inline-state">{s.noFaces}</p>}
       <div className="people-grid">{items.map(face => <article className="face-card" key={face.id}>

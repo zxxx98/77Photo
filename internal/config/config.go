@@ -76,8 +76,16 @@ func LoadFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid face match threshold")
 	}
+	margin, err := strconv.ParseFloat(envString("PHOTO_FACE_MATCH_MARGIN", "0.08"), 64)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid face match margin")
+	}
+	faceConcurrency, err := envInt("PHOTO_FACE_CONCURRENCY", 4)
+	if err != nil || faceConcurrency < 1 || faceConcurrency > 8 {
+		return Config{}, fmt.Errorf("PHOTO_FACE_CONCURRENCY must be between one and eight")
+	}
 	cfg := Config{
-		Faces:            faces.Config{Enabled: envString("PHOTO_FACE_ENABLED", "false") == "true", URL: envString("PHOTO_FACE_WORKER_URL", ""), Token: envString("PHOTO_FACE_WORKER_TOKEN", ""), Timeout: faceTimeout, AllowHTTP: envString("PHOTO_FACE_ALLOW_INSECURE_LAN", "false") == "true", MatchThreshold: threshold, MatchMargin: 0.08},
+		Faces:            faces.Config{Enabled: envString("PHOTO_FACE_ENABLED", "false") == "true", URL: envString("PHOTO_FACE_WORKER_URL", ""), Token: envString("PHOTO_FACE_WORKER_TOKEN", ""), Timeout: faceTimeout, AllowHTTP: envString("PHOTO_FACE_ALLOW_INSECURE_LAN", "false") == "true", MatchThreshold: threshold, MatchMargin: margin, Concurrency: faceConcurrency},
 		DataDir:          envString("PHOTO_DATA_DIR", defaultDataDir),
 		CacheDir:         envString("PHOTO_CACHE_DIR", defaultCacheDir),
 		DBPath:           envString("PHOTO_DB_PATH", defaultDBPath),

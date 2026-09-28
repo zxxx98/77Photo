@@ -1,4 +1,4 @@
-"""Authenticated, bounded, single-request local inference API."""
+"""Authenticated, bounded, one-inference-at-a-time API per worker process."""
 import asyncio
 from contextlib import asynccontextmanager
 import hmac
@@ -47,9 +47,11 @@ def create_app(engine_factory=None, token=None):
             raise HTTPException(422, "invalid request ID")
         if pipeline_id != app.state.engine.profile["pipeline_id"]:
             raise HTTPException(409, "pipeline mismatch")
-        if app.state.lock.locked():
-            raise HTTPException(429, "worker busy", headers={"Retry-After": "2"})
-        async with app.state.lock:
+        try:
+            await asyncio.wait_for(app.state.lock.acquire(), timeout=30)
+        except TimeoutError:
+            raise HTTPException(429, "worker busy", headers={"Retry-After": "2"}) from None
+        try:
             raw = await image.read(MAX_BODY + 1)
             await image.close()
             if len(raw) > MAX_BODY:
@@ -73,6 +75,8 @@ def create_app(engine_factory=None, token=None):
             except Exception:
                 raise HTTPException(503, "inference unavailable") from None
             return {**result, "request_id": request_id}
+        finally:
+            app.state.lock.release()
 
     # Bound the entire body, including multipart fields, before the parser runs.
     class BoundedApp:

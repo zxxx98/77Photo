@@ -69,7 +69,7 @@ func fixture(t *testing.T, w Worker) (*Service, *sql.DB) {
 	}
 	var b bytes.Buffer
 	_ = jpeg.Encode(&b, image.NewRGBA(image.Rect(0, 0, 64, 64)), nil)
-	c := Config{Enabled: true, URL: "http://127.0.0.1:8091", Token: strings.Repeat("x", 32), AllowHTTP: true, Timeout: time.Second, MatchThreshold: .7, MatchMargin: .08}
+	c := Config{Enabled: true, URL: "http://127.0.0.1:8091", Token: strings.Repeat("x", 32), AllowHTTP: true, Timeout: time.Second, MatchThreshold: .7, MatchMargin: .08, Concurrency: 1}
 	s, e := NewService(context.Background(), db, c, w, func(context.Context, string) ([]byte, error) { return b.Bytes(), nil }, &maintenance.Lock{})
 	if e != nil {
 		t.Fatal(e)
@@ -154,6 +154,302 @@ func TestNoFaceIsSuccessfulAndSkippedNextTime(t *testing.T) {
 	waitJob(t, s, j.ID, "completed")
 	if w.calls.Load() != 1 {
 		t.Fatal("no-face was scanned twice")
+	}
+}
+
+func TestSimilarPeopleUsesSavedVectorsWithinOwnerWithoutChangingGroups(t *testing.T) {
+	w := &fakeWorker{fn: func(_ context.Context, pid string) (Analysis, error) {
+		a := result(pid, true)
+		v := make([]float32, 16)
+		switch pid {
+		case "2":
+			v[0], v[1] = .8, .6
+		case "4":
+			v[1] = 1
+		default:
+			v[0] = 1
+		}
+		a.Faces[0].Embedding = base64.StdEncoding.EncodeToString(encodeVector(v))
+		return a, nil
+	}}
+	s, db := fixture(t, w)
+	s.cfg.MatchThreshold = 1 // Keep each face separate to simulate the reported split.
+	for _, photo := range []struct{ id, owner string }{{"1", "a"}, {"2", "a"}, {"3", "b"}, {"4", "a"}} {
+		addPhoto(t, db, photo.id, photo.owner)
+	}
+	j := start(t, s, "similar-key")
+	waitJob(t, s, j.ID, "completed")
+	var source, expected, other string
+	for _, item := range []struct {
+		photo string
+		into  *string
+	}{{"1", &source}, {"2", &expected}, {"4", &other}} {
+		if err := db.QueryRow(`SELECT f.person_id FROM faces f JOIN face_analyses a ON a.id=f.analysis_id WHERE a.photo_id=?`, item.photo).Scan(item.into); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.SimilarPeople(context.Background(), source)
+	if err != nil || len(got) != 2 || got[0].Person.ID != expected || got[0].Score < .79 || got[1].Person.ID != other {
+		t.Fatalf("suggestions=%+v err=%v", got, err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM people WHERE merged_into IS NULL").Scan(&count); err != nil || count != 4 {
+		t.Fatalf("suggestions changed groups: count=%d err=%v", count, err)
+	}
+}
+
+func TestScanRunsBoundedConcurrentInferenceWithoutDuplicateItems(t *testing.T) {
+	entered := make(chan string, 4)
+	release := make(chan struct{})
+	w := &fakeWorker{fn: func(_ context.Context, pid string) (Analysis, error) {
+		entered <- pid
+		<-release
+		return result(pid, true), nil
+	}}
+	s, db := fixture(t, w)
+	s.cfg.Concurrency = 4
+	for i := 1; i <= 4; i++ {
+		addPhoto(t, db, string(rune('0'+i)), "a")
+	}
+	j := start(t, s, "parallel-key")
+	seen := map[string]bool{}
+	for i := 0; i < 4; i++ {
+		select {
+		case pid := <-entered:
+			if seen[pid] {
+				t.Fatalf("duplicate inference for %s", pid)
+			}
+			seen[pid] = true
+		case <-time.After(3 * time.Second):
+			t.Fatal("scanner did not run four inferences concurrently")
+		}
+	}
+	close(release)
+	done := waitJob(t, s, j.ID, "completed")
+	if done.Counts.Succeeded != 4 || w.calls.Load() != 4 {
+		t.Fatalf("unexpected scan counts: %+v calls=%d", done, w.calls.Load())
+	}
+}
+
+func TestConcurrentCancelRejectsEveryLateInference(t *testing.T) {
+	entered := make(chan struct{}, 4)
+	release := make(chan struct{})
+	w := &fakeWorker{fn: func(_ context.Context, pid string) (Analysis, error) {
+		entered <- struct{}{}
+		<-release
+		return result(pid, true), nil
+	}}
+	s, db := fixture(t, w)
+	s.cfg.Concurrency = 4
+	for _, pid := range []string{"1", "2", "3", "4"} {
+		addPhoto(t, db, pid, "a")
+	}
+	j := start(t, s, "parallel-cancel-key")
+	for i := 0; i < 4; i++ {
+		select {
+		case <-entered:
+		case <-time.After(3 * time.Second):
+			t.Fatal("not all inferences started")
+		}
+	}
+	if _, err := s.Control(context.Background(), j.ID, "cancel"); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	waitJob(t, s, j.ID, "cancelled")
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM faces").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("late face results committed: %d, err=%v", count, err)
+	}
+}
+
+func TestFullRescanReappliesThresholdAndPreservesNamedPerson(t *testing.T) {
+	w := &fakeWorker{}
+	s, db := fixture(t, w)
+	s.cfg.MatchThreshold = 1
+	addPhoto(t, db, "1", "a")
+	addPhoto(t, db, "2", "a")
+	j := start(t, s, "before-full-key")
+	waitJob(t, s, j.ID, "completed")
+	var named string
+	if err := db.QueryRow(`SELECT f.person_id FROM faces f JOIN face_analyses a ON a.id=f.analysis_id WHERE a.photo_id='1'`).Scan(&named); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rename(context.Background(), named, "Alex", 1); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.MatchThreshold = .7
+	s.cfg.Concurrency = 4
+	j, err := s.Start(context.Background(), "a", "full-rescan-key", "full", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitJob(t, s, j.ID, "completed")
+	if done.Mode != "full" || done.Counts.Total != 2 || done.Counts.Succeeded != 2 || w.calls.Load() != 4 {
+		t.Fatalf("full scan = %+v, calls=%d", done, w.calls.Load())
+	}
+	var distinct, namedFaces int
+	if err := db.QueryRow("SELECT count(DISTINCT person_id) FROM faces").Scan(&distinct); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT count(*) FROM faces WHERE person_id=?", named).Scan(&namedFaces); err != nil {
+		t.Fatal(err)
+	}
+	if distinct != 1 || namedFaces != 2 {
+		t.Fatalf("full rescan did not regroup: distinct=%d named=%d", distinct, namedFaces)
+	}
+	var name string
+	if err := db.QueryRow("SELECT name FROM people WHERE id=?", named).Scan(&name); err != nil || name != "Alex" {
+		t.Fatalf("name=%q err=%v", name, err)
+	}
+}
+
+func TestFullRescanKeepsOldAnalysisWhenManualFaceDisappears(t *testing.T) {
+	var noFace atomic.Bool
+	w := &fakeWorker{fn: func(_ context.Context, pid string) (Analysis, error) { return result(pid, !noFace.Load()), nil }}
+	s, db := fixture(t, w)
+	addPhoto(t, db, "1", "a")
+	j := start(t, s, "before-missing-key")
+	waitJob(t, s, j.ID, "completed")
+	people, _, err := s.People(context.Background(), "")
+	if err != nil || len(people) != 1 {
+		t.Fatalf("people=%+v err=%v", people, err)
+	}
+	faces, _, err := s.FaceList(context.Background(), people[0].ID, "")
+	if err != nil || len(faces) != 1 {
+		t.Fatalf("faces=%+v err=%v", faces, err)
+	}
+	if err := s.Assign(context.Background(), faces[0].ID, "", false, faces[0].Revision); err != nil {
+		t.Fatal(err)
+	}
+	noFace.Store(true)
+	j, err = s.Start(context.Background(), "a", "missing-full-key", "full", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitJob(t, s, j.ID, "completed_with_errors")
+	if done.Counts.Failed != 1 {
+		t.Fatalf("full scan = %+v", done)
+	}
+	failed, _, err := s.FailedItems(context.Background(), j.ID, "")
+	if err != nil || len(failed) != 1 || failed[0].Error != "MANUAL_FACE_UNMATCHED" {
+		t.Fatalf("failed items=%+v err=%v", failed, err)
+	}
+	var faceCount int
+	if err := db.QueryRow("SELECT count(*) FROM faces").Scan(&faceCount); err != nil || faceCount != 1 {
+		t.Fatalf("manual face lost: count=%d err=%v", faceCount, err)
+	}
+}
+
+func TestFullRescanPreservesManualExclusionOnMatchedFace(t *testing.T) {
+	w := &fakeWorker{}
+	s, db := fixture(t, w)
+	addPhoto(t, db, "1", "a")
+	addPhoto(t, db, "2", "a")
+	j := start(t, s, "before-exclusion-key")
+	waitJob(t, s, j.ID, "completed")
+	var oldFace, originalPerson string
+	if err := db.QueryRow(`SELECT f.id,f.person_id FROM faces f JOIN face_analyses a ON a.id=f.analysis_id WHERE a.photo_id='1'`).Scan(&oldFace, &originalPerson); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Assign(context.Background(), oldFace, "", false, 1); err != nil {
+		t.Fatal(err)
+	}
+	var correctedPerson string
+	if err := db.QueryRow("SELECT person_id FROM faces WHERE id=?", oldFace).Scan(&correctedPerson); err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.Start(context.Background(), "a", "exclusion-full-key", "full", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJob(t, s, j.ID, "completed")
+	var newFace, person string
+	var manual bool
+	if err := db.QueryRow(`SELECT f.id,f.person_id,f.manual FROM faces f JOIN face_analyses a ON a.id=f.analysis_id WHERE a.photo_id='1'`).Scan(&newFace, &person, &manual); err != nil {
+		t.Fatal(err)
+	}
+	if newFace == oldFace || person != correctedPerson || !manual {
+		t.Fatalf("manual correction lost: old=%s new=%s person=%s", oldFace, newFace, person)
+	}
+	var exclusions int
+	if err := db.QueryRow("SELECT count(*) FROM face_exclusions WHERE face_id=? AND person_id=?", newFace, originalPerson).Scan(&exclusions); err != nil || exclusions != 1 {
+		t.Fatalf("exclusion lost: count=%d err=%v", exclusions, err)
+	}
+}
+
+func TestPreservedFaceMatchingUsesBoxesNotDetectionOrder(t *testing.T) {
+	old := []preservedFace{{id: "left", box: [4]float64{.1, .1, .3, .3}}, {id: "right", box: [4]float64{.6, .1, .3, .3}}}
+	fresh := []Detection{{Box: [4]float64{.6, .1, .3, .3}}, {Box: [4]float64{.1, .1, .3, .3}}}
+	matched, err := matchPreservedFaces(old, fresh)
+	if err != nil || matched[0].id != "right" || matched[1].id != "left" {
+		t.Fatalf("box matching=%+v err=%v", matched, err)
+	}
+}
+
+type offlineWorker struct{}
+
+func (offlineWorker) Health(context.Context) (Profile, error) {
+	return Profile{}, &WorkerError{"WORKER_OFFLINE", true}
+}
+func (offlineWorker) Analyze(context.Context, string, Profile, []byte) (Analysis, error) {
+	return Analysis{}, &WorkerError{"WORKER_OFFLINE", true}
+}
+
+func TestRegroupUsesSavedVectorsOfflineAndPreservesManualLabels(t *testing.T) {
+	w := &fakeWorker{fn: func(_ context.Context, pid string) (Analysis, error) {
+		a := result(pid, true)
+		if pid == "3" {
+			v := make([]float32, 16)
+			v[1] = 1
+			a.Faces[0].Embedding = base64.StdEncoding.EncodeToString(encodeVector(v))
+		}
+		return a, nil
+	}}
+	s, db := fixture(t, w)
+	s.cfg.MatchThreshold = 1
+	for _, pid := range []string{"1", "2", "3"} {
+		addPhoto(t, db, pid, "a")
+	}
+	j := start(t, s, "before-regroup-key")
+	waitJob(t, s, j.ID, "completed")
+	ids := map[string]string{}
+	groups := map[string]string{}
+	for _, pid := range []string{"1", "2", "3"} {
+		var faceID, group string
+		if err := db.QueryRow(`SELECT f.id,f.person_id FROM faces f JOIN face_analyses a ON a.id=f.analysis_id WHERE a.photo_id=?`, pid).Scan(&faceID, &group); err != nil {
+			t.Fatal(err)
+		}
+		ids[pid], groups[pid] = faceID, group
+	}
+	if err := s.Rename(context.Background(), groups["1"], "Alex", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Assign(context.Background(), ids["3"], "", false, 1); err != nil {
+		t.Fatal(err)
+	}
+	var manualGroup string
+	if err := db.QueryRow("SELECT person_id FROM faces WHERE id=?", ids["3"]).Scan(&manualGroup); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.MatchThreshold = .7
+	s.worker = offlineWorker{}
+	j, err := s.Start(context.Background(), "a", "regroup-all-key", "regroup", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitJob(t, s, j.ID, "completed")
+	if done.Mode != "regroup" || done.Counts.Succeeded != 3 || w.calls.Load() != 3 {
+		t.Fatalf("regroup=%+v worker calls=%d", done, w.calls.Load())
+	}
+	for _, item := range []struct{ photo, want string }{{"1", groups["1"]}, {"2", groups["1"]}, {"3", manualGroup}} {
+		var faceID, person string
+		if err := db.QueryRow(`SELECT f.id,f.person_id FROM faces f JOIN face_analyses a ON a.id=f.analysis_id WHERE a.photo_id=?`, item.photo).Scan(&faceID, &person); err != nil {
+			t.Fatal(err)
+		}
+		if faceID != ids[item.photo] || person != item.want {
+			t.Fatalf("photo %s changed face or manual group: face=%s person=%s", item.photo, faceID, person)
+		}
 	}
 }
 func TestCancelRejectsLateResponse(t *testing.T) {

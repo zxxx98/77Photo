@@ -172,7 +172,7 @@ export default function LibrarySection({ api, maintenance }: { api: ApiClient; m
       </div>}
     </SettingsCard>
 
-    {api.faces && <FaceScanPanel api={api.faces} />}
+    {api.faces && <FaceScanPanel api={api.faces} placement="settings" />}
 
     <SettingsCard
       icon={TriangleAlert}

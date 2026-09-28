@@ -530,6 +530,20 @@ describe('settings rescan progress', () => {
     expect(details.textContent).toContain('原始照片/视频、用户和文件夹不会被删除');
   });
 
+  it('shows whole-library face actions in the library settings card', async () => {
+    const faces = {
+      config: vi.fn().mockResolvedValue({ enabled: true, configured: true, automatic_matching: true, match_threshold: 0.55, match_margin: 0.08, concurrency: 4 }),
+      jobs: vi.fn().mockResolvedValue({ items: [] }),
+    };
+    await renderWith({ listUsers: vi.fn().mockResolvedValue({ items: [admin] }), faces } as unknown as ApiClient);
+    const library = container.querySelector('#settings-panel-library')!;
+    const card = Array.from(library.querySelectorAll('.settings-card')).find((item) => item.textContent?.includes('人脸扫描'));
+    expect(card).toBeDefined();
+    expect(card?.querySelector('.settings-card-actions')?.textContent).toContain('重新归类已有结果');
+    expect(card?.querySelector('.settings-card-actions')?.textContent).toContain('全部重新扫描');
+    expect(container.querySelector('#settings-panel-account')?.textContent).not.toContain('全部重新扫描');
+  });
+
   it('shows a running face scan as the current maintenance task', async () => {
     await renderWith({
       listUsers: vi.fn().mockResolvedValue({ items: [admin] }),
@@ -542,4 +556,3 @@ describe('settings rescan progress', () => {
     expect(rescanButton()?.disabled).toBe(true);
   });
 });
-

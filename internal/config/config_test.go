@@ -15,6 +15,8 @@ func clearConfigEnv(t *testing.T) {
 		"PHOTO_THUMBNAIL_WORKERS", "PHOTO_MAX_UPLOAD_SIZE", "PHOTO_SESSION_TTL",
 		"PHOTO_FFMPEG_PATH", "PHOTO_FFPROBE_PATH", "PHOTO_HEIF_CONVERT_PATH", "PHOTO_MEDIA_TIMEOUT",
 		"PHOTO_MAP_TIANDITU_KEY",
+		"PHOTO_FACE_ENABLED", "PHOTO_FACE_WORKER_URL", "PHOTO_FACE_WORKER_TOKEN", "PHOTO_FACE_ALLOW_INSECURE_LAN",
+		"PHOTO_FACE_MATCH_THRESHOLD", "PHOTO_FACE_MATCH_MARGIN", "PHOTO_FACE_CONCURRENCY", "PHOTO_FACE_REQUEST_TIMEOUT",
 	} {
 		t.Setenv(key, "")
 		_ = os.Unsetenv(key)
@@ -72,6 +74,20 @@ func TestLoadFromEnvRejectsInvalidWorkerCount(t *testing.T) {
 	t.Setenv("PHOTO_THUMBNAIL_WORKERS", "0")
 	if _, err := LoadFromEnv(); err == nil {
 		t.Fatal("LoadFromEnv() error = nil, want invalid worker count error")
+	}
+}
+
+func TestLoadFromEnvFaceConcurrencyAndMargin(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("PHOTO_FACE_CONCURRENCY", "6")
+	t.Setenv("PHOTO_FACE_MATCH_MARGIN", "0.03")
+	cfg, err := LoadFromEnv()
+	if err != nil || cfg.Faces.Concurrency != 6 || cfg.Faces.MatchMargin != .03 {
+		t.Fatalf("face settings = %+v, err=%v", cfg.Faces, err)
+	}
+	t.Setenv("PHOTO_FACE_CONCURRENCY", "9")
+	if _, err := LoadFromEnv(); err == nil {
+		t.Fatal("accepted concurrency above the bounded limit")
 	}
 }
 

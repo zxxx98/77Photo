@@ -59,8 +59,8 @@ func id(prefix string) string {
 	return prefix + hex.EncodeToString(b[:])
 }
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
-func PreviewFromThumbnails(t *thumbnails.Service) Preview {
-	gate := make(chan struct{}, 1) // Bound decoding even when many avatar requests arrive.
+func PreviewFromThumbnails(t *thumbnails.Service, concurrency int) Preview {
+	gate := make(chan struct{}, min(2, max(1, concurrency))) // Bound R5S decoding and avatar work.
 	return func(ctx context.Context, id string) ([]byte, error) {
 		ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		defer cancel()
@@ -115,10 +115,45 @@ type Job struct {
 	Updated string `json:"updated_at"`
 	Counts  Counts `json:"counts"`
 }
+type FailedItem struct {
+	PhotoID  string `json:"photo_id"`
+	Filename string `json:"filename"`
+	Error    string `json:"error"`
+}
+
+func (s *Service) FailedItems(ctx context.Context, jid, cursor string) ([]FailedItem, string, error) {
+	if _, err := s.Job(ctx, jid); err != nil {
+		return nil, "", err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT i.photo_id,coalesce(p.filename,''),i.error FROM face_items i
+ LEFT JOIN photos p ON p.id=i.photo_id WHERE i.job_id=? AND i.status='failed' AND i.photo_id>?
+ ORDER BY i.photo_id LIMIT 101`, jid, cursor)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	out := []FailedItem{}
+	for rows.Next() {
+		var item FailedItem
+		if err = rows.Scan(&item.PhotoID, &item.Filename, &item.Error); err != nil {
+			return nil, "", err
+		}
+		out = append(out, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(out) > 100 {
+		out = out[:100]
+		next = out[99].PhotoID
+	}
+	return out, next, nil
+}
 
 func (s *Service) Job(ctx context.Context, jid string) (Job, error) {
 	var j Job
-	err := s.db.QueryRowContext(ctx, `SELECT id,mode,status,error,created_at,updated_at FROM face_jobs WHERE id=?`, jid).Scan(&j.ID, &j.Mode, &j.Status, &j.Error, &j.Created, &j.Updated)
+	err := s.db.QueryRowContext(ctx, `SELECT id,CASE WHEN regroup_only=1 THEN 'regroup' WHEN scan_all=1 THEN 'full' ELSE mode END,status,error,created_at,updated_at FROM face_jobs WHERE id=?`, jid).Scan(&j.ID, &j.Mode, &j.Status, &j.Error, &j.Created, &j.Updated)
 	if err != nil {
 		return j, err
 	}
@@ -176,13 +211,24 @@ func (s *Service) Test(ctx context.Context) (Profile, error) {
 	}
 	return p, e
 }
+func (s *Service) profileForMode(ctx context.Context, mode string) (Profile, error) {
+	if mode != "regroup" {
+		return s.Test(ctx)
+	}
+	var p Profile
+	err := s.db.QueryRowContext(ctx, "SELECT pipeline_id,model_id,dimension FROM face_profile WHERE id=1").Scan(&p.Pipeline, &p.Model, &p.Dimension)
+	if errors.Is(err, sql.ErrNoRows) {
+		return p, ErrInvalid
+	}
+	return p, err
+}
 func (s *Service) Start(ctx context.Context, creator, key, mode, folder string) (Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.cfg.Enabled {
 		return Job{}, ErrDisabled
 	}
-	if len(key) < 8 || len(key) > 128 || (mode != "incremental" && mode != "retry_failed") {
+	if len(key) < 8 || len(key) > 128 || (mode != "incremental" && mode != "retry_failed" && mode != "full" && mode != "regroup") || ((mode == "full" || mode == "regroup") && folder != "") {
 		return Job{}, ErrInvalid
 	}
 	var existing string
@@ -203,7 +249,7 @@ func (s *Service) Start(ctx context.Context, creator, key, mode, folder string) 
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Job{}, err
 	}
-	p, err := s.Test(ctx)
+	p, err := s.profileForMode(ctx, mode)
 	if err != nil {
 		return Job{}, err
 	}
@@ -227,7 +273,11 @@ func (s *Service) Start(ctx context.Context, creator, key, mode, folder string) 
 	}
 	_, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO face_profile(id,pipeline_id,model_id,dimension) VALUES(1,?,?,?)", p.Pipeline, p.Model, p.Dimension)
 	if err == nil {
-		_, err = tx.ExecContext(ctx, "INSERT INTO face_jobs(id,creator_id,idempotency_key,mode,folder_id,status,created_at,updated_at) VALUES(?,?,?,?,?,'running',?,?)", jid, creator, key, mode, folder, now(), now())
+		dbMode := mode
+		if mode == "full" || mode == "regroup" {
+			dbMode = "incremental"
+		}
+		_, err = tx.ExecContext(ctx, "INSERT INTO face_jobs(id,creator_id,idempotency_key,mode,folder_id,scan_all,regroup_only,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'running',?,?)", jid, creator, key, dbMode, folder, mode == "full", mode == "regroup", now(), now())
 	}
 	// SQL materializes the fixed candidate set without loading photo metadata into Go memory.
 	if err == nil {
@@ -235,8 +285,8 @@ func (s *Service) Start(ctx context.Context, creator, key, mode, folder string) 
  SELECT ?,p.id,p.checksum,p.owner_id,'pending' FROM photos p WHERE p.deleted_at IS NULL AND p.scan_status='indexed'
  AND p.mime_type IN ('image/jpeg','image/png','image/heic','image/heif')
  AND (?='' OR p.folder_id IN (WITH RECURSIVE tree(id) AS (SELECT ? UNION ALL SELECT f.id FROM folders f JOIN tree t ON f.parent_id=t.id) SELECT id FROM tree))
- AND NOT EXISTS(SELECT 1 FROM face_analyses a WHERE a.photo_id=p.id AND a.checksum=p.checksum AND a.owner_id=p.owner_id AND a.pipeline_id=?)
- AND (?='incremental' OR EXISTS(SELECT 1 FROM face_items i WHERE i.photo_id=p.id AND i.checksum=p.checksum AND i.status='failed'))`, jid, folder, folder, p.Pipeline, mode)
+	 AND (?='full' OR (?='regroup' AND EXISTS(SELECT 1 FROM face_analyses a WHERE a.photo_id=p.id AND a.checksum=p.checksum AND a.owner_id=p.owner_id AND a.pipeline_id=?)) OR (? NOT IN ('full','regroup') AND NOT EXISTS(SELECT 1 FROM face_analyses a WHERE a.photo_id=p.id AND a.checksum=p.checksum AND a.owner_id=p.owner_id AND a.pipeline_id=?)))
+	 AND (?!='retry_failed' OR EXISTS(SELECT 1 FROM face_items i WHERE i.photo_id=p.id AND i.checksum=p.checksum AND i.status='failed'))`, jid, folder, folder, mode, mode, p.Pipeline, mode, p.Pipeline, mode)
 	}
 	if err == nil {
 		err = tx.Commit()
@@ -273,7 +323,7 @@ func (s *Service) Control(ctx context.Context, jid, action string) (Job, error) 
 		if s.cancel != nil || (j.Status != "paused" && j.Status != "paused_offline") {
 			return j, ErrConflict
 		}
-		p, e := s.Test(ctx)
+		p, e := s.profileForMode(ctx, j.Mode)
 		if e != nil {
 			return j, e
 		}
@@ -325,14 +375,43 @@ func (s *Service) finish(jid, status, reason string) {
 	_, _ = s.db.Exec("UPDATE face_jobs SET status=?,error=?,updated_at=? WHERE id=? AND status='running'", status, reason, now(), jid)
 }
 func (s *Service) run(ctx context.Context, jid string, p Profile) {
+	type scanItem struct{ photo, checksum, owner string }
+	parallelism := max(1, s.cfg.Concurrency)
+	var full, regroup bool
+	if err := s.db.QueryRowContext(ctx, "SELECT scan_all,regroup_only FROM face_jobs WHERE id=?", jid).Scan(&full, &regroup); err != nil {
+		s.finish(jid, "failed", "DATABASE_ERROR")
+		return
+	}
+	if regroup {
+		parallelism = 1
+	}
 	for {
 		if ctx.Err() != nil {
 			s.finish(jid, "paused", "INTERRUPTED")
 			return
 		}
-		var pid, checksum, owner string
-		e := s.db.QueryRowContext(ctx, "SELECT photo_id,checksum,owner_id FROM face_items WHERE job_id=? AND status='pending' ORDER BY photo_id LIMIT 1", jid).Scan(&pid, &checksum, &owner)
-		if errors.Is(e, sql.ErrNoRows) {
+		rows, e := s.db.QueryContext(ctx, "SELECT photo_id,checksum,owner_id FROM face_items WHERE job_id=? AND status='pending' ORDER BY photo_id LIMIT ?", jid, parallelism)
+		if e != nil {
+			s.finish(jid, "failed", "DATABASE_ERROR")
+			return
+		}
+		items := make([]scanItem, 0, parallelism)
+		for rows.Next() {
+			var item scanItem
+			if e = rows.Scan(&item.photo, &item.checksum, &item.owner); e != nil {
+				break
+			}
+			items = append(items, item)
+		}
+		if e == nil {
+			e = rows.Err()
+		}
+		rows.Close() // Release the only SQLite connection before workers commit.
+		if e != nil {
+			s.finish(jid, "failed", "DATABASE_ERROR")
+			return
+		}
+		if len(items) == 0 {
 			j, err := s.Job(ctx, jid)
 			if err != nil {
 				s.finish(jid, "failed", "DATABASE_ERROR")
@@ -345,81 +424,113 @@ func (s *Service) run(ctx context.Context, jid string, p Profile) {
 			s.finish(jid, status, "")
 			return
 		}
-		if e != nil {
-			s.finish(jid, "failed", "DATABASE_ERROR")
-			return
+		batchCtx, cancel := context.WithCancel(ctx)
+		results := make(chan string, len(items))
+		for _, item := range items {
+			go func(item scanItem) {
+				results <- s.processOne(batchCtx, jid, p, item.photo, item.checksum, item.owner, full, regroup)
+			}(item)
 		}
-		var revision string
-		e = s.db.QueryRowContext(ctx, "SELECT source_revision FROM photos WHERE id=? AND checksum=? AND owner_id=? AND deleted_at IS NULL AND scan_status='indexed'", pid, checksum, owner).Scan(&revision)
-		if errors.Is(e, sql.ErrNoRows) {
-			if err := s.item(ctx, jid, pid, "skipped", "PHOTO_CHANGED"); err != nil {
-				s.finish(jid, "failed", "DATABASE_ERROR")
-				return
-			}
-			continue
-		}
-		if e != nil {
-			s.finish(jid, "failed", "DATABASE_ERROR")
-			return
-		}
-		img, e := s.preview(ctx, pid)
-		if e != nil {
-			if ctx.Err() != nil {
-				continue
-			}
-			if err := s.item(ctx, jid, pid, "failed", "PREVIEW_FAILED"); err != nil {
-				s.finish(jid, "failed", "DATABASE_ERROR")
-				return
-			}
-			continue
-		}
-		var a Analysis
-		for attempt := 0; attempt < 3; attempt++ {
-			a, e = s.worker.Analyze(ctx, pid, p, img)
-			if e == nil || !retryable(e) || ctx.Err() != nil {
-				break
-			}
-			if attempt < 2 {
-				select {
-				case <-ctx.Done():
-				case <-time.After(time.Duration(attempt+1) * time.Second):
-				}
+		reason := ""
+		for range items {
+			if result := <-results; result != "" && reason == "" {
+				reason = result
+				cancel()
 			}
 		}
+		cancel()
 		if ctx.Err() != nil {
-			continue
+			s.finish(jid, "paused", "INTERRUPTED")
+			return
 		}
-		if e != nil {
-			if retryable(e) {
-				s.finish(jid, "paused_offline", "WORKER_OFFLINE")
-				return
+		if reason != "" {
+			status := "failed"
+			if reason == "WORKER_OFFLINE" {
+				status = "paused_offline"
 			}
-			var we *WorkerError
-			if errors.As(e, &we) && (we.Code == "WORKER_HTTP_422" || we.Code == "WORKER_HTTP_413") {
-				if err := s.item(ctx, jid, pid, "failed", we.Code); err != nil {
-					s.finish(jid, "failed", "DATABASE_ERROR")
-					return
-				}
-				continue
-			}
-			s.finish(jid, "failed", "WORKER_REJECTED")
-			return
-		}
-		if e = validateAnalysis(&a, pid, p); e != nil {
-			s.finish(jid, "failed", "WORKER_PROTOCOL")
-			return
-		}
-		config, _, e := image.DecodeConfig(bytes.NewReader(img))
-		if e != nil || config.Width != a.Image.Width || config.Height != a.Image.Height {
-			s.finish(jid, "failed", "WORKER_DIMENSIONS")
-			return
-		}
-		e = s.commit(ctx, jid, pid, checksum, owner, revision, p, a)
-		if e != nil && ctx.Err() == nil {
-			s.finish(jid, "failed", "DATABASE_ERROR")
+			s.finish(jid, status, reason)
 			return
 		}
 	}
+}
+
+func (s *Service) processOne(ctx context.Context, jid string, p Profile, pid, checksum, owner string, full, regroup bool) string {
+	if regroup {
+		if err := s.regroupOne(ctx, jid, p, pid, checksum, owner); err != nil && ctx.Err() == nil {
+			return "DATABASE_ERROR"
+		}
+		return ""
+	}
+	var revision string
+	e := s.db.QueryRowContext(ctx, "SELECT source_revision FROM photos WHERE id=? AND checksum=? AND owner_id=? AND deleted_at IS NULL AND scan_status='indexed'", pid, checksum, owner).Scan(&revision)
+	if errors.Is(e, sql.ErrNoRows) {
+		if e = s.item(ctx, jid, pid, "skipped", "PHOTO_CHANGED"); e != nil && ctx.Err() == nil {
+			return "DATABASE_ERROR"
+		}
+		return ""
+	}
+	if e != nil {
+		if ctx.Err() != nil {
+			return ""
+		}
+		return "DATABASE_ERROR"
+	}
+	img, e := s.preview(ctx, pid)
+	if e != nil {
+		if ctx.Err() != nil {
+			return ""
+		}
+		if e = s.item(ctx, jid, pid, "failed", "PREVIEW_FAILED"); e != nil && ctx.Err() == nil {
+			return "DATABASE_ERROR"
+		}
+		return ""
+	}
+	var a Analysis
+	for attempt := 0; attempt < 3; attempt++ {
+		a, e = s.worker.Analyze(ctx, pid, p, img)
+		if e == nil || !retryable(e) || ctx.Err() != nil {
+			break
+		}
+		if attempt < 2 {
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Duration(attempt+1) * time.Second):
+			}
+		}
+	}
+	if ctx.Err() != nil {
+		return ""
+	}
+	if e != nil {
+		if retryable(e) {
+			return "WORKER_OFFLINE"
+		}
+		var we *WorkerError
+		if errors.As(e, &we) && (we.Code == "WORKER_HTTP_422" || we.Code == "WORKER_HTTP_413") {
+			if e = s.item(ctx, jid, pid, "failed", we.Code); e != nil && ctx.Err() == nil {
+				return "DATABASE_ERROR"
+			}
+			return ""
+		}
+		return "WORKER_REJECTED"
+	}
+	if e = validateAnalysis(&a, pid, p); e != nil {
+		return "WORKER_PROTOCOL"
+	}
+	config, _, e := image.DecodeConfig(bytes.NewReader(img))
+	if e != nil || config.Width != a.Image.Width || config.Height != a.Image.Height {
+		return "WORKER_DIMENSIONS"
+	}
+	if e = s.commit(ctx, jid, pid, checksum, owner, revision, p, a, full); e != nil && ctx.Err() == nil {
+		if errors.Is(e, ErrManualFaceUnmatched) {
+			if e = s.item(ctx, jid, pid, "failed", "MANUAL_FACE_UNMATCHED"); e != nil && ctx.Err() == nil {
+				return "DATABASE_ERROR"
+			}
+			return ""
+		}
+		return "DATABASE_ERROR"
+	}
+	return ""
 }
 func (s *Service) item(ctx context.Context, jid, pid, status, reason string) error {
 	s.mu.Lock()
@@ -440,7 +551,7 @@ func (s *Service) item(ctx context.Context, jid, pid, status, reason string) err
 	}
 	return nil
 }
-func (s *Service) commit(ctx context.Context, jid, pid, checksum, owner, revision string, p Profile, a Analysis) error {
+func (s *Service) commit(ctx context.Context, jid, pid, checksum, owner, revision string, p Profile, a Analysis, full bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if ctx.Err() != nil {
@@ -465,40 +576,78 @@ func (s *Service) commit(ctx context.Context, jid, pid, checksum, owner, revisio
 	}
 	var aid string
 	e = tx.QueryRowContext(ctx, "SELECT id FROM face_analyses WHERE photo_id=? AND checksum=? AND pipeline_id=?", pid, checksum, p.Pipeline).Scan(&aid)
+	existed := e == nil
+	var kept []*preservedFace
 	if errors.Is(e, sql.ErrNoRows) {
 		aid = id("fa_")
 		_, e = tx.ExecContext(ctx, "INSERT INTO face_analyses(id,photo_id,checksum,owner_id,pipeline_id,width,height,created_at) VALUES(?,?,?,?,?,?,?,?)", aid, pid, checksum, owner, p.Pipeline, a.Image.Width, a.Image.Height, now())
 		if e != nil {
 			return e
 		}
+	} else if e != nil {
+		return e
+	} else if full {
+		old, err := loadPreservedFaces(ctx, tx, aid)
+		if err != nil {
+			return err
+		}
+		kept, err = matchPreservedFaces(old, a.Faces)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "DELETE FROM faces WHERE analysis_id=?", aid); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE face_analyses SET width=?,height=?,created_at=? WHERE id=?", a.Image.Width, a.Image.Height, now(), aid); err != nil {
+			return err
+		}
+	}
+	if existed && !full {
+		// An incremental retry cannot replace a successful existing analysis.
+	} else {
 		used := map[string]bool{}
-		for _, f := range a.Faces {
+		for _, saved := range kept {
+			if saved != nil && saved.person != "" {
+				used[saved.person] = true
+			}
+		}
+		for i, f := range a.Faces {
 			person := ""
-			if len(f.Vector) > 0 {
-				person, e = s.match(ctx, tx, owner, f.Vector, used)
+			ignored, manual := false, false
+			var exclusions []string
+			if kept != nil && kept[i] != nil {
+				person, ignored, manual = kept[i].person, kept[i].ignored, true
+				exclusions = kept[i].exclusions
+			} else if len(f.Vector) > 0 {
+				person, e = s.match(ctx, tx, owner, pid, jid, full, f.Vector, used)
 				if e != nil {
 					return e
 				}
 				if person == "" {
 					person = id("pe_")
-					_, e = tx.ExecContext(ctx, "INSERT INTO people(id,owner_id,created_at) VALUES(?,?,?)", person, owner, now())
-					if e != nil {
+					if _, e = tx.ExecContext(ctx, "INSERT INTO people(id,owner_id,created_at) VALUES(?,?,?)", person, owner, now()); e != nil {
 						return e
 					}
 				}
+			}
+			if person != "" {
 				used[person] = true
 			}
 			var personValue any
 			if person != "" {
 				personValue = person
 			}
-			_, e = tx.ExecContext(ctx, `INSERT INTO faces(id,analysis_id,face_index,x,y,width,height,score,embedding,person_id) VALUES(?,?,?,?,?,?,?,?,?,?)`, id("fc_"), aid, f.Index, f.Box[0], f.Box[1], f.Box[2], f.Box[3], f.Score, encodeVector(f.Vector), personValue)
+			faceID := id("fc_")
+			_, e = tx.ExecContext(ctx, `INSERT INTO faces(id,analysis_id,face_index,x,y,width,height,score,embedding,person_id,manual,ignored) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, faceID, aid, f.Index, f.Box[0], f.Box[1], f.Box[2], f.Box[3], f.Score, encodeVector(f.Vector), personValue, manual, ignored)
 			if e != nil {
 				return e
 			}
+			for _, excluded := range exclusions {
+				if _, e = tx.ExecContext(ctx, "INSERT INTO face_exclusions(face_id,person_id) VALUES(?,?)", faceID, excluded); e != nil {
+					return e
+				}
+			}
 		}
-	} else if e != nil {
-		return e
 	}
 	_, e = tx.ExecContext(ctx, "UPDATE face_items SET status='succeeded',error='' WHERE job_id=? AND photo_id=?", jid, pid)
 	if e != nil {
@@ -506,13 +655,14 @@ func (s *Service) commit(ctx context.Context, jid, pid, checksum, owner, revisio
 	}
 	return tx.Commit()
 }
-func (s *Service) match(ctx context.Context, tx *sql.Tx, owner string, v []float32, used map[string]bool) (string, error) {
+func (s *Service) match(ctx context.Context, tx *sql.Tx, owner, pid, jid string, full bool, v []float32, used map[string]bool) (string, error) {
 	// At most three representatives per person, streamed to avoid a full vector cache on R5S.
 	rows, e := tx.QueryContext(ctx, `SELECT person_id,embedding FROM (
  SELECT f.person_id,f.embedding,row_number() OVER(PARTITION BY f.person_id ORDER BY f.manual DESC,f.score DESC,f.id) rn
  FROM faces f JOIN face_analyses a ON a.id=f.analysis_id JOIN photos p ON p.id=a.photo_id JOIN people pe ON pe.id=f.person_id
- WHERE pe.owner_id=? AND pe.merged_into IS NULL AND f.ignored=0 AND length(f.embedding)>0 AND p.deleted_at IS NULL AND p.scan_status='indexed' AND a.checksum=p.checksum AND a.owner_id=p.owner_id
- ) WHERE rn<=3`, owner)
+ WHERE pe.owner_id=? AND pe.merged_into IS NULL AND f.ignored=0 AND length(f.embedding)>0 AND p.deleted_at IS NULL AND p.scan_status='indexed' AND a.checksum=p.checksum AND a.owner_id=p.owner_id AND p.id<>?
+ AND (?=0 OR f.manual=1 OR pe.name<>'' OR EXISTS(SELECT 1 FROM face_items i WHERE i.job_id=? AND i.photo_id=p.id AND i.status='succeeded'))
+ ) WHERE rn<=3`, owner, pid, full, jid)
 	if e != nil {
 		return "", e
 	}

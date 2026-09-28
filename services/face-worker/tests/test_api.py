@@ -1,5 +1,7 @@
 import io
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -50,3 +52,27 @@ def test_body_limit(client):
 def test_secret_required():
     with pytest.raises(ValueError):
         create_app(FakeEngine, "short")
+
+def test_busy_worker_queues_a_second_authenticated_request():
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingEngine(FakeEngine):
+        def analyze(self, raw):
+            entered.set()
+            assert release.wait(5)
+            return super().analyze(raw)
+
+    with TestClient(create_app(BlockingEngine, TOKEN)) as c:
+        responses = []
+        first = threading.Thread(target=lambda: responses.append(post(c, jpeg()).status_code))
+        second = threading.Thread(target=lambda: responses.append(post(c, jpeg()).status_code))
+        first.start()
+        assert entered.wait(2)
+        second.start()
+        time.sleep(.1)
+        release.set()
+        first.join(5)
+        second.join(5)
+        assert not first.is_alive() and not second.is_alive()
+        assert sorted(responses) == [200, 200]

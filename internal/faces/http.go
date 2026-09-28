@@ -42,7 +42,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/")
 	parts := strings.Split(path, "/")
 	if path == "faces/config" && r.Method == "GET" {
-		writeJSON(w, 200, map[string]any{"enabled": h.s.cfg.Enabled, "configured": h.s.cfg.URL != "" && h.s.cfg.Token != "", "automatic_matching": h.s.cfg.MatchThreshold < 1})
+		writeJSON(w, 200, map[string]any{"enabled": h.s.cfg.Enabled, "configured": h.s.cfg.URL != "" && h.s.cfg.Token != "", "automatic_matching": h.s.cfg.MatchThreshold < 1, "match_threshold": h.s.cfg.MatchThreshold, "match_margin": h.s.cfg.MatchMargin, "concurrency": max(1, h.s.cfg.Concurrency)})
 		return
 	}
 	if path == "faces/test" && r.Method == "POST" {
@@ -73,6 +73,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(parts) >= 3 && parts[0] == "faces" && parts[1] == "jobs" {
+		if len(parts) == 4 && parts[3] == "failed" && r.Method == "GET" {
+			items, next, e := h.s.FailedItems(r.Context(), parts[2], r.URL.Query().Get("cursor"))
+			h.result(w, r, map[string]any{"items": items, "next_cursor": next}, e)
+			return
+		}
 		if len(parts) == 3 && r.Method == "GET" {
 			j, e := h.s.Job(r.Context(), parts[2])
 			h.result(w, r, j, e)
@@ -101,6 +106,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 3 && parts[0] == "people" {
+		if parts[2] == "similar" && r.Method == "GET" {
+			items, e := h.s.SimilarPeople(r.Context(), parts[1])
+			h.result(w, r, map[string]any{"items": items}, e)
+			return
+		}
 		if parts[2] == "faces" && r.Method == "GET" {
 			items, next, e := h.s.FaceList(r.Context(), parts[1], r.URL.Query().Get("cursor"))
 			h.result(w, r, map[string]any{"items": items, "next_cursor": next}, e)

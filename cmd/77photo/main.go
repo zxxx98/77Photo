@@ -109,7 +109,7 @@ func run(parent context.Context, logger *slog.Logger) error {
 	photoCleanupService.SetMaintenanceLock(maintenanceLock)
 	photoCleanupHandler := cleanup.NewHTTPHandler(photoCleanupService, authService)
 
-	faceService, err := faces.NewService(ctx, db, cfg.Faces, faces.NewClient(cfg.Faces), faces.PreviewFromThumbnails(thumbnailService), maintenanceLock)
+	faceService, err := faces.NewService(ctx, db, cfg.Faces, faces.NewClient(cfg.Faces), faces.PreviewFromThumbnails(thumbnailService, cfg.Faces.Concurrency), maintenanceLock)
 	if err != nil {
 		return fmt.Errorf("initialize faces: %w", err)
 	}

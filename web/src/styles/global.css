@@ -328,10 +328,10 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(212, 165, 16
 .settings-panel { display: grid; gap: 16px; }
 .settings-panel[hidden] { display: none; }
 .settings-panel .account-summary { margin: 0 0 4px; }
-.settings-panel > .face-scan-panel { margin: 0; padding: 20px 22px; background: rgba(255,255,255,.35); }
-.settings-panel > .face-scan-panel h2 { margin: 0; font-size: 15px; font-weight: 600; }
-.settings-panel > .face-scan-panel p, .settings-panel > .face-scan-panel .inline-state { margin: 6px 0 0; color: var(--slate-soft); font-size: 12px; line-height: 1.55; }
-.settings-panel > .face-scan-panel .face-actions { margin: 14px 0 0; }
+.settings-card .face-actions { margin: 0; justify-content: flex-end; }
+.face-scan-settings p { margin: 12px 0 0; color: var(--slate-soft); font-size: 12px; line-height: 1.55; }
+.face-scan-settings .face-confirmation { margin-top: 14px; }
+.face-scan-settings .face-confirmation .text-button { margin-left: 8px; }
 .settings-card { min-width: 0; border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; background: rgba(255,255,255,.35); }
 .settings-card.is-danger { border-color: rgba(186,136,136,.42); background: rgba(212,165,165,.07); }
 .settings-card.is-danger .settings-card-title svg { color: #a96c6c; }

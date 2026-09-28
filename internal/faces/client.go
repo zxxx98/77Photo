@@ -25,6 +25,7 @@ type Config struct {
 	Timeout                     time.Duration
 	AllowHTTP                   bool
 	MatchThreshold, MatchMargin float64
+	Concurrency                 int
 }
 
 func (c Config) Validate() error {
@@ -46,6 +47,9 @@ func (c Config) Validate() error {
 	}
 	if c.MatchThreshold < 0 || c.MatchThreshold > 1 || c.MatchMargin < 0 || c.MatchMargin > 1 || math.IsNaN(c.MatchThreshold) || math.IsNaN(c.MatchMargin) {
 		return errors.New("face matching thresholds must be between zero and one")
+	}
+	if c.Concurrency < 1 || c.Concurrency > 8 {
+		return errors.New("face concurrency must be between one and eight")
 	}
 	return nil
 }
@@ -96,7 +100,7 @@ type Client struct {
 }
 
 func NewClient(c Config) *Client {
-	return &Client{c, &http.Client{Timeout: c.Timeout, Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, MaxIdleConnsPerHost: 1}, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}}
+	return &Client{c, &http.Client{Timeout: c.Timeout, Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, MaxIdleConnsPerHost: max(1, c.Concurrency)}, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}}
 }
 func (c *Client) call(ctx context.Context, path, contentType string, body io.Reader, out any) error {
 	method := "GET"

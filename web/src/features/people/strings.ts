@@ -14,6 +14,13 @@ const en = {
  mergeWarning: 'The current person will be merged into the selected person. The selected name is kept.',
  owner: 'Photo owner', allOwners: 'All owners', confirm: 'Confirm merge', dismiss: 'Cancel',
  progress: 'Processed', failures: 'failed', noFaces: 'No faces in this group.',
+ similar: 'Possible matches', similarity: 'Similarity', reviewSimilar: 'Review faces before merging. Similarity is a hint, not proof.',
+ regroup: 'Regroup saved faces', full: 'Rescan all photos', incremental: 'New photos', retry_failed: 'Failed photos',
+ regroupWarning: 'Reapply the current threshold to saved face vectors. Manual names and corrections stay. The GPU computer can be offline.',
+ fullWarning: 'Run detection and recognition again for every photo. Confirmed names and manual corrections stay; photos whose corrected face cannot be matched keep the old result and are marked failed.',
+ scanSettings: 'Threshold', marginSetting: 'Margin', concurrencySetting: 'Parallel requests',
+ confirmAction: 'Confirm operation',
+ showFailures: 'Show failed photos', manualUnmatched: 'Manual face was not found; old result was kept.',
 };
 const zh: Record<keyof typeof en, string> = {
  title: '人物', description: '使用自己的电脑识别人脸，在这里浏览和整理结果。',
@@ -31,6 +38,13 @@ const zh: Record<keyof typeof en, string> = {
  mergeWarning: '当前人物将合并到所选人物，并保留所选人物的名称。',
  owner: '照片所有者', allOwners: '全部所有者', confirm: '确认合并', dismiss: '取消',
  progress: '已处理', failures: '失败', noFaces: '此分组没有人脸。',
+ similar: '可能是同一人', similarity: '相似度', reviewSimilar: '合并前请查看人脸；相似度只是线索，不能作为身份结论。',
+ regroup: '重新归类已有结果', full: '全部重新扫描', incremental: '新增照片', retry_failed: '失败照片',
+ regroupWarning: '用当前阈值重新匹配已保存的人脸向量，保留手工命名和纠错。电脑离线时也能运行。',
+ fullWarning: '对全部照片重新检测并提取特征。保留手工命名和纠错；若新检测找不到已手工确认的人脸，该照片保留旧结果并记为失败待检查。',
+ scanSettings: '匹配阈值', marginSetting: '候选差值', concurrencySetting: '并发请求',
+ confirmAction: '确认操作',
+ showFailures: '查看失败照片', manualUnmatched: '未找到原先手工确认的人脸；旧结果已保留。',
 };
 export type FaceStrings = typeof en;
 export const faceStrings = (locale: string): FaceStrings => locale === 'zh' ? zh : en;

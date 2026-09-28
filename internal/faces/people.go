@@ -2,6 +2,9 @@ package faces
 
 import (
 	"context"
+	"database/sql"
+	"math"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -25,7 +28,113 @@ type FaceView struct {
 	Box      [4]float64 `json:"bbox"`
 }
 
+// SimilarPerson is a review suggestion, never an automatic merge decision.
+type SimilarPerson struct {
+	Person Person  `json:"person"`
+	Score  float64 `json:"score"`
+}
+
 const validFace = ` p.deleted_at IS NULL AND p.scan_status='indexed' AND a.checksum=p.checksum AND a.owner_id=p.owner_id `
+
+func (s *Service) SimilarPeople(ctx context.Context, personID string) ([]SimilarPerson, error) {
+	var owner string
+	if err := s.db.QueryRowContext(ctx, "SELECT owner_id FROM people WHERE id=? AND merged_into IS NULL", personID).Scan(&owner); err != nil {
+		return nil, err
+	}
+	// Keep the comparison bounded per person. The request reads saved vectors only;
+	// it never starts the GPU worker or changes an existing manual decision.
+	rows, err := s.db.QueryContext(ctx, `SELECT person_id,photo_id,embedding FROM (
+ SELECT f.person_id,p.id photo_id,f.embedding,
+ row_number() OVER(PARTITION BY f.person_id ORDER BY f.manual DESC,f.score DESC,f.id) rn
+ FROM faces f JOIN face_analyses a ON a.id=f.analysis_id JOIN photos p ON p.id=a.photo_id
+ JOIN people pe ON pe.id=f.person_id
+ WHERE pe.owner_id=? AND pe.merged_into IS NULL AND f.ignored=0 AND length(f.embedding)>0 AND `+validFace+`
+ ) WHERE rn<=8`, owner)
+	if err != nil {
+		return nil, err
+	}
+	type sample struct {
+		photo  string
+		vector []float32
+	}
+	samples := map[string][]sample{}
+	for rows.Next() {
+		var id, photo string
+		var blob []byte
+		if err = rows.Scan(&id, &photo, &blob); err != nil {
+			break
+		}
+		if len(blob)%4 == 0 && len(blob) >= 64 {
+			samples[id] = append(samples[id], sample{photo, decodeVector(blob)})
+		}
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	source := samples[personID]
+	if len(source) == 0 {
+		return []SimilarPerson{}, nil
+	}
+	type candidate struct {
+		id    string
+		score float64
+	}
+	ranked := make([]candidate, 0, len(samples))
+	for id, others := range samples {
+		if id == personID {
+			continue
+		}
+		best := -1.0
+		for _, left := range source {
+			for _, right := range others {
+				if left.photo == right.photo || len(left.vector) != len(right.vector) {
+					continue
+				}
+				score := 0.0
+				for i, value := range left.vector {
+					score += float64(value) * float64(right.vector[i])
+				}
+				if !math.IsNaN(score) && !math.IsInf(score, 0) && score > best {
+					best = score
+				}
+			}
+		}
+		if best >= 0 {
+			best = math.Min(best, 1)
+			ranked = append(ranked, candidate{id, best})
+		}
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].score == ranked[j].score {
+			return ranked[i].id < ranked[j].id
+		}
+		return ranked[i].score > ranked[j].score
+	})
+	if len(ranked) > 5 {
+		ranked = ranked[:5]
+	}
+	out := make([]SimilarPerson, 0, len(ranked))
+	for _, match := range ranked {
+		var p Person
+		err = s.db.QueryRowContext(ctx, `SELECT pe.id,pe.owner_id,pe.name,pe.revision,count(DISTINCT ph.id),min(f.id)
+ FROM people pe JOIN faces f ON f.person_id=pe.id JOIN face_analyses a ON a.id=f.analysis_id
+ JOIN photos ph ON ph.id=a.photo_id WHERE pe.id=? AND pe.merged_into IS NULL AND f.ignored=0 AND
+ ph.deleted_at IS NULL AND ph.scan_status='indexed' AND a.checksum=ph.checksum AND a.owner_id=ph.owner_id
+ GROUP BY pe.id`, match.id).Scan(&p.ID, &p.Owner, &p.Name, &p.Revision, &p.Count, &p.Cover)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, SimilarPerson{p, match.score})
+	}
+	return out, nil
+}
 
 func (s *Service) People(ctx context.Context, cursor string) ([]Person, string, error) {
 	rows, e := s.db.QueryContext(ctx, `SELECT pe.id,pe.owner_id,pe.name,pe.revision,count(DISTINCT p.id),min(f.id) FROM people pe
