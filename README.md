@@ -55,4 +55,4 @@ go run ./tests/performance -count 100000 -pages 20
 
 ## Android 客户端
 
-重写后的 React Native Android 工程位于 [mobile/](mobile/README.md)。当前支持服务器连接、移动端登录、照片与文件夹浏览、预览播放、原图分享，以及手动选择照片加入持久化上传队列；应用退到后台后，Android 可能中断上传，尚未提供自动备份。App 沿用 `77Photo` 显示名、`com.photo77` 应用 ID 和[原启动图标](assets/android/launcher/README.md)，使用现有移动 Bearer API。构建要求和验证命令见移动端 README，产品方向见 [Android 从零设计](docs/ui/ANDROID_FROM_WEB.md)。
+重写后的 React Native Android 工程位于 [mobile/](mobile/README.md)。当前支持服务器连接、移动端登录、照片与文件夹浏览、预览播放、原图分享，以及手动选择照片加入持久化上传队列；应用退到后台后，Android 可能中断上传，尚未提供自动备份。Android APK **只支持 ARM64（`arm64-v8a`）**，调试和编译不使用 x86/x86_64 Android 目标或模拟器。App 沿用 `77Photo` 显示名、`com.photo77` 应用 ID 和[原启动图标](assets/android/launcher/README.md)，使用现有移动 Bearer API。构建要求和验证命令见移动端 README，产品方向见 [Android 从零设计](docs/ui/ANDROID_FROM_WEB.md)。

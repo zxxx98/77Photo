@@ -2,6 +2,10 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
+if ((project.findProperty("reactNativeArchitectures") ?: "arm64-v8a").toString() != "arm64-v8a") {
+    throw new GradleException("77Photo Android supports only the arm64-v8a target ABI")
+}
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
@@ -45,8 +49,8 @@ react {
 
     /* Hermes Commands */
     //   The hermes compiler command to run. By default it is 'hermesc'
-    // Android's SDK host tools are x86_64; on an ARM64 Linux development host
-    // run the bundled Linux compiler through the installed x86_64 emulator.
+    // This selects a host compiler on ARM64 Linux; the Android APK target
+    // remains arm64-v8a. Host tool architecture is separate from target ABI.
     if (System.getProperty("os.name").toLowerCase().contains("linux") && System.getProperty("os.arch") == "aarch64") {
         hermesCommand = file("../../node_modules/hermes-compiler/hermesc/linux64-bin/hermesc").absolutePath
     }
@@ -88,6 +92,9 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 5
         versionName "0.4.1"
+        ndk {
+            abiFilters "arm64-v8a"
+        }
     }
     signingConfigs {
         debug {

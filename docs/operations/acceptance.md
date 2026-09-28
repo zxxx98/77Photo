@@ -30,4 +30,4 @@
 | Docker 镜像/Compose 启动与备份恢复 | 未完成 | 当前 Docker daemon socket 返回 permission denied |
 | 浏览器视口、键盘焦点与 NanoPi R5S 负载 | 未完成 | 当前环境没有目标浏览器记录或 NanoPi R5S 实机 |
 
-重写后的 Android 客户端位于 `mobile/`。JavaScript 类型检查、Lint 和测试纳入主分支 CI；设备兼容性、原生 APK 构建及发布签名仍需按 [移动端说明](../../mobile/README.md) 在兼容 Android SDK 工具的 x86_64 环境中验证。
+重写后的 Android 客户端位于 `mobile/`，仅支持 ARM64（`arm64-v8a`）Android 目标。JavaScript 类型检查、Lint 和测试纳入主分支 CI；设备兼容性、ARM64 APK 构建及发布签名仍需按 [移动端说明](../../mobile/README.md) 在兼容 Android SDK 工具的构建主机上验证。构建主机架构不改变 APK 的 ARM64 目标。
