@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapFocusHash, readMapFocus, readPublicShareToken, readSettingsSection, readView, settingsSectionHash } from './routes';
+import { mapFocusHash, readMapFocus, readPublicShareToken, readSettingsSection, readShareManagementResource, readView, settingsSectionHash, shareManagementHash } from './routes';
 
 describe('hash routes', () => {
   it('accepts only a complete public share route', () => {
@@ -52,5 +52,12 @@ describe('hash routes', () => {
     }
     expect(settingsSectionHash('account')).toBe('#/settings');
   });
-});
 
+  it('locates shares for a resource without confusing the public token route', () => {
+    const hash = shareManagementHash('photo', 'p/1');
+    expect(readView(hash)).toBe('settings');
+    expect(readShareManagementResource(hash)).toEqual({ type: 'photo', id: 'p/1' });
+    expect(readShareManagementResource('#/settings?resource_type=person&resource_id=p1')).toBeNull();
+    expect(readPublicShareToken(hash)).toBeNull();
+  });
+});

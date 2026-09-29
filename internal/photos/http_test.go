@@ -292,6 +292,20 @@ func TestHTTPListAndOriginalRangeUsePhotoACL(t *testing.T) {
 	if listRes.Code != http.StatusOK || !bytes.Contains(listRes.Body.Bytes(), []byte(photo.ID)) {
 		t.Fatalf("list response = %d %s", listRes.Code, listRes.Body.String())
 	}
+	searchReq := httptest.NewRequest(http.MethodGet, "/api/v1/photos?q=PHOTO&media_type=photo", nil)
+	searchReq.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
+	searchRes := httptest.NewRecorder()
+	handler.ServeHTTP(searchRes, searchReq)
+	if searchRes.Code != http.StatusOK || !bytes.Contains(searchRes.Body.Bytes(), []byte(photo.ID)) {
+		t.Fatalf("search response = %d %s", searchRes.Code, searchRes.Body.String())
+	}
+	invalidReq := httptest.NewRequest(http.MethodGet, "/api/v1/photos?media_type=all", nil)
+	invalidReq.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})
+	invalidRes := httptest.NewRecorder()
+	handler.ServeHTTP(invalidRes, invalidReq)
+	if invalidRes.Code != http.StatusBadRequest {
+		t.Fatalf("invalid filter response = %d %s", invalidRes.Code, invalidRes.Body.String())
+	}
 	rangeReq := httptest.NewRequest(http.MethodGet, "/api/v1/photos/"+photo.ID+"/original", nil)
 	rangeReq.Header.Set("Range", "bytes=0-4")
 	rangeReq.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: session.Token})

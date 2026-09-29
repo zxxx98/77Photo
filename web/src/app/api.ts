@@ -53,6 +53,8 @@ export type BBox = [west: number, south: number, east: number, north: number];
 
 export interface ListPhotosParams {
   folderId?: string;
+  q?: string;
+  mediaType?: 'photo' | 'video';
   bbox?: BBox;
   from?: string;
   to?: string;
@@ -136,6 +138,20 @@ export interface ShareLink {
   expires_at?: string | null;
   password_protected: boolean;
 }
+
+export type ManagedShareStatus = 'active' | 'expired' | 'revoked' | 'unavailable';
+export interface ManagedShareLink {
+  id: string;
+  resource_type: ShareResourceType;
+  resource_id: string;
+  resource_name: string;
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  password_protected: boolean;
+  status: ManagedShareStatus;
+}
+export interface ManagedSharePage { items: ManagedShareLink[]; next_cursor?: string }
 
 export interface PublicShare {
   resource_type: ShareResourceType;
@@ -290,6 +306,8 @@ export interface ApiClient {
   createShare(input: { folder_id: string; user_id: string; permission: 'read' | 'write' }): Promise<Share>;
   revokeShare(id: string): Promise<void>;
   createShareLink(input: { resource_type: ShareResourceType; resource_id: string; duration: ShareDuration; password?: string }): Promise<ShareLink>;
+  listManagedShareLinks(params?: { status?: ManagedShareStatus; cursor?: string; resource_type?: ShareResourceType; resource_id?: string }): Promise<ManagedSharePage>;
+  revokeManagedShareLink(id: string): Promise<void>;
   getPublicShare(token: string): Promise<PublicShare>;
   unlockPublicShare(token: string, password: string): Promise<PublicShare>;
   listPublicSharePhotos(token: string): Promise<{ items: PublicPhoto[] }>;
@@ -434,6 +452,8 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     listPhotos: async (params = {}) => {
       const query = new URLSearchParams();
       if (params.folderId) query.set('folder_id', params.folderId);
+      if (params.q) query.set('q', params.q);
+      if (params.mediaType) query.set('media_type', params.mediaType);
       if (params.bbox) query.set('bbox', params.bbox.join(','));
       if (params.from) query.set('from', params.from);
       if (params.to) query.set('to', params.to);
@@ -509,6 +529,16 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     createShare: (input) => request<Share>('/api/v1/shares', { method: 'POST', body: JSON.stringify(input) }) as Promise<Share>,
     revokeShare: async (id) => { await request(`/api/v1/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }); },
     createShareLink: (input) => request<ShareLink>('/api/v1/share-links', { method: 'POST', body: JSON.stringify(input) }) as Promise<ShareLink>,
+    listManagedShareLinks: (params = {}) => {
+      const query = new URLSearchParams();
+      if (params.status) query.set('status', params.status);
+      if (params.cursor) query.set('cursor', params.cursor);
+      if (params.resource_type) query.set('resource_type', params.resource_type);
+      if (params.resource_id) query.set('resource_id', params.resource_id);
+      const suffix = query.toString();
+      return request<ManagedSharePage>(`/api/v1/me/share-links${suffix ? `?${suffix}` : ''}`) as Promise<ManagedSharePage>;
+    },
+    revokeManagedShareLink: async (id) => { await request(`/api/v1/me/share-links/${encodeURIComponent(id)}`, { method: 'DELETE' }); },
     getPublicShare: (token) => request<PublicShare>(`/api/v1/share-links/${encodeURIComponent(token)}`) as Promise<PublicShare>,
     unlockPublicShare: (token, password) => request<PublicShare>(`/api/v1/share-links/${encodeURIComponent(token)}/unlock`, { method: 'POST', body: JSON.stringify({ password }) }) as Promise<PublicShare>,
     listPublicSharePhotos: (token) => request<{ items: PublicPhoto[] }>(`/api/v1/share-links/${encodeURIComponent(token)}/photos`) as Promise<{ items: PublicPhoto[] }>,

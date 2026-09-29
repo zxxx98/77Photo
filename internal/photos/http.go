@@ -275,6 +275,8 @@ func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	account := authenticated.Account
 	filter := ListFilter{Cursor: r.URL.Query().Get("cursor")}
+	filter.Query = r.URL.Query().Get("q")
+	filter.MediaType = r.URL.Query().Get("media_type")
 	if value := strings.TrimSpace(r.URL.Query().Get("folder_id")); value != "" {
 		filter.FolderID = &value
 	}

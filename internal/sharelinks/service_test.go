@@ -106,9 +106,12 @@ func TestCreateStoresOnlyDigests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var tokenHash, passwordHash string
-	if err := fixture.db.QueryRow("SELECT token_hash, password_hash FROM share_links WHERE id=?", link.ID).Scan(&tokenHash, &passwordHash); err != nil {
+	var tokenHash, passwordHash, ownerID, resourceName string
+	if err := fixture.db.QueryRow("SELECT token_hash, password_hash, owner_id, resource_name FROM share_links WHERE id=?", link.ID).Scan(&tokenHash, &passwordHash, &ownerID, &resourceName); err != nil {
 		t.Fatal(err)
+	}
+	if ownerID != fixture.owner.ID || resourceName != "photo.jpg" {
+		t.Fatalf("creation snapshot = %q %q", ownerID, resourceName)
 	}
 	if tokenHash == "" || tokenHash == link.Token || strings.Contains(passwordHash, password) {
 		t.Fatalf("stored secrets are unsafe: token_hash=%q password_hash=%q", tokenHash, passwordHash)

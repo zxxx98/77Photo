@@ -67,6 +67,26 @@ describe('application loading transitions', () => {
     expect(container.querySelector('.empty-timeline')).not.toBeNull();
   });
 
+  it('opens and focuses gallery search from the top bar', async () => {
+    window.sessionStorage.clear();
+    window.location.hash = '#/folders';
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === '/api/v1/auth/me') return jsonResponse({ id: 'user-1', username: 'alice', role: 'admin', is_active: true });
+      if (path.startsWith('/api/v1/folders')) return jsonResponse({ items: [] });
+      if (path === '/api/v1/shares') return jsonResponse({ items: [] });
+      if (path.startsWith('/api/v1/photos')) return jsonResponse({ items: [], next_cursor: null });
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+    await act(async () => { root.render(<I18nProvider><App /></I18nProvider>); await Promise.resolve(); });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.topbar .search-field')!.click();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    expect(window.location.hash).toBe('#/gallery');
+    expect(document.activeElement).toBe(container.querySelector('.gallery-search input[type="search"]'));
+  });
+
   it('shows first-run setup when the installation has no users', async () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
@@ -101,5 +121,50 @@ describe('application loading transitions', () => {
 
     expect(container.querySelector('.login-page')).not.toBeNull();
     expect(container.querySelector('.setup-page')).toBeNull();
+  });
+
+  it.each(['popstate', 'hashchange'])('opens a replacement share link after a revoked link on %s', async (eventType) => {
+    window.history.replaceState(null, '', '#/share/revoked-link');
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === '/api/v1/share-links/revoked-link') return { ok: false, status: 404, headers: new Headers(), json: async () => ({ error: { code: 'SHARE_UNAVAILABLE' } }) } as Response;
+      if (path === '/api/v1/share-links/replacement-link') return jsonResponse({ resource_type: 'folder', name: 'Replacement album', password_required: false });
+      if (path === '/api/v1/share-links/replacement-link/photos') return jsonResponse({ items: [] });
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+    await act(async () => { root.render(<I18nProvider><App /></I18nProvider>); });
+    expect(container.textContent).toContain('此分享内容不可用');
+
+    await act(async () => {
+      window.history.pushState(null, '', '#/share/replacement-link');
+      window.dispatchEvent(new Event(eventType));
+    });
+    expect(container.querySelector('#public-share-title')?.textContent).toBe('Replacement album');
+    expect(container.querySelector('.public-share-empty')).not.toBeNull();
+  });
+
+  it('discards a previous share photo response after navigating to another link', async () => {
+    window.history.replaceState(null, '', '#/share/previous-link');
+    const previousPhotos = deferred<Response>();
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === '/api/v1/share-links/previous-link') return jsonResponse({ resource_type: 'folder', name: 'Previous album', password_required: false });
+      if (path === '/api/v1/share-links/previous-link/photos') return previousPhotos.promise;
+      if (path === '/api/v1/share-links/next-link') return jsonResponse({ resource_type: 'folder', name: 'Next album', password_required: false });
+      if (path === '/api/v1/share-links/next-link/photos') return jsonResponse({ items: [] });
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+    await act(async () => { root.render(<I18nProvider><App /></I18nProvider>); });
+    expect(container.querySelector('#public-share-title')?.textContent).toBe('Previous album');
+    await act(async () => {
+      window.history.pushState(null, '', '#/share/next-link');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await act(async () => {
+      previousPhotos.resolve(jsonResponse({ items: [{ id: 'p_old', folder_id: 'f_old', filename: 'stale.jpg', mime_type: 'image/jpeg', size: 100, captured_at: '2026-09-01T00:00:00Z' }] }));
+    });
+    expect(container.querySelector('#public-share-title')?.textContent).toBe('Next album');
+    expect(container.querySelector('.public-share-empty')).not.toBeNull();
+    expect(container.textContent).not.toContain('stale.jpg');
   });
 });

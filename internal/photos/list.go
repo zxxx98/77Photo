@@ -22,12 +22,14 @@ var (
 )
 
 type ListFilter struct {
-	FolderID *string
-	From     *time.Time
-	To       *time.Time
-	BBox     *BBox
-	Cursor   string
-	Limit    int
+	FolderID  *string
+	From      *time.Time
+	To        *time.Time
+	BBox      *BBox
+	Query     string
+	MediaType string
+	Cursor    string
+	Limit     int
 }
 
 type PhotoPage struct {
@@ -43,12 +45,22 @@ type photoCursor struct {
 	From         string `json:"from,omitempty"`
 	To           string `json:"to,omitempty"`
 	BBox         string `json:"b,omitempty"`
+	Query        string `json:"q,omitempty"`
+	MediaType    string `json:"m,omitempty"`
 	LastCaptured string `json:"c"`
 	LastID       string `json:"i"`
 	ExpiresAt    int64  `json:"e"`
 }
 
 func (s *Service) List(ctx context.Context, principal acl.Principal, filter ListFilter) (PhotoPage, error) {
+	queryText := strings.TrimSpace(filter.Query)
+	if len([]rune(queryText)) > 100 || strings.ContainsAny(queryText, "\x00\r\n") {
+		return PhotoPage{}, ErrInvalidFilter
+	}
+	mediaType := filter.MediaType
+	if mediaType != "" && mediaType != "photo" && mediaType != "video" {
+		return PhotoPage{}, ErrInvalidFilter
+	}
 	limit := filter.Limit
 	if limit == 0 {
 		limit = 50
@@ -96,13 +108,15 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 		if err != nil {
 			return PhotoPage{}, err
 		}
-		if cursor.UserID != principal.UserID || cursor.Role != string(principal.Role) || cursor.FolderID != folderID || cursor.From != fromValue || cursor.To != toValue || cursor.BBox != bboxValue {
+		if cursor.UserID != principal.UserID || cursor.Role != string(principal.Role) || cursor.FolderID != folderID || cursor.From != fromValue || cursor.To != toValue || cursor.BBox != bboxValue || cursor.Query != queryText || cursor.MediaType != mediaType {
 			return PhotoPage{}, ErrInvalidCursor
 		}
 		lastCaptured, lastID = cursor.LastCaptured, cursor.LastID
 	}
 
-	query := `SELECT p.id, p.owner_id, p.folder_id, p.storage_path, p.filename, p.mime_type, p.size, p.width, p.height, p.checksum, p.captured_at, p.captured_at_source, p.file_created_at, p.indexed_at, p.source_revision, p.scan_status, p.camera_make, p.camera_model, p.orientation, p.focal_length, p.aperture, p.iso, p.gps_latitude, p.gps_longitude, p.created_at, p.updated_at FROM photos p`
+	// Without the timeline hint SQLite chooses scan_status_idx and sorts the
+	// entire active library before returning the first page (see M3 measurements).
+	query := `SELECT p.id, p.owner_id, p.folder_id, p.storage_path, p.filename, p.mime_type, p.size, p.width, p.height, p.checksum, p.captured_at, p.captured_at_source, p.file_created_at, p.indexed_at, p.source_revision, p.scan_status, p.camera_make, p.camera_model, p.orientation, p.focal_length, p.aperture, p.iso, p.gps_latitude, p.gps_longitude, p.created_at, p.updated_at FROM photos p INDEXED BY photos_active_timeline_idx`
 	args := make([]any, 0, 10)
 	where := []string{"p.deleted_at IS NULL", "p.scan_status='indexed'"}
 	if folderID != "" {
@@ -110,15 +124,9 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 		args = append(args, folderID)
 	}
 	appendVisibilityPredicate(&where, &args, principal, s.authorizer != nil)
-	if fromValue != "" {
-		where = append(where, "p.captured_at>=?")
-		args = append(args, fromValue)
-	}
-	if toValue != "" {
-		where = append(where, "p.captured_at<?")
-		args = append(args, toValue)
-	}
+	appendCapturedRange(&where, &args, fromValue, toValue)
 	appendBBoxPredicate(&where, &args, filter.BBox)
+	appendSearchPredicate(&where, &args, queryText, mediaType)
 	if lastCaptured != "" {
 		where = append(where, "(p.captured_at<? OR (p.captured_at=? AND p.id<?))")
 		args = append(args, lastCaptured, lastCaptured, lastID)
@@ -152,18 +160,18 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 		// bounded existence check using the final tuple to avoid emitting a
 		// cursor at the end of an exact-size result set.
 		last := items[len(items)-1]
-		if hasMore, checkErr := s.hasPhotoAfter(ctx, principal, folderID, fromValue, toValue, filter.BBox, last.CapturedAt, last.ID); checkErr != nil {
+		if hasMore, checkErr := s.hasPhotoAfter(ctx, principal, folderID, fromValue, toValue, filter.BBox, queryText, mediaType, last.CapturedAt, last.ID); checkErr != nil {
 			return PhotoPage{}, checkErr
 		} else if hasMore {
-			cursor := s.encodeCursor(photoCursor{Version: 1, UserID: principal.UserID, Role: string(principal.Role), FolderID: folderID, From: fromValue, To: toValue, BBox: bboxValue, LastCaptured: last.CapturedAt.UTC().Format(time.RFC3339Nano), LastID: last.ID, ExpiresAt: time.Now().Add(s.cursorTTL).Unix()})
+			cursor := s.encodeCursor(photoCursor{Version: 1, UserID: principal.UserID, Role: string(principal.Role), FolderID: folderID, From: fromValue, To: toValue, BBox: bboxValue, Query: queryText, MediaType: mediaType, LastCaptured: last.CapturedAt.UTC().Format(time.RFC3339Nano), LastID: last.ID, ExpiresAt: time.Now().Add(s.cursorTTL).Unix()})
 			page.NextCursor = &cursor
 		}
 	}
 	return page, nil
 }
 
-func (s *Service) hasPhotoAfter(ctx context.Context, principal acl.Principal, folderID, fromValue, toValue string, box *BBox, captured time.Time, id string) (bool, error) {
-	query := "SELECT 1 FROM photos p"
+func (s *Service) hasPhotoAfter(ctx context.Context, principal acl.Principal, folderID, fromValue, toValue string, box *BBox, queryText, mediaType string, captured time.Time, id string) (bool, error) {
+	query := "SELECT 1 FROM photos p INDEXED BY photos_active_timeline_idx"
 	args := make([]any, 0, 10)
 	where := []string{"p.deleted_at IS NULL", "p.scan_status='indexed'", "(p.captured_at<? OR (p.captured_at=? AND p.id<?))"}
 	args = append(args, captured.UTC().Format(time.RFC3339Nano), captured.UTC().Format(time.RFC3339Nano), id)
@@ -172,15 +180,9 @@ func (s *Service) hasPhotoAfter(ctx context.Context, principal acl.Principal, fo
 		args = append([]any{folderID}, args...)
 	}
 	appendVisibilityPredicate(&where, &args, principal, s.authorizer != nil)
-	if fromValue != "" {
-		where = append(where, "p.captured_at>=?")
-		args = append(args, fromValue)
-	}
-	if toValue != "" {
-		where = append(where, "p.captured_at<?")
-		args = append(args, toValue)
-	}
+	appendCapturedRange(&where, &args, fromValue, toValue)
 	appendBBoxPredicate(&where, &args, box)
+	appendSearchPredicate(&where, &args, queryText, mediaType)
 	query += " WHERE " + strings.Join(where, " AND ") + " LIMIT 1"
 	var one int
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(&one)
@@ -188,6 +190,50 @@ func (s *Service) hasPhotoAfter(ctx context.Context, principal acl.Principal, fo
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// RFC3339Nano omits trailing zeroes, so raw text order differs from time order
+// within a second. Keep an indexed coarse range and compare fractional seconds
+// only at the boundary second.
+func appendCapturedRange(where *[]string, args *[]any, fromValue, toValue string) {
+	const secondLayout = "2006-01-02T15:04:05"
+	if fromValue != "" {
+		from, _ := time.Parse(time.RFC3339Nano, fromValue)
+		second := from.UTC().Format(secondLayout)
+		*where = append(*where, "p.captured_at>=?")
+		*args = append(*args, second)
+		if fraction := from.Nanosecond(); fraction != 0 {
+			*where = append(*where, "(substr(p.captured_at,1,19)>? OR CAST(substr(p.captured_at,20) AS REAL)>=?)")
+			*args = append(*args, second, float64(fraction)/1e9)
+		}
+	}
+	if toValue != "" {
+		to, _ := time.Parse(time.RFC3339Nano, toValue)
+		second := to.UTC().Format(secondLayout)
+		*where = append(*where, "p.captured_at<?")
+		if fraction := to.Nanosecond(); fraction != 0 {
+			*args = append(*args, to.UTC().Add(time.Second).Format(secondLayout))
+			*where = append(*where, "(substr(p.captured_at,1,19)<? OR CAST(substr(p.captured_at,20) AS REAL)<?)")
+			*args = append(*args, second, float64(fraction)/1e9)
+		} else {
+			*args = append(*args, second)
+		}
+	}
+}
+
+// instr treats LIKE wildcards literally. SQLite's lower() folds ASCII letters;
+// non-ASCII filename characters are matched exactly.
+func appendSearchPredicate(where *[]string, args *[]any, queryText, mediaType string) {
+	if queryText != "" {
+		*where = append(*where, "instr(lower(p.filename), lower(?)) > 0")
+		*args = append(*args, queryText)
+	}
+	switch mediaType {
+	case "photo":
+		*where = append(*where, "p.mime_type LIKE 'image/%'")
+	case "video":
+		*where = append(*where, "p.mime_type LIKE 'video/%'")
+	}
 }
 
 // appendVisibilityPredicate keeps filtering in SQLite so cursor pagination is

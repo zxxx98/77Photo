@@ -3,8 +3,9 @@ import { KeyRound } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
 import { ApiError, type ApiClient, type User } from '../../app/api';
 import SettingsCard from './SettingsCard';
+import ManagedSharesSection from './ManagedSharesSection';
 
-export default function AccountSection({ api, currentUser }: { api: ApiClient; currentUser: User }) {
+export default function AccountSection({ api, currentUser, onOpenFolder }: { api: ApiClient; currentUser: User; onOpenFolder?: (folder: { id: string; name: string }) => void }) {
   const { t } = useI18n();
   const [ownPassword, setOwnPassword] = useState({ current: '', next: '', confirm: '' });
   const [ownPasswordBusy, setOwnPasswordBusy] = useState(false);
@@ -51,5 +52,6 @@ export default function AccountSection({ api, currentUser }: { api: ApiClient; c
       </form>
       {ownPasswordMessage && <p className="inline-state" role={ownPasswordMessage.ok ? 'status' : 'alert'}>{ownPasswordMessage.text}</p>}
     </SettingsCard>
+    <ManagedSharesSection api={api} onOpenFolder={onOpenFolder ?? (() => undefined)} />
   </>;
 }

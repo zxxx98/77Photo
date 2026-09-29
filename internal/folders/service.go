@@ -343,9 +343,23 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 	if err := s.storage.RemoveEmptyDir(folder.StoragePath); err != nil {
 		return fmt.Errorf("remove folder on disk: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "DELETE FROM folders WHERE id=?", id); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		_ = s.storage.MakeDir(folder.StoragePath)
+		return fmt.Errorf("begin folder deletion: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE share_links SET owner_id=?,resource_name=? WHERE resource_type='folder' AND resource_id=?`, folder.OwnerID, folder.Name, id); err != nil {
+		_ = s.storage.MakeDir(folder.StoragePath)
+		return fmt.Errorf("snapshot deleted folder shares: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM folders WHERE id=?", id); err != nil {
 		_ = s.storage.MakeDir(folder.StoragePath)
 		return fmt.Errorf("remove folder index: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		_ = s.storage.MakeDir(folder.StoragePath)
+		return fmt.Errorf("commit folder deletion: %w", err)
 	}
 	return nil
 }

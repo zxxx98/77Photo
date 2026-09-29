@@ -21,6 +21,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/maintenance"
 	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/photos"
+	"github.com/zxxx98/77Photo/internal/sharelinks"
 	"github.com/zxxx98/77Photo/internal/storage"
 )
 
@@ -574,7 +575,9 @@ func TestResetAndStartRebuildsIndexWithoutDeletingOriginals(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT id FROM photos WHERE filename='keep.jpg'").Scan(&oldID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, "INSERT INTO share_links (id, resource_type, resource_id, token_hash, created_at, updated_at) VALUES ('sl_reset', 'photo', ?, 'reset-token-hash', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')", oldID); err != nil {
+	linkService := sharelinks.NewService(db, store, nil, false)
+	link, err := linkService.Create(ctx, principal, sharelinks.CreateInput{ResourceType: sharelinks.ResourcePhoto, ResourceID: oldID, Duration: sharelinks.DurationForever})
+	if err != nil {
 		t.Fatal(err)
 	}
 	livePath, err := store.ResolvePath(filepath.ToSlash(filepath.Join(".77photo", "live", oldID+".motion")))
@@ -613,12 +616,22 @@ func TestResetAndStartRebuildsIndexWithoutDeletingOriginals(t *testing.T) {
 	if shareLinks != 1 {
 		t.Fatalf("photo share links = %d, want retained relationship", shareLinks)
 	}
+	managed, err := linkService.ListManaged(ctx, principal, sharelinks.ManageFilter{})
+	if err != nil || len(managed.Items) != 1 || managed.Items[0].ID != link.ID || managed.Items[0].Status != "active" {
+		t.Fatalf("share after index reset = %+v, %v", managed, err)
+	}
+	if _, err := linkService.Inspect(ctx, link.Token); err != nil {
+		t.Fatalf("public share after index reset: %v", err)
+	}
 	if data, err := os.ReadFile(livePath); err != nil || string(data) != "stale-motion" {
 		t.Fatalf("unclassified legacy motion must be preserved: %q, %v", data, err)
 	}
 	// Trash must survive a subsequent full reset, including its motion original.
 	if err := photoService.Trash(ctx, principal, oldID, true); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := linkService.Inspect(ctx, link.Token); !errors.Is(err, sharelinks.ErrUnavailable) {
+		t.Fatalf("trashed share still public: %v", err)
 	}
 	job, err := service.ResetAndStart(ctx, principal)
 	if err != nil {
@@ -632,6 +645,10 @@ func TestResetAndStartRebuildsIndexWithoutDeletingOriginals(t *testing.T) {
 	restored, err := photoService.RestoreTrash(ctx, principal, oldID, photos.RestoreInput{})
 	if err != nil || restored.ID != oldID {
 		t.Fatalf("restore after reset: %+v %v", restored, err)
+	}
+	managed, err = linkService.ListManaged(ctx, principal, sharelinks.ManageFilter{})
+	if err != nil || len(managed.Items) != 1 || managed.Items[0].Status != "revoked" {
+		t.Fatalf("share after restore = %+v, %v", managed, err)
 	}
 	if data, err := os.ReadFile(livePath); err != nil || string(data) != "stale-motion" {
 		t.Fatalf("motion lost on reset: %q %v", data, err)

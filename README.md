@@ -38,13 +38,17 @@ Web 端「地图」页按拍摄位置浏览照片，照片详情显示位置和�
 
 ## 功能开发设计
 
-回收站已交付；后续按「分享链接管理与撤销 → 基础搜索 → 收藏 → Android 视频自动备份」推进，任务拆分、兼容要求和验收标准见[家庭照片管理补齐计划](docs/superpowers/plans/2026-09-28-family-photo-roadmap.md)。
+回收站已交付；分享链接管理功能正在开发，使用方法见[分享链接管理](docs/operations/share-management.md)。基础搜索已完成本地开发，后续按「收藏 → Android 视频自动备份」推进；任务拆分、兼容要求和验收标准见[家庭照片管理补齐计划](docs/superpowers/plans/2026-09-28-family-photo-roadmap.md)。
 
 本地人脸识别通过可选的 Windows NVIDIA GPU 容器按需处理照片，R5S 保存人物数据并支持手动增量扫描。安装见 [部署文档](docs/operations/face-recognition.md)，设计与验收边界见 [开发设计](docs/superpowers/specs/2026-09-27-local-face-recognition-design.md)。该功能默认关闭。
 
 ## 回收站
 
 Web 单张与批量删除会移入回收站，默认保留 30 天，支持批量恢复、重名自动改名、永久删除与按范围清空。原图和动态照片伴随文件一起保留，操作中断后可继续恢复。管理员可切换查看所有用户的回收站；配置、共享规则及备份要求见[回收站说明](docs/operations/trash.md)。
+
+## 图库搜索
+
+Web「时间线」支持按文件名、拍摄日期范围、文件夹和照片/视频组合筛选。输入文件名后稍等片刻即自动搜索；“清除筛选”恢复普通列表。日期按浏览器所在时区解释，结束日期包含当天。动态照片归入照片。查询约定和性能测量见 [M3 开发记录](docs/operations/releases/m3-search-draft.md)。
 
 ## 备份与性能
 

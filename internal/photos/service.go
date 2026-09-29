@@ -492,10 +492,24 @@ func (s *Service) Discard(ctx context.Context, principal acl.Principal, id strin
 	if err := s.removeLiveMotionArtifacts(photo.ID); err != nil {
 		return fmt.Errorf("remove photo motion artifact: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "DELETE FROM photos WHERE id=? AND deleted_at IS NOT NULL", id); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin discarded photo cleanup: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE share_links SET owner_id=?,resource_name=?,revoked_at=COALESCE(revoked_at,?),updated_at=? WHERE resource_type='photo' AND resource_id=?`, photo.OwnerID, photo.Filename, deletedAt, deletedAt, id); err != nil {
+		return fmt.Errorf("revoke discarded photo shares: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM share_link_access WHERE share_link_id IN (SELECT id FROM share_links WHERE resource_type='photo' AND resource_id=?)", id); err != nil {
+		return fmt.Errorf("clear discarded photo unlocks: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM photos WHERE id=? AND deleted_at IS NOT NULL", id); err != nil {
 		// Keep the tombstone hidden from normal reads so a later scan can finish
 		// cleanup without resurrecting a deleted photo.
 		return fmt.Errorf("remove photo index after file deletion: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit discarded photo cleanup: %w", err)
 	}
 	if s.cache != nil {
 		_ = s.cache.Invalidate(ctx, id)

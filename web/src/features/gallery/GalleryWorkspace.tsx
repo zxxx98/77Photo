@@ -1,14 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ArrowUpRight, LoaderCircle, RefreshCw, Trash2, X } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
-import type { ApiClient, Photo } from '../../app/api';
+import type { ApiClient, Folder, ListPhotosParams, Photo } from '../../app/api';
 import Viewer from '../viewer/Viewer';
 import { GallerySkeleton } from '../loading/LoadingStates';
 import { TimelineGroup, groupByDate } from './PhotoGrid';
 
 export default function GalleryWorkspace({ api }: { api: ApiClient }) {
   const { t, formatCount, locale } = useI18n();
+  const [initialFilters] = useState(readGalleryFilters);
+  const [searchInput, setSearchInput] = useState(initialFilters.q);
+  const [query, setQuery] = useState(initialFilters.q);
+  const [mediaType, setMediaType] = useState<'' | 'photo' | 'video'>(initialFilters.mediaType);
+  const [folderId, setFolderId] = useState(initialFilters.folderId);
+  const [fromDate, setFromDate] = useState(initialFilters.fromDate);
+  const [toDate, setToDate] = useState(initialFilters.toDate);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [libraryEmpty, setLibraryEmpty] = useState<boolean | null>(null);
+  const libraryEmptyRef = useRef<boolean | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -21,27 +31,95 @@ export default function GalleryWorkspace({ api }: { api: ApiClient }) {
   const [bulkError, setBulkError] = useState<string | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
+  const requestRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
+  const searchPendingRef = useRef(false);
+  const pendingQueryRef = useRef('');
   const copy = useMemo(() => gallerySelectionCopy(locale, formatCount), [locale, formatCount]);
 
+  useEffect(() => {
+    let active = true;
+    void loadVisibleFolders(api).then((items) => { if (active) setFolders(items); }).catch(() => {});
+    return () => { active = false; };
+  }, [api]);
+
+  const activeFilters = useMemo(() => ({ q: query, mediaType, folderId, fromDate, toDate }), [query, mediaType, folderId, fromDate, toDate]);
+  const hasFilters = !!(query || mediaType || folderId || fromDate || toDate);
+  const invalidDates = !!(fromDate && toDate && fromDate > toDate);
+
   const load = useCallback(async (nextCursor?: string) => {
-    if (loadingRef.current) return;
+    if (invalidDates) return;
+    if (nextCursor && loadingRef.current) return;
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const generation = ++generationRef.current;
     loadingRef.current = true;
     setError(null);
     nextCursor ? setLoadingMore(true) : setLoading(true);
     try {
-      const page = await api.listPhotos({ cursor: nextCursor, limit: 50 });
+      const params: ListPhotosParams = {
+        cursor: nextCursor, limit: 50, signal: controller.signal,
+        q: activeFilters.q || undefined,
+        mediaType: activeFilters.mediaType || undefined,
+        folderId: activeFilters.folderId || undefined,
+        from: activeFilters.fromDate ? localDateBoundary(activeFilters.fromDate) : undefined,
+        to: activeFilters.toDate ? localDateBoundary(activeFilters.toDate, true) : undefined,
+      };
+      const page = await api.listPhotos(params);
+      if (generation !== generationRef.current || controller.signal.aborted) return;
+      if (!nextCursor && !hasFilters) {
+        libraryEmptyRef.current = page.items.length === 0;
+        setLibraryEmpty(libraryEmptyRef.current);
+      } else if (!nextCursor && page.items.length === 0 && libraryEmptyRef.current === null) {
+        const baseline = await api.listPhotos({ limit: 1, signal: controller.signal });
+        if (generation !== generationRef.current || controller.signal.aborted) return;
+        libraryEmptyRef.current = baseline.items.length === 0;
+        setLibraryEmpty(libraryEmptyRef.current);
+      }
       setPhotos((current) => nextCursor ? [...current, ...page.items] : page.items);
       setCursor(page.next_cursor);
     } catch {
-      setError(t('gallery.loadFailed'));
+      if (generation === generationRef.current && !controller.signal.aborted) setError(t('gallery.loadFailed'));
     } finally {
-      loadingRef.current = false;
-      setLoading(false);
-      setLoadingMore(false);
+      if (generation === generationRef.current) {
+        loadingRef.current = false;
+        requestRef.current = null;
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
-  }, [api, t]);
+  }, [api, t, activeFilters, hasFilters, invalidDates]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    writeGalleryFilters(activeFilters);
+    setPhotos([]);
+    setCursor(null);
+    setSelected(null);
+    exitSelectionMode();
+    if (invalidDates) { requestRef.current?.abort(); setError(null); setLoading(false); return; }
+    void load();
+    return () => { requestRef.current?.abort(); generationRef.current += 1; loadingRef.current = false; };
+  }, [load, invalidDates]);
+
+  useEffect(() => {
+    if (searchInput.trim() === query) {
+      if (searchPendingRef.current && query === pendingQueryRef.current) void load();
+      searchPendingRef.current = false;
+      return;
+    }
+    if (!searchPendingRef.current) pendingQueryRef.current = query;
+    searchPendingRef.current = true;
+    requestRef.current?.abort();
+    requestRef.current = null;
+    generationRef.current += 1;
+    loadingRef.current = false;
+    setPhotos([]);
+    setCursor(null);
+    setLoading(!invalidDates);
+    const timer = window.setTimeout(() => setQuery(searchInput.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput, query, load, invalidDates]);
 
   useEffect(() => {
     const node = sentinel.current;
@@ -90,6 +168,12 @@ export default function GalleryWorkspace({ api }: { api: ApiClient }) {
     setBulkError(null);
   }
 
+  function refresh() {
+    libraryEmptyRef.current = null;
+    setLibraryEmpty(null);
+    void load();
+  }
+
   async function deleteSelectedPhotos() {
     const ids = [...selectedIds];
     if (!ids.length) return;
@@ -121,22 +205,32 @@ export default function GalleryWorkspace({ api }: { api: ApiClient }) {
       <div className="workspace-heading gallery-heading">
         <div><span className="eyebrow">{t('gallery.yourLibrary')}</span><h1 id="gallery-title">{t('gallery.timeline')}</h1><p className="gallery-intro">{t('gallery.intro')}</p></div>
         <div className="gallery-heading-actions">
-          <span className="gallery-count">{selectionMode ? copy.selected(selectedIds.size) : photos.length ? t('gallery.loaded', { count: formatCount(photos.length) }) : t('gallery.noPhotosYet')}</span>
+          <span className="gallery-count">{selectionMode ? copy.selected(selectedIds.size) : photos.length || hasFilters ? t('gallery.loaded', { count: formatCount(photos.length) }) : t('gallery.noPhotosYet')}</span>
           {selectionMode ? (
             <button className="button button-secondary" type="button" onClick={exitSelectionMode}>{copy.cancel}</button>
           ) : (
             <>
               {photos.length > 0 && <button className="button button-secondary" type="button" onClick={enterSelectionMode}>{copy.select}</button>}
-              <button className="view-toggle" aria-label={t('gallery.refresh')} onClick={() => void load()}><RefreshCw size={18} /></button>
+              <button className="view-toggle" aria-label={t('gallery.refresh')} onClick={refresh}><RefreshCw size={18} /></button>
             </>
           )}
         </div>
       </div>
-      <div className="filter-row" aria-label={t('gallery.filters')}><button type="button" className="filter-chip is-active">{t('gallery.allPhotos')}</button><span className="filter-hint">{photos.length ? t('gallery.privateByDefault') : t('gallery.yourPrivateLibrary')}</span></div>
+      <div className="gallery-search" role="search" aria-label={t('gallery.filters')}>
+        <label>{t('gallery.searchName')}<input type="search" value={searchInput} maxLength={100} onChange={(event) => setSearchInput(event.target.value)} placeholder={t('gallery.searchPlaceholder')} /></label>
+        <label>{t('gallery.folder')}<select value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">{t('gallery.allFolders')}</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label>
+        <label>{t('gallery.fromDate')}<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
+        <label>{t('gallery.toDate')}<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
+        <div className="gallery-media-filters" aria-label={t('gallery.mediaType')}>
+          {(['', 'photo', 'video'] as const).map((type) => <button key={type} type="button" className={`filter-chip${mediaType === type ? ' is-active' : ''}`} aria-pressed={mediaType === type} onClick={() => setMediaType(type)}>{t(type === '' ? 'gallery.allPhotos' : type === 'photo' ? 'gallery.photos' : 'gallery.videos')}</button>)}
+        </div>
+        {hasFilters && <button type="button" className="button button-secondary" onClick={() => { setSearchInput(''); setQuery(''); setMediaType(''); setFolderId(''); setFromDate(''); setToDate(''); }}>{t('gallery.clearFilters')}</button>}
+      </div>
+      {invalidDates && <div className="inline-state" role="alert">{t('gallery.invalidDates')}</div>}
       {bulkError && <div className="inline-state" role="alert">{bulkError}</div>}
       {loading && <GallerySkeleton />}
-      {!loading && error && <div className="inline-state" role="alert">{error}<button className="button button-secondary" onClick={() => void load()}>{t('common.retry')}</button></div>}
-      {!loading && !error && photos.length === 0 && <EmptyTimeline />}
+      {!loading && error && <div className="inline-state" role="alert">{error}<button className="button button-secondary" onClick={refresh}>{t('common.retry')}</button></div>}
+      {!loading && !error && !invalidDates && photos.length === 0 && (hasFilters && !libraryEmpty ? <div className="inline-state">{t('gallery.noResults')}</div> : <EmptyTimeline />)}
       {!loading && !error && groups.map(([date, items]) => (
         <TimelineGroup
           key={date}
@@ -202,6 +296,60 @@ function EmptyTimeline() {
 function openUpload() {
   window.history.pushState({}, '', '#/upload');
   window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+type GalleryFilters = { q: string; mediaType: '' | 'photo' | 'video'; folderId: string; fromDate: string; toDate: string };
+const galleryFilterKey = 'gallery-filters';
+
+function readGalleryFilters(): GalleryFilters {
+  const hashQuery = window.location.hash.startsWith('#/gallery?') ? window.location.hash.slice('#/gallery?'.length) : '';
+  const params = new URLSearchParams(hashQuery || window.sessionStorage.getItem(galleryFilterKey) || '');
+  const media = params.get('media_type');
+  return {
+    q: params.get('q') || '', mediaType: media === 'photo' || media === 'video' ? media : '',
+    folderId: params.get('folder_id') || '', fromDate: validLocalDate(params.get('from')), toDate: validLocalDate(params.get('to')),
+  };
+}
+
+function validLocalDate(value: string | null): string {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return '';
+  const [year, month, day] = value.split('-').map(Number);
+  const parsed = new Date(year, month - 1, day);
+  return parsed.getFullYear() === year && parsed.getMonth() + 1 === month && parsed.getDate() === day ? value : '';
+}
+
+function writeGalleryFilters(filters: GalleryFilters) {
+  const params = new URLSearchParams();
+  if (filters.q) params.set('q', filters.q);
+  if (filters.mediaType) params.set('media_type', filters.mediaType);
+  if (filters.folderId) params.set('folder_id', filters.folderId);
+  if (filters.fromDate) params.set('from', filters.fromDate);
+  if (filters.toDate) params.set('to', filters.toDate);
+  const query = params.toString();
+  window.sessionStorage.setItem(galleryFilterKey, query);
+  if (window.location.hash.startsWith('#/gallery')) window.history.replaceState(window.history.state, '', `#/gallery${query ? `?${query}` : ''}`);
+}
+
+function localDateBoundary(value: string, nextDay = false): string {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day + (nextDay ? 1 : 0)).toISOString();
+}
+
+async function loadVisibleFolders(api: ApiClient): Promise<Folder[]> {
+  const root = (await api.listFolders()).items;
+  const shares = typeof api.listShares === 'function' ? await api.listShares().catch(() => ({ items: [] })) : { items: [] };
+  const shared = await Promise.all(shares.items.map((share) => api.getFolder(share.resource_id).catch(() => null)));
+  const seen = new Set<string>();
+  const pending = [...root, ...shared.filter((folder): folder is Folder => folder !== null)];
+  const items: Folder[] = [];
+  while (pending.length) {
+    const folder = pending.shift()!;
+    if (seen.has(folder.id)) continue;
+    seen.add(folder.id);
+    items.push(folder);
+    pending.push(...(await api.listFolders(folder.id)).items);
+  }
+  return items.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 async function deleteIndividually(api: ApiClient, ids: string[]) {

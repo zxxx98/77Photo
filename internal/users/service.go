@@ -285,6 +285,9 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 		if _, err := tx.ExecContext(ctx, "UPDATE photos SET owner_id=?, updated_at=? WHERE owner_id=?", input.TransferToUserID, now, id); err != nil {
 			return fmt.Errorf("transfer photos: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, "UPDATE share_links SET owner_id=? WHERE owner_id=?", input.TransferToUserID, id); err != nil {
+			return fmt.Errorf("transfer share link ownership snapshot: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id=?", id); err != nil {
 			return fmt.Errorf("delete transferred user: %w", err)
 		}

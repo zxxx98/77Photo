@@ -103,6 +103,8 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 		shareLinkHandler := sharelinks.NewHTTPHandler(services.ShareLinks, services.Auth)
 		mux.Handle("/api/v1/share-links", shareLinkHandler)
 		mux.Handle("/api/v1/share-links/", shareLinkHandler)
+		mux.Handle("/api/v1/me/share-links", shareLinkHandler)
+		mux.Handle("/api/v1/me/share-links/", shareLinkHandler)
 	}
 	if services.Auth != nil && services.Indexer != nil {
 		mux.Handle("/api/v1/admin/rescan", indexer.NewHTTPHandler(services.Indexer, services.Auth))

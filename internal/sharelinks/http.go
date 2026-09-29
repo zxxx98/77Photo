@@ -18,6 +18,7 @@ import (
 
 const (
 	shareLinksPath        = "/api/v1/share-links"
+	managedShareLinksPath = "/api/v1/me/share-links"
 	shareAccessCookie     = "77photo_share_access"
 	sharePasswordMessage  = "the share link password is incorrect"
 	thumbnailRetryAfterMS = 1000
@@ -41,6 +42,27 @@ func NewHTTPHandler(service *Service, authService *auth.Service) http.Handler {
 }
 
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == managedShareLinksPath || r.URL.Path == managedShareLinksPath+"/" {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, r, http.MethodGet)
+			return
+		}
+		h.listManaged(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, managedShareLinksPath+"/") {
+		if r.Method != http.MethodDelete {
+			methodNotAllowed(w, r, http.MethodDelete)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, managedShareLinksPath+"/")
+		if id == "" || strings.Contains(id, "/") {
+			writeError(w, r, http.StatusNotFound, "SHARE_NOT_FOUND", "share link not found", nil)
+			return
+		}
+		h.revokeManaged(w, r, id)
+		return
+	}
 	if r.URL.Path == shareLinksPath || r.URL.Path == shareLinksPath+"/" {
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, r, http.MethodPost)
@@ -71,6 +93,55 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, r, http.StatusNotFound, "SHARE_UNAVAILABLE", "shared item is unavailable", nil)
 	}
+}
+
+func (h *HTTPHandler) managePrincipal(w http.ResponseWriter, r *http.Request, write bool) (acl.Principal, bool) {
+	if h.authService == nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return acl.Principal{}, false
+	}
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return acl.Principal{}, false
+	}
+	if write && h.authService.AuthorizeWrite(r, authenticated) != nil {
+		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
+		return acl.Principal{}, false
+	}
+	return acl.Principal{UserID: authenticated.Account.ID, Role: authenticated.Account.Role}, true
+}
+
+func (h *HTTPHandler) listManaged(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.managePrincipal(w, r, false)
+	if !ok {
+		return
+	}
+	query := r.URL.Query()
+	limit, err := parseManageLimit(query.Get("limit"))
+	if err != nil {
+		h.writeServiceError(w, r, ErrInvalid)
+		return
+	}
+	page, err := h.service.ListManaged(r.Context(), principal, ManageFilter{Status: query.Get("status"), ResourceType: ResourceType(query.Get("resource_type")), ResourceID: query.Get("resource_id"), Cursor: query.Get("cursor"), Limit: limit})
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+func (h *HTTPHandler) revokeManaged(w http.ResponseWriter, r *http.Request, id string) {
+	principal, ok := h.managePrincipal(w, r, true)
+	if !ok {
+		return
+	}
+	if err := h.service.RevokeManaged(r.Context(), principal, id); err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *HTTPHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -228,6 +299,8 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 		writeError(w, r, http.StatusForbidden, "SHARE_FORBIDDEN", "you cannot share this item", nil)
 	case errors.Is(err, ErrInvalid):
 		writeError(w, r, http.StatusUnprocessableEntity, "INVALID_REQUEST", "share link request is invalid", nil)
+	case errors.Is(err, ErrNotFound):
+		writeError(w, r, http.StatusNotFound, "SHARE_NOT_FOUND", "share link not found", nil)
 	case errors.Is(err, ErrPasswordRequired):
 		writeError(w, r, http.StatusUnauthorized, "SHARE_PASSWORD_REQUIRED", "a password is required to view this share", nil)
 	case errors.Is(err, ErrInvalidPassword):

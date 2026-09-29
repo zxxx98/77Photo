@@ -40,33 +40,50 @@ const navItems: Array<{ id: View; labelKey: TranslationKey; icon: typeof Image }
 export default function App() {
   const api = useMemo(() => createApiClient(), []);
   const store = useMemo(() => new SessionStore(api), [api]);
-  const [view, setView] = useState<View>(() => readView(window.location.hash));
-  const publicShareToken = readPublicShareToken(window.location.hash);
+  const [hash, setHash] = useState(() => window.location.hash);
+  const view = readView(hash);
+  const publicShareToken = readPublicShareToken(hash);
   const snapshot = useSyncExternalStore(store.subscribe, () => store.snapshot, () => store.snapshot);
 
   useEffect(() => { if (!publicShareToken) void store.restore(); }, [publicShareToken, store]);
   useEffect(() => {
-    const handlePopState = () => setView(readView(window.location.hash));
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    const handleLocationChange = () => setHash(window.location.hash);
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+    };
   }, []);
 
-  if (publicShareToken) return <PublicSharePage api={api} token={publicShareToken} />;
+  if (publicShareToken) return <PublicSharePage key={publicShareToken} api={api} token={publicShareToken} />;
   if (snapshot.status === 'loading') return <AppShellSkeleton />;
   if (snapshot.status === 'setup') return <SetupPage store={store} />;
   if (snapshot.status === 'unauthenticated') return <LoginPage store={store} />;
-  return <AppShell api={api} store={store} view={view} onViewChange={(nextView) => { writeView(nextView); setView(nextView); }} />;
+  return <AppShell api={api} store={store} view={view} onViewChange={writeView} />;
 }
 
 function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof createApiClient>; store: SessionStore; view: View; onViewChange: (view: View) => void }) {
   const { t } = useI18n();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [searchRequested, setSearchRequested] = useState(false);
   const [uploadSelection, setUploadSelection] = useState<UploadSelection | null>(null);
   const [folderContext, setFolderContext] = useState<FolderLocation | null>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
   const pendingUploadDestinationRef = useRef<FolderLocation | null>(null);
   const selectionIdRef = useRef(0);
   const user = store.snapshot.user;
+
+  const focusGallerySearch = useCallback(() => {
+    setSearchRequested(true);
+    if (view !== 'gallery') onViewChange('gallery');
+  }, [onViewChange, view]);
+
+  useEffect(() => {
+    if (!searchRequested || view !== 'gallery') return;
+    document.querySelector<HTMLInputElement>('.gallery-search input[type="search"]')?.focus();
+    setSearchRequested(false);
+  }, [searchRequested, view]);
 
   const chooseUpload = useCallback((destination?: FolderLocation | null) => {
     const resolvedDestination = destination === undefined && view === 'folders' ? folderContext : destination ?? null;
@@ -134,18 +151,17 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
       <main className="main-content">
         <header className="topbar">
           <button className="icon-button menu-button" aria-label={t('common.openNavigation')} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
-          <label className="search-field">
+          <button className="search-field" type="button" aria-label={t('common.search')} onClick={focusGallerySearch}>
             <Search size={18} aria-hidden="true" />
-            <span className="sr-only">{t('common.search')}</span>
-            <input placeholder={t('common.search')} disabled aria-label={t('common.search')} />
-          </label>
+            <span>{t('common.search')}</span>
+          </button>
           <div className="topbar-actions">
             <LanguageToggle />
             <button className="button button-primary upload-button" onClick={() => chooseUpload()}><Upload size={17} /> <span>{t('common.upload')}</span></button>
           </div>
           <input ref={pickerRef} className="sr-only" type="file" accept="image/jpeg,image/png,image/heic,image/heif,video/mp4,video/webm,video/quicktime,.mov" multiple tabIndex={-1} aria-hidden="true" onChange={handlePickerChange} />
         </header>
-        <div className={`content-scroll${view === 'map' ? ' content-scroll--map' : ''}`}><Workspace api={api} currentUser={user!} view={view} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} folderContext={folderContext} onFolderChange={handleFolderChange} onUpload={chooseUpload} onUploadComplete={handleUploadComplete} /></div>
+        <div className={`content-scroll${view === 'map' ? ' content-scroll--map' : ''}`}><Workspace api={api} currentUser={user!} view={view} onViewChange={onViewChange} uploadSelection={uploadSelection} onUploadSelectionConsumed={consumeUploadSelection} folderContext={folderContext} onFolderChange={handleFolderChange} onUpload={chooseUpload} onUploadComplete={handleUploadComplete} /></div>
       </main>
       <nav className="mobile-nav" aria-label={t('common.mobileNavigation')}>
         {navItems.slice(0, 3).map(({ id, labelKey, icon: Icon }) => (
@@ -157,14 +173,14 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
   );
 }
 
-function Workspace({ api, currentUser, view, uploadSelection, onUploadSelectionConsumed, folderContext, onFolderChange, onUpload, onUploadComplete }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View; uploadSelection: UploadSelection | null; onUploadSelectionConsumed: (id: number) => void; folderContext: FolderLocation | null; onFolderChange: (folder: FolderLocation | null) => void; onUpload: (folder?: FolderLocation | null) => void; onUploadComplete: (destination: UploadDestination) => void }) {
+function Workspace({ api, currentUser, view, onViewChange, uploadSelection, onUploadSelectionConsumed, folderContext, onFolderChange, onUpload, onUploadComplete }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View; onViewChange: (view: View) => void; uploadSelection: UploadSelection | null; onUploadSelectionConsumed: (id: number) => void; folderContext: FolderLocation | null; onFolderChange: (folder: FolderLocation | null) => void; onUpload: (folder?: FolderLocation | null) => void; onUploadComplete: (destination: UploadDestination) => void }) {
   if (view === 'people' && currentUser.role === 'admin') return <Suspense fallback={<MapSkeleton />}><PeopleWorkspace api={api} currentUser={currentUser} /></Suspense>;
   if (view === 'trash') return <Suspense fallback={<MapSkeleton />}><TrashWorkspace api={api} currentUser={currentUser} /></Suspense>;
   if (view === 'gallery') return <GalleryWorkspace api={api} />;
   if (view === 'map') return <Suspense fallback={<MapSkeleton />}><MapWorkspace api={api} currentUser={currentUser} /></Suspense>;
   if (view === 'folders') return <FoldersWorkspace api={api} initialFolder={folderContext} onFolderChange={onFolderChange} onUpload={onUpload} />;
   if (view === 'upload') return <UploadWorkspace api={api} selection={uploadSelection} onSelectionConsumed={onUploadSelectionConsumed} onUploadComplete={onUploadComplete} />;
-  if (view === 'settings') return <SettingsWorkspace api={api} currentUser={currentUser} />;
+  if (view === 'settings') return <SettingsWorkspace api={api} currentUser={currentUser} onOpenFolder={(folder) => { onFolderChange(folder); onViewChange('folders'); }} />;
   return null;
 }
 

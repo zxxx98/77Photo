@@ -25,6 +25,7 @@ var (
 	ErrPasswordRequired = errors.New("share link password is required")
 	ErrInvalidPassword  = errors.New("share link password is invalid")
 	ErrOutOfScope       = errors.New("photo is outside share link scope")
+	ErrNotFound         = errors.New("managed share link not found")
 )
 
 type ResourceType string
@@ -132,10 +133,33 @@ func (s *Service) Create(ctx context.Context, principal acl.Principal, input Cre
 	for attempt := 0; attempt < 3; attempt++ {
 		id := newID("sl_")
 		token := randomToken()
-		_, err = s.db.ExecContext(ctx, `INSERT INTO share_links
-(id, resource_type, resource_id, token_hash, password_hash, expires_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, input.ResourceType, input.ResourceID, hashToken(token), passwordHash, optionalTime(expiresAt), formatTime(now), formatTime(now))
+		// Resolve the owner and display name in the INSERT itself. Ownership
+		// may change after the initial permission check above.
+		insertQuery := `INSERT INTO share_links
+(id, resource_type, resource_id, token_hash, password_hash, expires_at, created_at, updated_at, owner_id, resource_name)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, owner_id, name FROM folders
+WHERE id=? AND (owner_id=? OR ?='admin')`
+		if input.ResourceType == ResourcePhoto {
+			insertQuery = `INSERT INTO share_links
+(id, resource_type, resource_id, token_hash, password_hash, expires_at, created_at, updated_at, owner_id, resource_name)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, owner_id, filename FROM photos
+WHERE id=? AND deleted_at IS NULL AND (owner_id=? OR ?='admin')`
+		}
+		result, err := s.db.ExecContext(ctx, insertQuery, id, input.ResourceType, input.ResourceID, hashToken(token), passwordHash, optionalTime(expiresAt), formatTime(now), formatTime(now), input.ResourceID, principal.UserID, string(principal.Role))
 		if err == nil {
+			if affected, _ := result.RowsAffected(); affected != 1 {
+				currentOwner, ownerErr := s.resourceOwner(ctx, input.ResourceType, input.ResourceID)
+				if errors.Is(ownerErr, sql.ErrNoRows) {
+					return Link{}, ErrInvalid
+				}
+				if ownerErr != nil {
+					return Link{}, fmt.Errorf("recheck share resource: %w", ownerErr)
+				}
+				if !acl.CanManageShare(principal, currentOwner) {
+					return Link{}, ErrForbidden
+				}
+				return Link{}, errors.New("share resource changed during creation")
+			}
 			return Link{ID: id, ResourceType: input.ResourceType, ResourceID: input.ResourceID, URL: "/#/share/" + token, ExpiresAt: expiresAt, PasswordProtected: passwordHash != nil, Token: token}, nil
 		}
 		if !strings.Contains(err.Error(), "UNIQUE constraint failed") {

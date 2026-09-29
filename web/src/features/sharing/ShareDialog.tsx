@@ -3,6 +3,7 @@ import { Check, Copy, Link as LinkIcon, Share2, X } from 'lucide-react';
 import type { ApiClient, ShareDuration, ShareLink, ShareResourceType } from '../../app/api';
 import { copyTextWithFallback, createCopyLinkHandler, durationDetail, durationLabel, resolveShareURL, selectShareDuration, shareCopy, shareDurations, successMessage } from './shareDialog';
 import { useI18n } from '../../app/I18nProvider';
+import { shareManagementHash } from '../../app/routes';
 
 type ShareResource = { type: ShareResourceType; id: string; name: string };
 
@@ -48,6 +49,12 @@ export default function ShareDialog({ api, resource, onClose }: { api: ApiClient
     }
   }
 
+  function manageShares() {
+    onClose();
+    window.history.pushState({}, '', shareManagementHash(resource.type, resource.id));
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }
+
   return <div className="share-dialog-scrim" role="presentation">
     <section className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title">
       <button className="icon-button share-dialog-close" type="button" aria-label={t('sharing.closeDialog')} onClick={onClose}><X size={19} /></button>
@@ -71,10 +78,12 @@ export default function ShareDialog({ api, resource, onClose }: { api: ApiClient
         <label className="share-password-field">{t('sharing.optionalPassword')}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={t('sharing.noPassword')} autoComplete="new-password" /></label>
         {error && <p className="form-message" role="alert">{error}</p>}
         <button className="button button-primary share-submit" type="submit" disabled={busy}>{busy ? t('sharing.creatingLink') : copy.createLabel}</button>
+        <button className="button button-secondary" type="button" onClick={manageShares}>{t('sharing.manageExisting')}</button>
       </form> : <div className="share-dialog-success">
         <p className="share-success-message" role="status">{successMessage(resource.type, duration, locale)}</p>
         <label className="share-url-field">{t('sharing.shareLink')}<input value={shareURL} readOnly aria-label={t('sharing.shareLink')} /></label>
         <button className="button button-secondary share-copy-button" type="button" onClick={createCopyLinkHandler(copyLink)}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? t('sharing.copied') : t('sharing.copyLink')}</button>
+        <button className="button button-secondary" type="button" onClick={manageShares}>{t('sharing.manageExisting')}</button>
         {error && <p className="form-message" role="alert">{error}</p>}
         <p className="share-dialog-note">{t('sharing.keepLinkPrivate')}</p>
       </div>}

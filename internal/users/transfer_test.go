@@ -13,6 +13,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/folders"
 	"github.com/zxxx98/77Photo/internal/photos"
+	"github.com/zxxx98/77Photo/internal/sharelinks"
 	"github.com/zxxx98/77Photo/internal/storage"
 )
 
@@ -46,6 +47,11 @@ func TestDeleteWithTransferMovesFilesIntoRecipientRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	managed := sharelinks.NewService(service.db, store, nil, false)
+	link, err := managed.Create(ctx, alicePrincipal, sharelinks.CreateInput{ResourceType: sharelinks.ResourcePhoto, ResourceID: photo.ID, Duration: sharelinks.DurationForever})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Bob already has an unindexed "Trip" directory on disk.
 	if err := store.MakeDir("users/" + bob.ID + "/Trip"); err != nil {
 		t.Fatal(err)
@@ -62,6 +68,21 @@ func TestDeleteWithTransferMovesFilesIntoRecipientRoot(t *testing.T) {
 	wantPrefix := "users/" + bob.ID + "/Trip (2)/"
 	if owner != bob.ID || !strings.HasPrefix(photoPath, wantPrefix) {
 		t.Fatalf("photo owner=%s path=%s, want bob under %s", owner, photoPath, wantPrefix)
+	}
+	var snapshotOwner string
+	if err := service.db.QueryRowContext(ctx, "SELECT owner_id FROM share_links WHERE id=?", link.ID).Scan(&snapshotOwner); err != nil || snapshotOwner != bob.ID {
+		t.Fatalf("share ownership snapshot = %q, %v", snapshotOwner, err)
+	}
+	oldLinks, err := managed.ListManaged(ctx, alicePrincipal, sharelinks.ManageFilter{})
+	if err != nil || len(oldLinks.Items) != 0 {
+		t.Fatalf("former owner links = %+v, %v", oldLinks, err)
+	}
+	newLinks, err := managed.ListManaged(ctx, acl.Principal{UserID: bob.ID, Role: acl.RoleUser}, sharelinks.ManageFilter{})
+	if err != nil || len(newLinks.Items) != 1 || newLinks.Items[0].ID != link.ID {
+		t.Fatalf("recipient links = %+v, %v", newLinks, err)
+	}
+	if _, err := managed.Inspect(ctx, link.Token); err != nil {
+		t.Fatalf("transferred public link = %v", err)
 	}
 	resolved, err := store.ResolvePath(photoPath)
 	if err != nil {

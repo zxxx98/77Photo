@@ -1,0 +1,13 @@
+.managed-shares-filter, .managed-share-actions, .managed-share-confirm { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.managed-shares-filter { justify-content: space-between; margin: 20px 0 8px; }
+.managed-shares-filter label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.managed-shares-filter select { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--warm-white); color: var(--slate); }
+.managed-shares-resource-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--slate-soft); font-size: 12px; }
+.managed-share { border-bottom: 1px solid var(--border); padding: 16px 0; }
+.managed-share-info { display: grid; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+.managed-share-info strong { font-size: 14px; }
+.managed-share-info span, .managed-share-info small { color: var(--slate-soft); font-size: 12px; }
+.managed-share-actions { margin-top: 12px; }
+.managed-share-confirm { margin-top: 12px; }
+.managed-share-confirm p { width: 100%; margin: 0; font-size: 12px; }
+.managed-shares-more { margin-top: 16px; }

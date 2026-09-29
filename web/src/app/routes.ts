@@ -49,6 +49,20 @@ export function settingsSectionHash(section: SettingsSection): string {
   return section === 'account' ? '#/settings' : `#/settings?section=${section}`;
 }
 
+export function shareManagementHash(type: 'photo' | 'folder', id: string): string {
+  const query = new URLSearchParams({ resource_type: type, resource_id: id });
+  return `#/settings?${query}`;
+}
+
+export function readShareManagementResource(hash: string): { type: 'photo' | 'folder'; id: string } | null {
+  const match = /^#\/settings\?(.*)$/.exec(hash);
+  if (!match) return null;
+  const query = new URLSearchParams(match[1]);
+  const type = query.get('resource_type');
+  const id = query.get('resource_id');
+  return (type === 'photo' || type === 'folder') && id ? { type, id } : null;
+}
+
 function coordinate(value: string | null): number | null {
   if (value === null || value.trim() === '') return null;
   const number = Number(value);

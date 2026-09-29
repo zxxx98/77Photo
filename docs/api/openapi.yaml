@@ -532,6 +532,16 @@ paths:
       security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/FolderFilter'
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, maxLength: 100 }
+          description: Trimmed filename substring, 100 Unicode characters maximum. ASCII letters match without case; non-ASCII characters match exactly. Percent and underscore are literal characters. Empty or whitespace-only values disable this filter.
+        - name: media_type
+          in: query
+          required: false
+          schema: { type: string, enum: [photo, video] }
+          description: Photo includes still and Live Photos; video includes standalone videos. Omit for all media.
         - $ref: '#/components/parameters/FromFilter'
         - $ref: '#/components/parameters/ToFilter'
         - $ref: '#/components/parameters/BBoxFilter'
@@ -924,6 +934,43 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/MapPoints' } } }
         '304': { description: The client's cached points are current }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/me/share-links:
+    get:
+      tags: [share-links]
+      summary: List share links manageable by the current user
+      description: Current resource ownership determines access. Administrators also see orphan records. Tokens and password hashes are never returned.
+      operationId: listManagedShareLinks
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [active, expired, revoked, unavailable] } }
+        - { name: resource_type, in: query, schema: { type: string, enum: [photo, folder] } }
+        - { name: resource_id, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque page cursor }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+      responses:
+        '200':
+          description: Share links sorted by creation time, newest first
+          content: { application/json: { schema: { $ref: '#/components/schemas/ManagedSharePage' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { description: Invalid filter or cursor, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /api/v1/me/share-links/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    delete:
+      tags: [share-links]
+      summary: Revoke a managed share link
+      description: Idempotent for accessible links. Clears outstanding password unlock sessions. Cookie writes require CSRF.
+      operationId: revokeManagedShareLink
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      responses:
+        '204': { description: Link revoked or already revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Invalid CSRF token for cookie authentication }
+        '404': { description: Link absent or inaccessible }
 
   /api/v1/share-links:
     post:
@@ -2372,6 +2419,25 @@ components:
         folder_id: { $ref: '#/components/schemas/ID' }
         user_id: { $ref: '#/components/schemas/ID' }
         permission: { $ref: '#/components/schemas/Permission' }
+    ManagedSharePage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ManagedShareLink' } }
+        next_cursor: { type: string }
+    ManagedShareLink:
+      type: object
+      required: [id, resource_type, resource_id, resource_name, created_at, expires_at, revoked_at, password_protected, status]
+      properties:
+        id: { $ref: '#/components/schemas/ID' }
+        resource_type: { type: string, enum: [photo, folder] }
+        resource_id: { $ref: '#/components/schemas/ID' }
+        resource_name: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { anyOf: [{ type: string, format: date-time }, { type: 'null' }] }
+        revoked_at: { anyOf: [{ type: string, format: date-time }, { type: 'null' }] }
+        password_protected: { type: boolean }
+        status: { type: string, enum: [active, expired, revoked, unavailable] }
     ShareLink:
       type: object
       required: [id, resource_type, resource_id, url, password_protected]

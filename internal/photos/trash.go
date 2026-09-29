@@ -485,7 +485,13 @@ func (s *Service) finishTrashOperation(ctx context.Context, record trashRecord) 
 			if err != nil {
 				return err
 			}
-			_, err = tx.ExecContext(ctx, "DELETE FROM share_links WHERE resource_type='photo' AND resource_id=?", file.PhotoID)
+			// Keep a revoked, secret-free management record after the photo is
+			// permanently removed. Only administrators can manage orphan links.
+			_, err = tx.ExecContext(ctx, `UPDATE share_links SET
+			owner_id=COALESCE(owner_id,(SELECT owner_id FROM photos WHERE id=?)),
+			resource_name=COALESCE((SELECT filename FROM photos WHERE id=?),resource_name),
+			revoked_at=COALESCE(revoked_at,?), updated_at=?
+			WHERE resource_type='photo' AND resource_id=?`, file.PhotoID, file.PhotoID, formatTime(time.Now().UTC()), formatTime(time.Now().UTC()), file.PhotoID)
 			if err != nil {
 				return err
 			}

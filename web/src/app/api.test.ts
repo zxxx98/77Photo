@@ -113,12 +113,17 @@ describe('API client', () => {
   });
 
   it('serializes gallery filters and folder pagination', async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+    const fetcher = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 })));
     const client = createApiClient(fetcher as typeof fetch);
 
     await client.listPhotos({ folderId: 'f_1', cursor: 'cursor-value', limit: 25 });
 
     expect(fetcher).toHaveBeenCalledWith('/api/v1/photos?folder_id=f_1&cursor=cursor-value&limit=25', expect.objectContaining({ credentials: 'include' }));
+    await client.listPhotos({ q: '家庭 A_%', mediaType: 'photo', folderId: 'f_1' });
+    const search = new URL(fetcher.mock.calls[1][0] as string, 'https://77photo.test').searchParams;
+    expect(search.get('q')).toBe('家庭 A_%');
+    expect(search.get('media_type')).toBe('photo');
+    expect(search.get('folder_id')).toBe('f_1');
   });
 
   it('serializes map area filters and forwards the abort signal', async () => {
@@ -281,5 +286,19 @@ describe('API client', () => {
     expect(fetcher.mock.calls[3][0]).toBe('/api/v1/share-links/token/unlock');
     expect(fetcher.mock.calls[4][0]).toBe('/api/v1/share-links/token/photos');
     expect(client.publicSharePreviewURL('token/value', 'p/1')).toBe('/api/v1/share-links/token%2Fvalue/photos/p%2F1/preview');
+  });
+
+  it('uses the authenticated management route and CSRF for revocation', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], next_cursor: 'next' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = createApiClient(fetcher as typeof fetch);
+    client.setCsrfToken('csrf-value');
+    await client.listManagedShareLinks({ status: 'expired', cursor: 'first', resource_type: 'photo', resource_id: 'p/1' });
+    await client.revokeManagedShareLink('sl/1');
+    expect(fetcher.mock.calls[0][0]).toBe('/api/v1/me/share-links?status=expired&cursor=first&resource_type=photo&resource_id=p%2F1');
+    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/me/share-links/sl%2F1');
+    expect((fetcher.mock.calls[1][1] as RequestInit).method).toBe('DELETE');
+    expect(new Headers((fetcher.mock.calls[1][1] as RequestInit).headers).get('X-CSRF-Token')).toBe('csrf-value');
   });
 });

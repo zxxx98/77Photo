@@ -10,7 +10,7 @@ import { useLibraryMaintenance } from './useLibraryMaintenance';
 
 const sections: SettingsSection[] = ['account', 'members', 'library'];
 
-export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient; currentUser: User }) {
+export default function SettingsWorkspace({ api, currentUser, onOpenFolder }: { api: ApiClient; currentUser: User; onOpenFolder?: (folder: { id: string; name: string }) => void }) {
   const { t } = useI18n();
   const isAdmin = currentUser.role === 'admin';
   const [section, setSection] = useState<SettingsSection>(() => isAdmin ? readSettingsSection(window.location.hash) : 'account');
@@ -79,7 +79,7 @@ export default function SettingsWorkspace({ api, currentUser }: { api: ApiClient
       </button>)}
     </div>}
     <div className="settings-panel" {...panelProps('account')}>
-      <AccountSection api={api} currentUser={currentUser} />
+      <AccountSection api={api} currentUser={currentUser} onOpenFolder={onOpenFolder} />
     </div>
     {isAdmin && <>
       <div className="settings-panel" {...panelProps('members')}>

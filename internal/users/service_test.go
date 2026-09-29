@@ -11,6 +11,9 @@ import (
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
 	dbstore "github.com/zxxx98/77Photo/internal/database"
+	"github.com/zxxx98/77Photo/internal/folders"
+	"github.com/zxxx98/77Photo/internal/sharelinks"
+	"github.com/zxxx98/77Photo/internal/storage"
 )
 
 func newUserService(t *testing.T) (*Service, *auth.Service, acl.Principal) {
@@ -103,6 +106,45 @@ func TestDeleteRetainsPhotosOwnerAsTombstoneAndRevokesSessions(t *testing.T) {
 	}
 	if found.DeletedAt == nil || found.IsActive {
 		t.Fatalf("deleted account = %+v, want inactive tombstone", found)
+	}
+}
+
+func TestRetainedDeletedAccountSharesStayUnderAdminManagement(t *testing.T) {
+	service, _, admin := newUserService(t)
+	ctx := context.Background()
+	owner, err := service.Create(ctx, admin, CreateInput{Username: "share-owner", Password: "secure owner password", Role: acl.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.New(filepath.Join(t.TempDir(), "photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := acl.Principal{UserID: owner.ID, Role: acl.RoleUser}
+	folder, err := folders.NewService(service.db, store).Create(ctx, principal, folders.CreateInput{Name: "Retained album"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	links := sharelinks.NewService(service.db, store, nil, false)
+	link, err := links.Create(ctx, principal, sharelinks.CreateInput{ResourceType: sharelinks.ResourceFolder, ResourceID: folder.ID, Duration: sharelinks.DurationForever})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Delete(ctx, admin, owner.ID, DeleteInput{PhotoAction: "retain"}); err != nil {
+		t.Fatal(err)
+	}
+	page, err := links.ListManaged(ctx, admin, sharelinks.ManageFilter{})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != link.ID || page.Items[0].Status != "active" {
+		t.Fatalf("admin retained shares = %+v, %v", page, err)
+	}
+	if _, err := links.Inspect(ctx, link.Token); err != nil {
+		t.Fatalf("retained public link = %v", err)
+	}
+	if err := links.RevokeManaged(ctx, admin, link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := links.Inspect(ctx, link.Token); !errors.Is(err, sharelinks.ErrUnavailable) {
+		t.Fatalf("public link after admin revoke = %v", err)
 	}
 }
 

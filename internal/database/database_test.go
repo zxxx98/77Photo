@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -58,8 +59,8 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 10 {
-		t.Fatalf("schema migration count = %d, want 10", migrationCount)
+	if migrationCount != 12 {
+		t.Fatalf("schema migration count = %d, want 12", migrationCount)
 	}
 }
 
@@ -94,8 +95,8 @@ VALUES ('u-restart', 'restart', 'hash', 'user', '2026-01-01T00:00:00Z', '2026-01
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 10 {
-		t.Fatalf("schema migration count = %d, want 10", migrationCount)
+	if migrationCount != 12 {
+		t.Fatalf("schema migration count = %d, want 12", migrationCount)
 	}
 }
 
@@ -357,5 +358,74 @@ func TestUpgradeNineToTrashPreservesData(t *testing.T) {
 	var count int
 	if err := db.QueryRow("SELECT count(*) FROM trash_items").Scan(&count); err != nil || count != 0 {
 		t.Fatalf("trash upgrade: %d %v", count, err)
+	}
+}
+
+func TestUpgradeFromPreviousSchemaBackfillsShareManagement(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open(driverName, filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if err := configure(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	old := fstest.MapFS{}
+	for version := 1; version <= 10; version++ {
+		name := fmt.Sprintf("%03d", version)
+		entries, err := fs.Glob(migrations.FS, name+"_*.sql")
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("old migration %s: %v %+v", name, err, entries)
+		}
+		data, err := fs.ReadFile(migrations.FS, entries[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		old[entries[0]] = &fstest.MapFile{Data: data}
+	}
+	if err := MigrateFS(ctx, db, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,username,password_hash,role,is_active,created_at,updated_at) VALUES('u_old','old','hash','user',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO folders(id,owner_id,name,storage_path,created_at,updated_at) VALUES('f_old','u_old','Holiday','users/u_old/Holiday','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO share_links(id,resource_type,resource_id,token_hash,created_at,updated_at) VALUES('sl_old','folder','f_old','old-hash','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO photos(id,owner_id,folder_id,storage_path,filename,mime_type,size,checksum,captured_at,captured_at_source,indexed_at,source_revision,created_at,updated_at)
+VALUES('p_old','u_old','f_old','users/u_old/Holiday/photo.jpg','photo.jpg','image/jpeg',1,?,'2026-01-01T00:00:00Z','file_mtime','2026-01-01T00:00:00Z',?,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`, strings.Repeat("a", 64), strings.Repeat("b", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO share_links(id,resource_type,resource_id,token_hash,created_at,updated_at) VALUES('sl_photo','photo','p_old','photo-hash','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	var owner, name string
+	if err := db.QueryRowContext(ctx, "SELECT owner_id,resource_name FROM share_links WHERE id='sl_old'").Scan(&owner, &name); err != nil {
+		t.Fatal(err)
+	}
+	if owner != "u_old" || name != "Holiday" {
+		t.Fatalf("backfill owner=%q name=%q", owner, name)
+	}
+	if err := db.QueryRowContext(ctx, "SELECT owner_id,resource_name FROM share_links WHERE id='sl_photo'").Scan(&owner, &name); err != nil || owner != "u_old" || name != "photo.jpg" {
+		t.Fatalf("photo backfill owner=%q name=%q error=%v", owner, name, err)
+	}
+	var photoID, checksum string
+	if err := db.QueryRowContext(ctx, `SELECT id, checksum FROM photos INDEXED BY photos_active_timeline_idx WHERE deleted_at IS NULL AND scan_status='indexed' ORDER BY captured_at DESC, id DESC LIMIT 1`).Scan(&photoID, &checksum); err != nil || photoID != "p_old" || checksum != strings.Repeat("a", 64) {
+		t.Fatalf("migrated timeline photo=%q checksum=%q error=%v", photoID, checksum, err)
+	}
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatalf("repeat migration: %v", err)
+	}
+	var integrity string
+	if err := db.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		t.Fatalf("integrity = %q, %v", integrity, err)
 	}
 }

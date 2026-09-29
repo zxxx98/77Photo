@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/zxxx98/77Photo/internal/sharelinks"
+	"github.com/zxxx98/77Photo/internal/storage"
 )
 
 func TestHealthzReportsDependencyFailureAndRequestID(t *testing.T) {
@@ -89,5 +92,19 @@ func TestRequestIDIsGeneratedWhenHeaderIsMissing(t *testing.T) {
 	h.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if got := res.Header().Get("X-Request-ID"); len(got) != 32 {
 		t.Fatalf("generated X-Request-ID = %q, want 32 hex characters", got)
+	}
+}
+
+func TestManagedShareRoutesAreMountedSeparatelyFromPublicLinks(t *testing.T) {
+	handler := NewHandlerWithServices(HealthChecks{}, nil, Services{ShareLinks: sharelinks.NewService(nil, storage.Store{}, nil, false)})
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/me/share-links"},
+		{http.MethodDelete, "/api/v1/me/share-links/sl_1"},
+	} {
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, httptest.NewRequest(tc.method, tc.path, nil))
+		if out.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s = %d, want management authentication", tc.method, tc.path, out.Code)
+		}
 	}
 }

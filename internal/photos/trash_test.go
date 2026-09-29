@@ -85,6 +85,49 @@ func TestTrashRestoresOriginalAndUploadedMotionAfterRestart(t *testing.T) {
 	}
 }
 
+func TestPurgeKeepsRevokedShareManagementRecord(t *testing.T) {
+	f := newUploadFixture(t, 1<<20)
+	ctx := context.Background()
+	p := trashPhoto(t, f, "old.jpg")
+	if _, err := f.service.db.Exec(`INSERT INTO share_links(id,resource_type,resource_id,token_hash,created_at,updated_at)
+VALUES('sl_purged','photo',?,'purged-hash','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Delete(ctx, f.principal, p.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.PurgeTrash(ctx, f.principal, p.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	var name, owner, revoked string
+	if err := f.service.db.QueryRow(`SELECT resource_name,owner_id,revoked_at FROM share_links WHERE id='sl_purged'`).Scan(&name, &owner, &revoked); err != nil {
+		t.Fatal(err)
+	}
+	if name != "old.jpg" || owner != f.principal.UserID || revoked == "" {
+		t.Fatalf("retained share = %q %q %q", name, owner, revoked)
+	}
+}
+
+func TestDiscardKeepsRevokedShareManagementRecord(t *testing.T) {
+	f := newUploadFixture(t, 1<<20)
+	ctx := context.Background()
+	p := trashPhoto(t, f, "broken.jpg")
+	if _, err := f.service.db.Exec(`INSERT INTO share_links(id,resource_type,resource_id,token_hash,created_at,updated_at)
+VALUES('sl_discard','photo',?,'discard-hash','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Discard(ctx, f.principal, p.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	var name, owner, revoked string
+	if err := f.service.db.QueryRow(`SELECT resource_name,owner_id,revoked_at FROM share_links WHERE id='sl_discard'`).Scan(&name, &owner, &revoked); err != nil {
+		t.Fatal(err)
+	}
+	if name != "broken.jpg" || owner != f.principal.UserID || revoked == "" {
+		t.Fatalf("retained discard share = %q %q %q", name, owner, revoked)
+	}
+}
+
 func TestTrashRecoversFilesystemMovesWhenDatabaseFinalizeFails(t *testing.T) {
 	for _, phase := range []string{"moving", "restoring", "purging"} {
 		t.Run(phase, func(t *testing.T) {
