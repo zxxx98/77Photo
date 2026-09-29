@@ -85,6 +85,11 @@ func run(parent context.Context, logger *slog.Logger) error {
 	photoService.SetAuthorizer(authorizer)
 	shareService := shares.NewService(db)
 	maintenanceLock := &maintenance.Lock{}
+	photoService.SetMaintenanceLock(maintenanceLock)
+	photoService.SetTrashRetention(cfg.TrashRetentionDays)
+	if err := photoService.RecoverTrash(ctx); err != nil {
+		logger.Error("trash recovery pending; conflicting writes remain blocked", "error", err)
+	}
 	userService.SetStorage(photoStore)
 	userService.SetMaintenanceLock(maintenanceLock)
 	indexerService := indexer.NewServiceWithContext(ctx, db, photoStore, photoService)
@@ -118,6 +123,31 @@ func run(parent context.Context, logger *slog.Logger) error {
 		return fmt.Errorf("initialize faces: %w", err)
 	}
 	defer faceService.Close()
+
+	trashContext, stopTrash := context.WithCancel(ctx)
+	trashDone := make(chan struct{})
+	go func() {
+		defer close(trashDone)
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-trashContext.Done():
+				return
+			case now := <-ticker.C:
+				if err := photoService.RecoverTrash(trashContext); err != nil {
+					if !errors.Is(err, maintenance.ErrBusy) {
+						logger.Error("trash recovery failed", "error", err)
+					}
+					continue
+				}
+				if err := photoService.ExpireTrash(trashContext, now); err != nil && !errors.Is(err, maintenance.ErrBusy) {
+					logger.Error("trash expiry failed", "error", err)
+				}
+			}
+		}
+	}()
+	defer func() { stopTrash(); <-trashDone }()
 
 	secureCookies := os.Getenv("PHOTO_COOKIE_SECURE") != "false"
 	shareLinkService := sharelinks.NewService(db, photoStore, thumbnailService, secureCookies)

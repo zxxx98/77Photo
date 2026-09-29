@@ -2,7 +2,7 @@
 
 必须备份：
 
-1. `PHOTO_DATA_DIR` 中的原图和视频；
+1. 整个 `PHOTO_DATA_DIR` 中的原图和视频，包括 `.trash` 回收站及 `.77photo/live` 动态照片伴随原文件；不能只复制可见相册目录；
 2. `PHOTO_DB_PATH` 对应的 SQLite 数据库及其同目录的 `-wal`、`-shm` 文件（或使用 SQLite 一致性备份 API）；启用人脸识别后，人物名称、关联、向量和扫描进度也在此库中；
 3. 缓存无需备份，缩略图会按 `photo ID + source revision` 重建。
 

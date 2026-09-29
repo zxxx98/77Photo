@@ -38,7 +38,13 @@ Web 端「地图」页按拍摄位置浏览照片，照片详情显示位置和�
 
 ## 功能开发设计
 
+回收站已交付；后续按「分享链接管理与撤销 → 基础搜索 → 收藏 → Android 视频自动备份」推进，任务拆分、兼容要求和验收标准见[家庭照片管理补齐计划](docs/superpowers/plans/2026-09-28-family-photo-roadmap.md)。
+
 本地人脸识别通过可选的 Windows NVIDIA GPU 容器按需处理照片，R5S 保存人物数据并支持手动增量扫描。安装见 [部署文档](docs/operations/face-recognition.md)，设计与验收边界见 [开发设计](docs/superpowers/specs/2026-09-27-local-face-recognition-design.md)。该功能默认关闭。
+
+## 回收站
+
+Web 单张与批量删除会移入回收站，默认保留 30 天，支持批量恢复、重名自动改名、永久删除与按范围清空。原图和动态照片伴随文件一起保留，操作中断后可继续恢复。管理员可切换查看所有用户的回收站；配置、共享规则及备份要求见[回收站说明](docs/operations/trash.md)。
 
 ## 备份与性能
 
@@ -55,4 +61,4 @@ go run ./tests/performance -count 100000 -pages 20
 
 ## Android 客户端
 
-重写后的 React Native Android 工程位于 [mobile/](mobile/README.md)。当前支持服务器连接、移动端登录、照片与文件夹浏览、预览播放、原图分享，以及手动选择照片加入持久化上传队列；应用退到后台后，Android 可能中断上传，尚未提供自动备份。Android APK **只支持 ARM64（`arm64-v8a`）**，调试和编译不使用 x86/x86_64 Android 目标或模拟器。App 沿用 `77Photo` 显示名、`com.photo77` 应用 ID 和[原启动图标](assets/android/launcher/README.md)，使用现有移动 Bearer API。构建要求和验证命令见移动端 README，产品方向见 [Android 从零设计](docs/ui/ANDROID_FROM_WEB.md)。
+重写后的 React Native Android 工程位于 [mobile/](mobile/README.md)。当前支持服务器连接、移动端登录、照片与文件夹浏览、预览播放、原图分享、持久化手动上传队列，以及可选的后台照片自动备份。手动上传退到后台可能中断；自动备份受 Android 调度限制，目前独立视频仍需手动上传。Android APK **只支持 ARM64（`arm64-v8a`）**，调试和编译不使用 x86/x86_64 Android 目标或模拟器。App 沿用 `77Photo` 显示名、`com.photo77` 应用 ID 和[原启动图标](assets/android/launcher/README.md)，使用现有移动 Bearer API。构建要求和验证命令见移动端 README，产品方向见 [Android 从零设计](docs/ui/ANDROID_FROM_WEB.md)。

@@ -1,6 +1,6 @@
-export type AppView = 'gallery' | 'folders' | 'map' | 'settings' | 'people' | 'upload';
+export type AppView = 'gallery' | 'folders' | 'map' | 'settings' | 'people' | 'upload' | 'trash';
 
-const appViews: AppView[] = ['gallery', 'folders', 'map', 'settings', 'people', 'upload'];
+const appViews: AppView[] = ['gallery', 'folders', 'map', 'settings', 'people', 'upload', 'trash'];
 
 export interface MapFocus {
   lat: number;

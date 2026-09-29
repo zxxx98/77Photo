@@ -9,6 +9,7 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
+	"github.com/zxxx98/77Photo/internal/storage"
 )
 
 const foldersPath = "/api/v1/folders"
@@ -198,6 +199,8 @@ func (h *HTTPHandler) delete(w http.ResponseWriter, r *http.Request, id string) 
 
 func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, storage.ErrRecoveryRequired):
+		writeError(w, r, 409, "TRASH_RECOVERY_REQUIRED", "a file operation needs recovery", nil)
 	case errors.Is(err, ErrForbidden):
 		code, message := "WRITE_FORBIDDEN", "folder is not writable"
 		if r.Method == http.MethodGet {
@@ -211,7 +214,7 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 	case errors.Is(err, ErrNameConflict):
 		writeError(w, r, http.StatusConflict, "NAME_CONFLICT", "a folder with this name already exists", nil)
 	case errors.Is(err, ErrNotEmpty):
-		writeError(w, r, http.StatusConflict, "FOLDER_NOT_EMPTY", "folder must be empty before deletion", nil)
+		writeError(w, r, http.StatusConflict, "FOLDER_NOT_EMPTY", "folder must be empty, including media in trash, before deletion", nil)
 	case errors.Is(err, ErrDescendant):
 		writeError(w, r, http.StatusConflict, "FOLDER_DESCENDANT", "folder cannot move into its own descendant", nil)
 	default:

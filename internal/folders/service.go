@@ -157,6 +157,11 @@ func (s *Service) Get(ctx context.Context, principal acl.Principal, id string) (
 }
 
 func (s *Service) Create(ctx context.Context, principal acl.Principal, input CreateInput) (Folder, error) {
+	unlock := s.storage.LockMutations()
+	defer unlock()
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		return Folder{}, err
+	}
 	if !acl.CanWrite(principal, principal.UserID, "") {
 		return Folder{}, ErrForbidden
 	}
@@ -212,6 +217,11 @@ VALUES (?, ?, ?, ?, ?, 0, ?, ?)`, id, ownerID, input.ParentID, filepath.ToSlash(
 }
 
 func (s *Service) Rename(ctx context.Context, principal acl.Principal, id string, input RenameInput) (Folder, error) {
+	unlock := s.storage.LockMutations()
+	defer unlock()
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		return Folder{}, err
+	}
 	folder, err := s.getRaw(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Folder{}, ErrNotFound
@@ -255,6 +265,11 @@ func (s *Service) Move(ctx context.Context, principal acl.Principal, id, targetI
 }
 
 func (s *Service) MoveWithConflict(ctx context.Context, principal acl.Principal, id, targetID, conflict string) (Folder, error) {
+	unlock := s.storage.LockMutations()
+	defer unlock()
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		return Folder{}, err
+	}
 	folder, err := s.getRaw(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Folder{}, ErrNotFound
@@ -300,6 +315,11 @@ func (s *Service) MoveWithConflict(ctx context.Context, principal acl.Principal,
 }
 
 func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string) error {
+	unlock := s.storage.LockMutations()
+	defer unlock()
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		return err
+	}
 	folder, err := s.getRaw(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
@@ -314,7 +334,7 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM folders WHERE parent_id=?", id).Scan(&children); err != nil {
 		return fmt.Errorf("count folder children: %w", err)
 	}
-	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM photos WHERE folder_id=? AND deleted_at IS NULL", id).Scan(&photos); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM photos WHERE folder_id=?", id).Scan(&photos); err != nil {
 		return fmt.Errorf("count folder photos: %w", err)
 	}
 	if children > 0 || photos > 0 {
@@ -398,6 +418,10 @@ WHERE storage_path=? OR storage_path LIKE ? || '/%'`, newPrefix, oldPrefix, form
 	}
 	if err := update(tx); err != nil {
 		return fmt.Errorf("update folder index: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_motion_sources SET source_path=?||substr(source_path,length(?)+1)
+WHERE source_path=? OR substr(source_path,1,length(?)+1)=?||'/'`, newPrefix, oldPrefix, oldPrefix, oldPrefix, oldPrefix); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit folder operation: %w", err)

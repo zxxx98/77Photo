@@ -13,12 +13,18 @@ import (
 	"time"
 
 	"github.com/zxxx98/77Photo/internal/media"
+	"github.com/zxxx98/77Photo/internal/storage"
 )
 
 // IndexScannedFile indexes a file already present under managed storage. It
 // is deliberately separate from Upload: the scanner never accepts a client
 // path and is idempotent on storage_path.
 func (s *Service) IndexScannedFile(ctx context.Context, ownerID, folderID, storagePath string) (bool, error) {
+	unlock := s.storage.LockMutations()
+	defer unlock()
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		return false, err
+	}
 	path, err := s.storage.ResolvePath(storagePath)
 	if err != nil {
 		return false, err
@@ -82,6 +88,9 @@ func (s *Service) IndexScannedFile(ctx context.Context, ownerID, folderID, stora
 		if err == nil {
 			err = s.refreshEmbeddedMotion(ctx, existingID, path, mimeType)
 		}
+		if err == nil {
+			err = s.enqueueScannedThumbnail(ctx, existingID)
+		}
 		return false, err
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE photos SET owner_id=?, folder_id=?, filename=?, mime_type=?, size=?, width=?, height=?, checksum=?, captured_at=?, captured_at_source=?, file_created_at=?, indexed_at=?, source_revision=?, scan_status='indexed', camera_make=?, camera_model=?, orientation=?, focal_length=?, aperture=?, iso=?, gps_latitude=?, gps_longitude=?, updated_at=? WHERE id=?`, ownerID, folderID, filename, mimeType, stat.Size(), nullableInt(metadata.width), nullableInt(metadata.height), checksum, formatTime(metadata.capturedAt), metadata.capturedAtSource, formatOptionalTime(timePtr(stat.ModTime().UTC())), formatTime(now), checksum, nullableString(metadata.cameraMake), nullableString(metadata.cameraModel), nullableIntPtr(metadata.orientation), nullableFloat(metadata.focalLength), nullableFloat(metadata.aperture), nullableIntPtr(metadata.iso), nullableFloat(metadata.gpsLatitude), nullableFloat(metadata.gpsLongitude), formatTime(now), existingID)
@@ -109,6 +118,9 @@ func (s *Service) enqueueScannedThumbnail(_ context.Context, photoID string) err
 }
 
 func (s *Service) refreshEmbeddedMotion(ctx context.Context, photoID, sourcePath, mimeType string) error {
+	if keep, err := s.preserveMotionOriginal(ctx, photoID); err != nil || keep {
+		return err
+	}
 	if s.mediaTools == nil || !supportsEmbeddedMotion(mimeType) {
 		return nil
 	}
@@ -131,7 +143,7 @@ func (s *Service) refreshEmbeddedMotion(ctx context.Context, photoID, sourcePath
 		_ = s.removeLiveMotionArtifacts(photoID)
 		return err
 	}
-	return nil
+	return s.setMotionSource(ctx, photoID, "embedded", "")
 }
 
 func (s *Service) HasEmbeddedMotion(ctx context.Context, sourcePath, mimeType string) bool {

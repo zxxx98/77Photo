@@ -12,6 +12,7 @@ import (
 type Kind string
 
 const (
+	KindTrash            Kind = "trash"
 	KindFaceScan         Kind = "face_scan"
 	KindRescan           Kind = "rescan"
 	KindThumbnailRebuild Kind = "thumbnail_rebuild"

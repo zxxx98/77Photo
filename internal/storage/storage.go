@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"unicode"
 	"unicode/utf8"
@@ -19,7 +20,8 @@ var (
 )
 
 type Store struct {
-	root string
+	root      string
+	mutations *sync.Mutex
 }
 
 func New(root string) (Store, error) {
@@ -40,7 +42,17 @@ func New(root string) (Store, error) {
 	if !info.IsDir() {
 		return Store{}, fmt.Errorf("storage root is not a directory")
 	}
-	return Store{root: abs}, nil
+	return Store{root: abs, mutations: &sync.Mutex{}}, nil
+}
+
+// LockMutations is shared by copies of a Store. High-level operations hold it
+// across filesystem changes and their database commit, never individual reads.
+func (s Store) LockMutations() func() {
+	if s.mutations == nil {
+		return func() {}
+	}
+	s.mutations.Lock()
+	return s.mutations.Unlock
 }
 
 func (s Store) Root() string { return s.root }

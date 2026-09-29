@@ -603,18 +603,38 @@ func TestResetAndStartRebuildsIndexWithoutDeletingOriginals(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT id FROM photos WHERE filename='keep.jpg' AND scan_status='indexed'").Scan(&newID); err != nil {
 		t.Fatal(err)
 	}
-	if newID == oldID {
-		t.Fatalf("photo id = %q, want a rebuilt index row", newID)
+	if newID != oldID {
+		t.Fatalf("photo id = %q, want stable id %q", newID, oldID)
 	}
 	var shareLinks int
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM share_links WHERE resource_type='photo'").Scan(&shareLinks); err != nil {
 		t.Fatal(err)
 	}
-	if shareLinks != 0 {
-		t.Fatalf("photo share links = %d, want 0", shareLinks)
+	if shareLinks != 1 {
+		t.Fatalf("photo share links = %d, want retained relationship", shareLinks)
 	}
-	if _, err := os.Stat(livePath); !os.IsNotExist(err) {
-		t.Fatalf("stale live artifact still exists: %v", err)
+	if data, err := os.ReadFile(livePath); err != nil || string(data) != "stale-motion" {
+		t.Fatalf("unclassified legacy motion must be preserved: %q, %v", data, err)
+	}
+	// Trash must survive a subsequent full reset, including its motion original.
+	if err := photoService.Trash(ctx, principal, oldID, true); err != nil {
+		t.Fatal(err)
+	}
+	job, err := service.ResetAndStart(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, service, principal, job.ID)
+	page, err := photoService.ListTrash(ctx, principal, "", 50, false)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != oldID {
+		t.Fatalf("trash lost on reset: %+v %v", page, err)
+	}
+	restored, err := photoService.RestoreTrash(ctx, principal, oldID, photos.RestoreInput{})
+	if err != nil || restored.ID != oldID {
+		t.Fatalf("restore after reset: %+v %v", restored, err)
+	}
+	if data, err := os.ReadFile(livePath); err != nil || string(data) != "stale-motion" {
+		t.Fatalf("motion lost on reset: %q %v", data, err)
 	}
 	if !thumbnailReset.waited || !thumbnailReset.reset {
 		t.Fatalf("thumbnail reset calls = waited:%v reset:%v, want both true", thumbnailReset.waited, thumbnailReset.reset)

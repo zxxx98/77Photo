@@ -31,18 +31,19 @@ const (
 // Config contains process-wide settings. Paths are resolved relative to the
 // process working directory when supplied as relative paths.
 type Config struct {
-	Faces            faces.Config
-	DataDir          string
-	CacheDir         string
-	DBPath           string
-	ListenAddr       string
-	ThumbnailWorkers int
-	MaxUploadSize    int64
-	SessionTTL       time.Duration
-	FFmpegPath       string
-	FFprobePath      string
-	HeifConvertPath  string
-	MediaTimeout     time.Duration
+	Faces              faces.Config
+	DataDir            string
+	CacheDir           string
+	DBPath             string
+	ListenAddr         string
+	ThumbnailWorkers   int
+	MaxUploadSize      int64
+	SessionTTL         time.Duration
+	FFmpegPath         string
+	FFprobePath        string
+	HeifConvertPath    string
+	MediaTimeout       time.Duration
+	TrashRetentionDays int
 	// TiandituKey is the optional Tianditu browser key. The map is disabled
 	// when it is empty. It is a credential and must never be logged.
 	TiandituKey string
@@ -51,6 +52,10 @@ type Config struct {
 // LoadFromEnv reads the PHOTO_* settings and validates scalar values. It does
 // not touch the filesystem; call ValidateFilesystem during startup.
 func LoadFromEnv() (Config, error) {
+	trashDays, err := envInt("PHOTO_TRASH_RETENTION_DAYS", 30)
+	if err != nil || trashDays < 1 || trashDays > 3650 {
+		return Config{}, fmt.Errorf("PHOTO_TRASH_RETENTION_DAYS must be between 1 and 3650")
+	}
 	workers, err := envInt("PHOTO_THUMBNAIL_WORKERS", defaultThumbnailWorkers)
 	if err != nil {
 		return Config{}, fmt.Errorf("PHOTO_THUMBNAIL_WORKERS: %w", err)
@@ -85,19 +90,20 @@ func LoadFromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("PHOTO_FACE_CONCURRENCY must be between one and eight")
 	}
 	cfg := Config{
-		Faces:            faces.Config{Enabled: envString("PHOTO_FACE_ENABLED", "false") == "true", URL: envString("PHOTO_FACE_WORKER_URL", ""), Token: envString("PHOTO_FACE_WORKER_TOKEN", ""), Timeout: faceTimeout, AllowHTTP: envString("PHOTO_FACE_ALLOW_INSECURE_LAN", "false") == "true", MatchThreshold: threshold, MatchMargin: margin, Concurrency: faceConcurrency},
-		DataDir:          envString("PHOTO_DATA_DIR", defaultDataDir),
-		CacheDir:         envString("PHOTO_CACHE_DIR", defaultCacheDir),
-		DBPath:           envString("PHOTO_DB_PATH", defaultDBPath),
-		ListenAddr:       envString("PHOTO_LISTEN_ADDR", defaultListenAddr),
-		ThumbnailWorkers: workers,
-		MaxUploadSize:    maxUpload,
-		SessionTTL:       ttl,
-		FFmpegPath:       envString("PHOTO_FFMPEG_PATH", defaultFFmpegPath),
-		FFprobePath:      envString("PHOTO_FFPROBE_PATH", defaultFFprobePath),
-		HeifConvertPath:  envString("PHOTO_HEIF_CONVERT_PATH", defaultHeifConvertPath),
-		MediaTimeout:     mediaTimeout,
-		TiandituKey:      envString("PHOTO_MAP_TIANDITU_KEY", ""),
+		TrashRetentionDays: trashDays,
+		Faces:              faces.Config{Enabled: envString("PHOTO_FACE_ENABLED", "false") == "true", URL: envString("PHOTO_FACE_WORKER_URL", ""), Token: envString("PHOTO_FACE_WORKER_TOKEN", ""), Timeout: faceTimeout, AllowHTTP: envString("PHOTO_FACE_ALLOW_INSECURE_LAN", "false") == "true", MatchThreshold: threshold, MatchMargin: margin, Concurrency: faceConcurrency},
+		DataDir:            envString("PHOTO_DATA_DIR", defaultDataDir),
+		CacheDir:           envString("PHOTO_CACHE_DIR", defaultCacheDir),
+		DBPath:             envString("PHOTO_DB_PATH", defaultDBPath),
+		ListenAddr:         envString("PHOTO_LISTEN_ADDR", defaultListenAddr),
+		ThumbnailWorkers:   workers,
+		MaxUploadSize:      maxUpload,
+		SessionTTL:         ttl,
+		FFmpegPath:         envString("PHOTO_FFMPEG_PATH", defaultFFmpegPath),
+		FFprobePath:        envString("PHOTO_FFPROBE_PATH", defaultFFprobePath),
+		HeifConvertPath:    envString("PHOTO_HEIF_CONVERT_PATH", defaultHeifConvertPath),
+		MediaTimeout:       mediaTimeout,
+		TiandituKey:        envString("PHOTO_MAP_TIANDITU_KEY", ""),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err

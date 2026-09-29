@@ -152,7 +152,7 @@ func (s *Service) Cleanup(ctx context.Context, principal acl.Principal, confirme
 			continue
 		}
 		result.Found++
-		if err := s.photos.Delete(ctx, principal, id, true); err != nil {
+		if err := s.photos.Discard(ctx, principal, id, true); err != nil {
 			result.Failures = append(result.Failures, CleanupFailure{ID: id, Code: cleanupErrorCode(err)})
 			continue
 		}

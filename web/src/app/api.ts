@@ -94,6 +94,23 @@ export interface BulkDeleteResult {
   failed: BulkDeleteFailure[];
 }
 
+export interface TrashItem {
+  id: string;
+  owner_id: string;
+  filename: string;
+  mime_type: string;
+  size: number;
+  folder_id: string;
+  folder_name: string;
+  deleted_at: string;
+  expires_at: string;
+  state: 'moving' | 'trashed' | 'restoring' | 'purging';
+  recovery_required: boolean;
+}
+export interface TrashPage { items: TrashItem[]; next_cursor: string | null; retention_days: number }
+export interface TrashBatchResult { completed_ids: string[]; failed: BulkDeleteFailure[]; has_more?: boolean }
+export interface TrashRestoreInput { folder_id?: string; conflict?: 'reject' | 'rename' }
+
 export interface UploadProgress {
   loaded: number;
   total: number;
@@ -194,7 +211,7 @@ export interface BrokenPhotoScanResult {
   items: BrokenPhoto[];
 }
 
-export type MaintenanceKind = 'rescan' | 'thumbnail_rebuild' | 'import' | 'cleanup' | 'user_transfer' | 'face_scan';
+export type MaintenanceKind = 'rescan' | 'thumbnail_rebuild' | 'import' | 'cleanup' | 'user_transfer' | 'face_scan' | 'trash';
 
 export interface MaintenanceActivity {
   kind: MaintenanceKind;
@@ -264,6 +281,11 @@ export interface ApiClient {
   movePhoto(id: string, folderId: string, conflict?: 'reject' | 'rename'): Promise<Photo>;
   deletePhoto(id: string): Promise<void>;
   deletePhotos?(ids: string[]): Promise<BulkDeleteResult>;
+  listTrash(params?: { cursor?: string; scope?: 'mine' | 'all' }): Promise<TrashPage>;
+  restoreTrash(ids: string[], input?: TrashRestoreInput): Promise<TrashBatchResult>;
+  purgeTrash(ids: string[]): Promise<TrashBatchResult>;
+  emptyTrash(scope: 'mine' | 'all', before: string): Promise<TrashBatchResult>;
+  retryTrash(id: string): Promise<void>;
   listShares(): Promise<{ items: Share[] }>;
   createShare(input: { folder_id: string; user_id: string; permission: 'read' | 'write' }): Promise<Share>;
   revokeShare(id: string): Promise<void>;
@@ -474,6 +496,15 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
       await request(`/api/v1/photos/${encodeURIComponent(id)}?confirm=true`, { method: 'DELETE' });
     },
     deletePhotos: (ids) => request<BulkDeleteResult>('/api/v1/photos/batch-delete', { method: 'POST', body: JSON.stringify({ ids, confirm: true }) }) as Promise<BulkDeleteResult>,
+    listTrash: (params = {}) => {
+      const query = new URLSearchParams({ scope: params.scope ?? 'mine' });
+      if (params.cursor) query.set('cursor', params.cursor);
+      return request<TrashPage>(`/api/v1/trash/photos?${query}`) as Promise<TrashPage>;
+    },
+    restoreTrash: (ids, input = {}) => request<TrashBatchResult>('/api/v1/trash/photos/batch-restore', { method: 'POST', body: JSON.stringify({ ids, ...input }) }) as Promise<TrashBatchResult>,
+    purgeTrash: (ids) => request<TrashBatchResult>('/api/v1/trash/photos/batch-delete', { method: 'POST', body: JSON.stringify({ ids, confirm: true }) }) as Promise<TrashBatchResult>,
+    emptyTrash: (scope, before) => request<TrashBatchResult>('/api/v1/trash/photos/empty', { method: 'POST', body: JSON.stringify({ scope, before, confirm: true }) }) as Promise<TrashBatchResult>,
+    retryTrash: async (id) => { await request(`/api/v1/trash/photos/${encodeURIComponent(id)}/retry`, { method: 'POST', body: '{}' }); },
     listShares: () => request<{ items: Share[] }>('/api/v1/shares') as Promise<{ items: Share[] }>,
     createShare: (input) => request<Share>('/api/v1/shares', { method: 'POST', body: JSON.stringify(input) }) as Promise<Share>,
     revokeShare: async (id) => { await request(`/api/v1/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }); },

@@ -1,5 +1,5 @@
 import { ChangeEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Folder, Image, LogOut, Map as MapIcon, Menu, Search, Settings, Upload, Users, X } from 'lucide-react';
+import { Folder, Image, LogOut, Map as MapIcon, Menu, Search, Settings, Upload, Users, Trash2, X } from 'lucide-react';
 import { createApiClient, type Folder as FolderRecord } from './api';
 import { SessionStore } from './auth';
 import { useI18n } from './I18nProvider';
@@ -21,6 +21,8 @@ import { AppShellSkeleton, MapSkeleton } from '../features/loading/LoadingStates
 // Leaflet and clustering only load when the map is opened.
 const MapWorkspace = lazy(() => import('../features/map/MapWorkspace'));
 
+const TrashWorkspace = lazy(() => import('../features/trash/TrashWorkspace'));
+
 const PeopleWorkspace = lazy(() => import('../features/people/PeopleWorkspace'));
 
 type View = AppView;
@@ -31,6 +33,7 @@ const navItems: Array<{ id: View; labelKey: TranslationKey; icon: typeof Image }
   { id: 'folders', labelKey: 'shell.folders', icon: Folder },
   { id: 'map', labelKey: 'shell.map', icon: MapIcon },
   { id: 'people', labelKey: 'shell.people', icon: Users },
+  { id: 'trash', labelKey: 'shell.trash', icon: Trash2 },
   { id: 'settings', labelKey: 'shell.settings', icon: Settings },
 ];
 
@@ -156,6 +159,7 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
 
 function Workspace({ api, currentUser, view, uploadSelection, onUploadSelectionConsumed, folderContext, onFolderChange, onUpload, onUploadComplete }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View; uploadSelection: UploadSelection | null; onUploadSelectionConsumed: (id: number) => void; folderContext: FolderLocation | null; onFolderChange: (folder: FolderLocation | null) => void; onUpload: (folder?: FolderLocation | null) => void; onUploadComplete: (destination: UploadDestination) => void }) {
   if (view === 'people' && currentUser.role === 'admin') return <Suspense fallback={<MapSkeleton />}><PeopleWorkspace api={api} currentUser={currentUser} /></Suspense>;
+  if (view === 'trash') return <Suspense fallback={<MapSkeleton />}><TrashWorkspace api={api} currentUser={currentUser} /></Suspense>;
   if (view === 'gallery') return <GalleryWorkspace api={api} />;
   if (view === 'map') return <Suspense fallback={<MapSkeleton />}><MapWorkspace api={api} currentUser={currentUser} /></Suspense>;
   if (view === 'folders') return <FoldersWorkspace api={api} initialFolder={folderContext} onFolderChange={onFolderChange} onUpload={onUpload} />;

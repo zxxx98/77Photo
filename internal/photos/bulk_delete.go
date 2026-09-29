@@ -58,7 +58,7 @@ func (h *BulkDeleteHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !input.Confirm {
-		writeError(w, r, http.StatusUnprocessableEntity, "CONFIRMATION_REQUIRED", "explicit confirmation is required before permanent deletion", nil)
+		writeError(w, r, http.StatusUnprocessableEntity, "CONFIRMATION_REQUIRED", "explicit confirmation is required before moving media to trash", nil)
 		return
 	}
 
@@ -103,6 +103,6 @@ func bulkDeleteErrorCode(err error) string {
 	case errors.Is(err, ErrNotFound):
 		return "NOT_FOUND"
 	default:
-		return "INTERNAL_ERROR"
+		return trashErrorCode(err)
 	}
 }

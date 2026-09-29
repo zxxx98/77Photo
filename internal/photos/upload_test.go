@@ -75,10 +75,10 @@ func TestUploadAcceptsGenericMIMEForJPEG(t *testing.T) {
 	fixture := newUploadFixture(t, 1<<20)
 	data := jpegBytes(t, 3, 2)
 	photo, err := fixture.service.Upload(context.Background(), fixture.principal, UploadInput{
-		FolderID: fixture.folderID,
-		Filename: "MVIMG_0001.jpg",
+		FolderID:     fixture.folderID,
+		Filename:     "MVIMG_0001.jpg",
 		DeclaredMIME: "application/octet-stream",
-		Body: bytes.NewReader(data),
+		Body:         bytes.NewReader(data),
 	})
 	if err != nil {
 		t.Fatalf("Upload() error = %v", err)
@@ -94,7 +94,7 @@ func TestUploadAcceptsEmptyMIMEForJPEG(t *testing.T) {
 	photo, err := fixture.service.Upload(context.Background(), fixture.principal, UploadInput{
 		FolderID: fixture.folderID,
 		Filename: "MVIMG_0002.jpg",
-		Body: bytes.NewReader(data),
+		Body:     bytes.NewReader(data),
 	})
 	if err != nil {
 		t.Fatalf("Upload() error = %v", err)
@@ -151,7 +151,7 @@ func TestUploadUsesClientModifiedTimeWhenEmbeddedTimeIsUnavailable(t *testing.T)
 func TestUploadPrefersEmbeddedVideoTimeOverClientModifiedTime(t *testing.T) {
 	fixture := newUploadFixture(t, 1<<20)
 	fixture.service.SetMediaTools(&media.Tools{
-		Runner: &captureMetadataRunner{output: []byte(`{"format":{"tags":{"creation_time":"2021-03-04T05:06:07Z"}},"streams":[]}`)},
+		Runner:  &captureMetadataRunner{output: []byte(`{"format":{"tags":{"creation_time":"2021-03-04T05:06:07Z"}},"streams":[]}`)},
 		Timeout: time.Second,
 	})
 	modified := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
@@ -328,7 +328,7 @@ func TestPhotoRenameMoveAndConfirmedDeleteUpdateDiskAndIndex(t *testing.T) {
 	}
 }
 
-func TestPhotoDeleteIndexFailureLeavesHiddenTombstone(t *testing.T) {
+func TestPhotoDiscardIndexFailureLeavesHiddenTombstone(t *testing.T) {
 	fixture := newUploadFixture(t, 1<<20)
 	ctx := context.Background()
 	photo, err := fixture.service.Upload(ctx, fixture.principal, UploadInput{FolderID: fixture.folderID, Filename: "photo.jpg", DeclaredMIME: "image/jpeg", Body: bytes.NewReader(jpegBytes(t, 2, 2))})
@@ -339,7 +339,7 @@ func TestPhotoDeleteIndexFailureLeavesHiddenTombstone(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer fixture.service.db.Exec(`DROP TRIGGER reject_photo_delete`)
-	if err := fixture.service.Delete(ctx, fixture.principal, photo.ID, true); err == nil {
+	if err := fixture.service.Discard(ctx, fixture.principal, photo.ID, true); err == nil {
 		t.Fatal("Delete() error = nil, want index failure")
 	}
 	if _, err := fixture.service.Get(ctx, fixture.principal, photo.ID); !errors.Is(err, ErrNotFound) {

@@ -125,8 +125,8 @@ func (s *Service) StartUnderMaintenance(ctx context.Context, principal acl.Princ
 	return s.start(ctx, principal, false, true)
 }
 
-// ResetAndStart clears all derived library state while preserving original
-// media files, then rebuilds the index from disk using the normal rescan flow.
+// ResetAndStart clears rebuildable thumbnails, then refreshes indexed metadata.
+// Stable photo IDs, user relationships and motion originals are retained.
 func (s *Service) ResetAndStart(ctx context.Context, principal acl.Principal) (Job, error) {
 	return s.start(ctx, principal, true, false)
 }
@@ -150,6 +150,11 @@ func (s *Service) start(ctx context.Context, principal acl.Principal, reset, loc
 			s.mu.Unlock()
 			return Job{}, err
 		}
+	}
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		release()
+		s.mu.Unlock()
+		return Job{}, err
 	}
 	s.job = job
 	done := make(chan struct{})
@@ -200,8 +205,7 @@ func (s *Service) run(ctx context.Context, job *Job, done chan struct{}, reset b
 		var committed bool
 		committed, err = s.resetLibraryIndex(ctx)
 		if committed && err != nil {
-			// The index is already empty. Rebuild it anyway so the library stays
-			// usable, and report the cache cleanup failure afterwards.
+			// Continue refreshing metadata and report the cache cleanup failure afterwards.
 			cleanupErr, err = err, nil
 		}
 	}
@@ -231,33 +235,12 @@ func (s *Service) run(ctx context.Context, job *Job, done chan struct{}, reset b
 	s.mu.Unlock()
 }
 
-// resetLibraryIndex clears the photo index and derived caches. committed
-// reports whether the index was cleared, even if later cache cleanup failed.
+// resetLibraryIndex resets only derived caches. Photo IDs and relationships
+// cannot be reconstructed from disk and must survive ordinary maintenance.
 func (s *Service) resetLibraryIndex(ctx context.Context) (committed bool, err error) {
 	if s.db == nil {
 		return false, errors.New("database is required")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, fmt.Errorf("begin library reset: %w", err)
-	}
-	rollback := func() { _ = tx.Rollback() }
-	if _, err := tx.ExecContext(ctx, "DELETE FROM share_link_access WHERE share_link_id IN (SELECT id FROM share_links WHERE resource_type='photo')"); err != nil {
-		rollback()
-		return false, fmt.Errorf("clear photo share access: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM share_links WHERE resource_type='photo'"); err != nil {
-		rollback()
-		return false, fmt.Errorf("clear photo share links: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM photos"); err != nil {
-		rollback()
-		return false, fmt.Errorf("clear photo index: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit library reset: %w", err)
-	}
-
 	if s.thumbnailResetter != nil {
 		if err := s.thumbnailResetter.WaitIdle(ctx); err != nil {
 			return true, fmt.Errorf("wait for thumbnail work: %w", err)
@@ -267,13 +250,6 @@ func (s *Service) resetLibraryIndex(ctx context.Context) (committed bool, err er
 		}
 	}
 
-	liveDir, err := s.storage.ResolvePath(filepath.ToSlash(filepath.Join(".77photo", "live")))
-	if err != nil {
-		return true, fmt.Errorf("resolve live photo cache: %w", err)
-	}
-	if err := os.RemoveAll(liveDir); err != nil {
-		return true, fmt.Errorf("reset live photo cache: %w", err)
-	}
 	return true, nil
 }
 
@@ -438,6 +414,9 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 			attachErr := s.photos.AttachLiveVideo(ctx, acl.Principal{UserID: file.record.owner, Role: acl.RoleAdmin}, photoID, photos.LiveVideoInput{Filename: filepath.Base(motion.storagePath), DeclaredMIME: declaredMIME, Body: motionFile})
 			_ = motionFile.Close()
 			if attachErr == nil {
+				if err := s.photos.SetScannedMotionSource(ctx, photoID, motion.storagePath); err != nil {
+					return err
+				}
 				seen[motion.storagePath] = struct{}{}
 				if !motion.isMOV {
 					if err := s.markPairedCompanion(ctx, motion.storagePath); err != nil {
@@ -452,7 +431,7 @@ func (s *Service) scan(ctx context.Context, job *Job) error {
 				break
 			}
 		}
-		if !attached && s.mediaTools != nil {
+		if !attached && s.mediaTools != nil && s.photos.HasScannedMotionSource(ctx, photoID) {
 			stillPath, resolveErr := s.storage.ResolvePath(file.storagePath)
 			if resolveErr == nil && !s.photos.HasEmbeddedMotion(ctx, stillPath, file.inspection.MIME) {
 				_ = s.photos.RemoveLiveVideo(ctx, acl.Principal{UserID: file.record.owner, Role: acl.RoleAdmin}, photoID)

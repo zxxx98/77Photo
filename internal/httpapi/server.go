@@ -124,6 +124,9 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 		mux.Handle("/api/v1/admin/imports/", importHandler)
 	}
 	if services.Auth != nil && services.Photos != nil {
+		trashHandler := photos.NewTrashHTTPHandler(services.Photos, services.Auth, services.Thumbnails)
+		mux.Handle("/api/v1/trash/photos", trashHandler)
+		mux.Handle("/api/v1/trash/photos/", trashHandler)
 		photoHandler := photos.NewHTTPHandler(services.Photos, services.Auth)
 		photoHandler.SetThumbnailService(services.Thumbnails)
 		mux.Handle("/api/v1/photos/upload", photoHandler)

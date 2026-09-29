@@ -227,6 +227,13 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 		}
 		defer release()
 	}
+	if s.storage != nil {
+		unlock := s.storage.LockMutations()
+		defer unlock()
+		if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+			return err
+		}
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin user deletion: %w", err)

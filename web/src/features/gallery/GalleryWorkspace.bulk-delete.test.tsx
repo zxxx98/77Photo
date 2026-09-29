@@ -77,7 +77,7 @@ describe('GalleryWorkspace bulk deletion', () => {
     await act(async () => {
       findButton(container, '删除 2 张').click();
     });
-    expect(container.textContent).toContain('将永久删除 2 张照片，此操作无法撤销。');
+    expect(container.textContent).toContain('将 2 张照片移入回收站，可在到期前恢复。');
 
     await act(async () => {
       findButton(container, '确认删除').click();

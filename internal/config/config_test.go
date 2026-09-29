@@ -14,7 +14,7 @@ func clearConfigEnv(t *testing.T) {
 		"PHOTO_DATA_DIR", "PHOTO_CACHE_DIR", "PHOTO_DB_PATH", "PHOTO_LISTEN_ADDR",
 		"PHOTO_THUMBNAIL_WORKERS", "PHOTO_MAX_UPLOAD_SIZE", "PHOTO_SESSION_TTL",
 		"PHOTO_FFMPEG_PATH", "PHOTO_FFPROBE_PATH", "PHOTO_HEIF_CONVERT_PATH", "PHOTO_MEDIA_TIMEOUT",
-		"PHOTO_MAP_TIANDITU_KEY",
+		"PHOTO_MAP_TIANDITU_KEY", "PHOTO_TRASH_RETENTION_DAYS",
 		"PHOTO_FACE_ENABLED", "PHOTO_FACE_WORKER_URL", "PHOTO_FACE_WORKER_TOKEN", "PHOTO_FACE_ALLOW_INSECURE_LAN",
 		"PHOTO_FACE_MATCH_THRESHOLD", "PHOTO_FACE_MATCH_MARGIN", "PHOTO_FACE_CONCURRENCY", "PHOTO_FACE_REQUEST_TIMEOUT",
 	} {
@@ -194,5 +194,24 @@ func TestValidateFilesystemRejectsFileAsDirectory(t *testing.T) {
 	}
 	if err := cfg.ValidateFilesystem(); err == nil {
 		t.Fatalf("ValidateFilesystem() error = %v, want an existing-file error", err)
+	}
+}
+
+func TestTrashRetentionConfiguration(t *testing.T) {
+	clearConfigEnv(t)
+	cfg, err := LoadFromEnv()
+	if err != nil || cfg.TrashRetentionDays != 30 {
+		t.Fatalf("default retention: %d %v", cfg.TrashRetentionDays, err)
+	}
+	for _, value := range []string{"0", "-1", "3651", "invalid"} {
+		t.Setenv("PHOTO_TRASH_RETENTION_DAYS", value)
+		if _, err := LoadFromEnv(); err == nil {
+			t.Fatalf("accepted retention %q", value)
+		}
+	}
+	t.Setenv("PHOTO_TRASH_RETENTION_DAYS", "7")
+	cfg, err = LoadFromEnv()
+	if err != nil || cfg.TrashRetentionDays != 7 {
+		t.Fatalf("custom retention: %d %v", cfg.TrashRetentionDays, err)
 	}
 }

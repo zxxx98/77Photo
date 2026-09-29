@@ -751,7 +751,7 @@ paths:
         '409': { $ref: '#/components/responses/NameConflict' }
     delete:
       tags: [photos]
-      summary: Permanently delete a photo after explicit confirmation
+      summary: Move a photo and motion originals to trash after confirmation
       operationId: deletePhoto
       security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
@@ -762,7 +762,7 @@ paths:
           schema: { type: boolean, const: true }
           description: Must be exactly true; clients must show a second confirmation step.
       responses:
-        '204': { description: 'Original, index row and derived cache entries deleted' }
+        '204': { description: 'Photo hidden; originals retained in trash for recovery' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/WriteForbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1115,13 +1115,12 @@ paths:
   /api/v1/admin/rescan/reset:
     post:
       tags: [admin]
-      summary: Clear the photo index and caches, then rescan from originals
+      summary: Rebuild thumbnails and refresh metadata while retaining stable IDs
       description: |
-        Deletes photo index rows, photo share links, thumbnail caches and Live
-        Photo derived files, then runs a normal rescan. Original media, users,
-        folders and folder shares are kept. If cache cleanup fails after the
-        index was cleared, the rescan still runs and the job finishes as failed
-        with the cleanup error. Progress is read from GET /api/v1/admin/rescan/{jobId}.
+        Retains photo IDs, trash records, photo shares and motion originals.
+        Clears rebuildable thumbnails and runs a normal metadata rescan.
+        Pending trash recovery blocks startup. Cache cleanup errors are reported
+        on the job. Progress is read from GET /api/v1/admin/rescan/{jobId}.
       operationId: resetLibraryIndex
       security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       parameters:
@@ -1640,6 +1639,185 @@ paths:
             image/jpeg:
               schema: { type: string, format: binary }
 
+  /api/v1/trash/photos:
+    get:
+      tags: [photos]
+      summary: List the current owner's trash, or all owners for administrators
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - { name: scope, in: query, schema: { type: string, enum: [mine, all], default: mine } }
+        - { name: cursor, in: query, schema: { type: string }, description: Signed cursor bound to principal and scope }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        '200':
+          description: Private non-cacheable page
+          content: { application/json: { schema: { $ref: '#/components/schemas/TrashPage' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+
+  /api/v1/trash/photos/{id}/restore:
+    post:
+      tags: [photos]
+      summary: Restore originals with stable photo ID; original-owner folder only
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TrashRestoreRequest' } } }
+      responses:
+        '200':
+          description: Operation results; batch failures are reported per item
+          content: { application/json: { schema: { $ref: '#/components/schemas/Photo' } } }
+        '400': { description: Invalid request or cursor }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'NAME_CONFLICT, SOURCE_CHANGED, TRASH_RECOVERY_REQUIRED or MAINTENANCE_IN_PROGRESS' }
+        '422': { description: Explicit destructive confirmation missing }
+
+  /api/v1/trash/photos/{id}:
+    delete:
+      tags: [photos]
+      summary: Permanently delete originals; owners and administrators only
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+        - $ref: '#/components/parameters/CSRFHeader'
+        - { name: confirm, in: query, required: true, schema: { type: boolean, const: true } }
+      responses:
+        '204': { description: Completed; repeated permanent deletion of a missing item also succeeds }
+        '400': { description: Invalid request or cursor }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'NAME_CONFLICT, SOURCE_CHANGED, TRASH_RECOVERY_REQUIRED or MAINTENANCE_IN_PROGRESS' }
+        '422': { description: Explicit destructive confirmation missing }
+
+  /api/v1/trash/photos/{id}/retry:
+    post:
+      tags: [photos]
+      summary: Retry a journaled file operation; owners and administrators only
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+        - $ref: '#/components/parameters/CSRFHeader'
+      responses:
+        '204': { description: Completed; repeated permanent deletion of a missing item also succeeds }
+        '400': { description: Invalid request or cursor }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'NAME_CONFLICT, SOURCE_CHANGED, TRASH_RECOVERY_REQUIRED or MAINTENANCE_IN_PROGRESS' }
+        '422': { description: Explicit destructive confirmation missing }
+
+  /api/v1/trash/photos/{id}/preview:
+    get:
+      tags: [photos]
+      summary: Read a private thumbnail; owners and administrators only
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PhotoID'
+      responses:
+        '200':
+          description: Private WebP thumbnail; Cache-Control no-store
+          content: { image/webp: { schema: { type: string, format: binary } } }
+        '202': { description: Thumbnail generation queued; retry later }
+        '400': { description: Invalid request or cursor }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'NAME_CONFLICT, SOURCE_CHANGED, TRASH_RECOVERY_REQUIRED or MAINTENANCE_IN_PROGRESS' }
+        '422': { description: Explicit destructive confirmation missing }
+
+  /api/v1/trash/photos/batch-restore:
+    post:
+      tags: [photos]
+      summary: Restore up to 500 selected items with per-item results
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TrashBatchRestoreRequest' } } }
+      responses:
+        '200':
+          description: Operation results; batch failures are reported per item
+          content: { application/json: { schema: { $ref: '#/components/schemas/TrashBatchResult' } } }
+        '400': { description: Invalid request or cursor }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'NAME_CONFLICT, SOURCE_CHANGED, TRASH_RECOVERY_REQUIRED or MAINTENANCE_IN_PROGRESS' }
+        '422': { description: Explicit destructive confirmation missing }
+
+  /api/v1/trash/photos/batch-delete:
+    post:
+      tags: [photos]
+      summary: Permanently delete up to 500 selected items with confirmation
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TrashBatchDeleteRequest' } } }
+      responses:
+        '200':
+          description: Operation results; batch failures are reported per item
+          content: { application/json: { schema: { $ref: '#/components/schemas/TrashBatchResult' } } }
+        '400': { description: Invalid request or cursor }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'NAME_CONFLICT, SOURCE_CHANGED, TRASH_RECOVERY_REQUIRED or MAINTENANCE_IN_PROGRESS' }
+        '422': { description: Explicit destructive confirmation missing }
+
+  /api/v1/trash/photos/empty:
+    post:
+      tags: [photos]
+      summary: Purge up to 100 ready items at or before a fixed deletion cutoff
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TrashEmptyRequest' } } }
+      responses:
+        '200':
+          description: Operation results; batch failures are reported per item
+          content: { application/json: { schema: { $ref: '#/components/schemas/TrashBatchResult' } } }
+        '400': { description: Invalid request or cursor }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'NAME_CONFLICT, SOURCE_CHANGED, TRASH_RECOVERY_REQUIRED or MAINTENANCE_IN_PROGRESS' }
+        '422': { description: Explicit destructive confirmation missing }
+
+  /api/v1/photos/batch-delete:
+    post:
+      tags: [photos]
+      summary: Move up to 500 authorized photos to trash
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CSRFHeader'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TrashBatchDeleteRequest' } } }
+      responses:
+        '200':
+          description: deleted_ids contains photos moved to trash; failed contains per-item errors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted_ids: { type: array, items: { type: string } }
+                  failed: { type: array, items: { type: object, properties: { id: { type: string }, code: { type: string } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '422': { description: Confirmation missing }
+
 components:
   securitySchemes:
     cookieAuth:
@@ -1803,6 +1981,68 @@ components:
               request_id: req_01JABC
               details: { kind: import, job_id: import_1758873600000000000 }
   schemas:
+
+    TrashItem:
+      type: object
+      required: [id, owner_id, filename, mime_type, size, folder_id, folder_name, deleted_at, expires_at, state, recovery_required]
+      properties:
+        id: { type: string }
+        owner_id: { type: string }
+        filename: { type: string }
+        mime_type: { type: string }
+        size: { type: integer, format: int64 }
+        folder_id: { type: string }
+        folder_name: { type: string }
+        deleted_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        state: { type: string, enum: [moving, trashed, restoring, purging] }
+        recovery_required: { type: boolean }
+    TrashPage:
+      type: object
+      required: [items, next_cursor, retention_days]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/TrashItem' } }
+        next_cursor: { type: [string, 'null'] }
+        retention_days: { type: integer, default: 30 }
+    TrashRestoreRequest:
+      type: object
+      properties:
+        folder_id: { type: string, description: Optional folder belonging to the same photo owner }
+        conflict: { type: string, enum: [reject, rename], default: reject }
+    TrashBatchRestoreRequest:
+      allOf:
+        - $ref: '#/components/schemas/TrashRestoreRequest'
+        - type: object
+          required: [ids]
+          properties:
+            ids: { type: array, minItems: 1, maxItems: 500, items: { type: string } }
+    TrashBatchDeleteRequest:
+      type: object
+      required: [ids, confirm]
+      properties:
+        ids: { type: array, minItems: 1, maxItems: 500, items: { type: string } }
+        confirm: { type: boolean, const: true }
+    TrashEmptyRequest:
+      type: object
+      required: [scope, before, confirm]
+      properties:
+        scope: { type: string, enum: [mine, all], description: All requires administrator role }
+        before: { type: string, format: date-time, description: Reuse the same cutoff while has_more is true; pending entries are retained }
+        confirm: { type: boolean, const: true }
+    TrashBatchResult:
+      type: object
+      required: [completed_ids, failed]
+      properties:
+        completed_ids: { type: array, items: { type: string } }
+        failed:
+          type: array
+          items:
+            type: object
+            required: [id, code]
+            properties:
+              id: { type: string }
+              code: { type: string }
+        has_more: { type: boolean }
     FaceWorkerProfile:
       type: object
       required: [api_version, pipeline_id, embedding_model_id, embedding_dim, device]
@@ -2238,7 +2478,7 @@ components:
         confirm: { type: boolean, const: true }
     MaintenanceKind:
       type: string
-      enum: [rescan, thumbnail_rebuild, import, cleanup, user_transfer]
+      enum: [rescan, thumbnail_rebuild, import, cleanup, user_transfer, trash]
     MaintenanceActivity:
       type: object
       required: [kind]

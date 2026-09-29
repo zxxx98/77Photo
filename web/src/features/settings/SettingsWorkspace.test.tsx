@@ -527,7 +527,7 @@ describe('settings rescan progress', () => {
     expect(Array.from(scanCard.querySelectorAll('button')).some((button) => button.textContent?.includes('重置'))).toBe(false);
     const details = danger.querySelector('details')!;
     expect(details.open).toBe(false);
-    expect(details.textContent).toContain('原始照片/视频、用户和文件夹不会被删除');
+    expect(details.textContent).toContain('保留照片 ID、回收站、分享关系和动态照片伴随原文件');
   });
 
   it('shows whole-library face actions in the library settings card', async () => {

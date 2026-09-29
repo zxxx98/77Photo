@@ -96,11 +96,14 @@ func TestBulkDeleteHTTPHandlerDeletesPhotosAndLiveMotion(t *testing.T) {
 	}
 
 	var count int
-	if err := db.QueryRow("SELECT COUNT(*) FROM photos").Scan(&count); err != nil {
+	if err := db.QueryRow("SELECT COUNT(*) FROM photos WHERE deleted_at IS NULL").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
 		t.Fatalf("photo rows = %d, want 0", count)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM trash_items WHERE state='trashed'").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("trash rows = %d, want 2: %v", count, err)
 	}
 	if _, _, err := photoService.LiveVideoPath(ctx, principalValue, first.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("live video after delete error = %v, want ErrNotFound", err)

@@ -52,7 +52,8 @@ func configure(ctx context.Context, db *sql.DB) error {
 		"PRAGMA foreign_keys = ON",
 		"PRAGMA journal_mode = WAL",
 		fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeoutMS),
-		"PRAGMA synchronous = NORMAL",
+		// File-operation journals must reach durable storage before originals move.
+		"PRAGMA synchronous = FULL",
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("configure sqlite (%s): %w", statement, err)

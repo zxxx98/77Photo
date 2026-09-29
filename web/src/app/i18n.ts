@@ -13,6 +13,7 @@ export type TranslationParams = Record<string, string | number>;
 const english = {
   'shell.people': 'People',
   'settings.maintenance.task.face_scan': 'Face scanning',
+  'settings.maintenance.task.trash': 'Trash maintenance',
   'common.close': 'Close',
   'common.cancel': 'Cancel',
   'common.retry': 'Retry',
@@ -71,6 +72,7 @@ const english = {
 
   'shell.library': 'Library',
   'shell.gallery': 'Gallery',
+  'shell.trash': 'Trash',
   'shell.folders': 'Folders',
   'shell.map': 'Map',
   'shell.settings': 'Settings',
@@ -150,7 +152,7 @@ const english = {
   'viewer.deleteFailed': 'Delete failed.',
   'viewer.renameFailed': 'Rename failed.',
   'viewer.moveFailed': 'Move failed.',
-  'viewer.deletePhoto': 'Delete photo',
+  'viewer.deletePhoto': 'Move to trash',
   'viewer.sharePhoto': 'Share photo',
   'viewer.location': 'Location',
   'viewer.viewOnMap': 'View on map',
@@ -248,7 +250,7 @@ const english = {
   'settings.rescanFiles': 'Rescan files',
   'settings.scanQueued': 'Scan queued…',
   'settings.scanFailed': 'Scan could not be started.',
-  'settings.scanPhase.resetting': 'Resetting index and cache…',
+  'settings.scanPhase.resetting': 'Rebuilding thumbnails…',
   'settings.scanPhase.discovering': 'Discovering files…',
   'settings.scanPhase.indexing': 'Processing photos and Live pairs…',
   'settings.scanPhase.reconciling': 'Checking missing files…',
@@ -299,8 +301,8 @@ const english = {
   'settings.thumbnail.processed': 'Processed',
   'settings.thumbnail.regenerated': 'Regenerated',
   'settings.reset.action': 'Reset and rescan',
-  'settings.reset.help': 'Clears the photo index, thumbnail cache and Live Photo derived files, then rebuilds the library from originals on disk. Original media, users and folders are preserved; existing photo share links become invalid.',
-  'settings.reset.confirm': 'Clear all photo index records, thumbnail caches and Live Photo derived files, then rescan the originals? Original photos and videos will not be deleted. Existing photo share links will become invalid.',
+  'settings.reset.help': 'Rebuilds thumbnails and refreshes metadata from originals. Photo IDs, trash, sharing relationships and motion originals are preserved.',
+  'settings.reset.confirm': 'Rebuild thumbnails and rescan original media? Photos, trash and existing sharing relationships will be preserved.',
   'settings.reset.failed': 'Unable to start the library reset. Make sure no other scan is running and try again.',
   'settings.cleanup.title': 'Broken photo cleanup',
   'settings.cleanup.scan': 'Scan broken photos',
@@ -369,7 +371,7 @@ const english = {
   'settings.thumbnail.summary': 'Regenerate the cache when thumbnails are missing or look wrong. Originals are never modified.',
   'settings.cleanup.summary': 'Find photos whose original is missing or empty, then remove them after you confirm.',
   'settings.danger.title': 'Danger zone',
-  'settings.reset.summary': 'Clear the index and caches, then rebuild the whole library from the originals. Originals are kept, but photo share links stop working.',
+  'settings.reset.summary': 'Rebuild thumbnails and refresh library metadata while preserving originals, photo IDs, trash and sharing relationships.',
 } as const;
 
 export type TranslationKey = keyof typeof english;
@@ -377,6 +379,7 @@ export type TranslationKey = keyof typeof english;
 const chinese: Record<TranslationKey, string> = {
   'shell.people': '人物',
   'settings.maintenance.task.face_scan': '人脸扫描',
+  'settings.maintenance.task.trash': '回收站维护',
   'common.close': '关闭',
   'common.cancel': '取消',
   'common.retry': '重试',
@@ -435,6 +438,7 @@ const chinese: Record<TranslationKey, string> = {
 
   'shell.library': '图库',
   'shell.gallery': '照片',
+  'shell.trash': '回收站',
   'shell.folders': '文件夹',
   'shell.map': '地图',
   'shell.settings': '设置',
@@ -514,7 +518,7 @@ const chinese: Record<TranslationKey, string> = {
   'viewer.deleteFailed': '删除失败。',
   'viewer.renameFailed': '重命名失败。',
   'viewer.moveFailed': '移动失败。',
-  'viewer.deletePhoto': '删除照片',
+  'viewer.deletePhoto': '移入回收站',
   'viewer.sharePhoto': '分享照片',
   'viewer.location': '位置',
   'viewer.viewOnMap': '在地图中查看',
@@ -612,7 +616,7 @@ const chinese: Record<TranslationKey, string> = {
   'settings.rescanFiles': '重新扫描文件',
   'settings.scanQueued': '扫描已排队…',
   'settings.scanFailed': '无法开始扫描。',
-  'settings.scanPhase.resetting': '正在清理索引和缓存…',
+  'settings.scanPhase.resetting': '正在重建缩略图…',
   'settings.scanPhase.discovering': '正在发现文件…',
   'settings.scanPhase.indexing': '正在处理照片和 Live 配对…',
   'settings.scanPhase.reconciling': '正在检查缺失文件…',
@@ -663,8 +667,8 @@ const chinese: Record<TranslationKey, string> = {
   'settings.thumbnail.processed': '已处理',
   'settings.thumbnail.regenerated': '已生成',
   'settings.reset.action': '重置并重新扫描',
-  'settings.reset.help': '清空照片索引、缩略图缓存和 Live Photo 派生文件后，从磁盘原图重新建立图库。原始照片/视频、用户和文件夹不会被删除；已有照片分享链接会失效。',
-  'settings.reset.confirm': '这会清空所有照片索引、缩略图缓存和 Live Photo 派生文件，然后从原始文件重新扫描。原始照片和视频不会被删除。已有照片分享链接会失效。确定继续吗？',
+  'settings.reset.help': '重建缩略图并从原文件刷新元数据，保留照片 ID、回收站、分享关系和动态照片伴随原文件。',
+  'settings.reset.confirm': '重建缩略图并重新扫描原文件？照片、回收站和已有分享关系都会保留。',
   'settings.reset.failed': '无法启动图库重置，请确认当前没有其他扫描任务后重试。',
   'settings.cleanup.title': '坏照片清理',
   'settings.cleanup.scan': '扫描坏照片',
@@ -733,7 +737,7 @@ const chinese: Record<TranslationKey, string> = {
   'settings.thumbnail.summary': '缩略图缺失或显示异常时重新生成缓存，原图不会被修改。',
   'settings.cleanup.summary': '找出原文件已丢失或为 0 字节的照片，确认后再删除。',
   'settings.danger.title': '危险操作',
-  'settings.reset.summary': '清空索引和缓存，再从原图重建整个图库。原图不会被删除，但照片分享链接会失效。',
+  'settings.reset.summary': '重建缩略图并刷新图库元数据，保留原图、照片 ID、回收站及分享关系。',
 };
 
 const translations: Record<Locale, Record<TranslationKey, string>> = { en: english, zh: chinese };

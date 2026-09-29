@@ -15,6 +15,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
 	"github.com/zxxx98/77Photo/internal/media"
+	"github.com/zxxx98/77Photo/internal/storage"
 )
 
 const livePhotoPathPrefix = "/api/v1/live-photos/"
@@ -56,7 +57,7 @@ func (s *Service) UploadLivePhoto(ctx context.Context, principal acl.Principal, 
 		return photo, err
 	}
 	if err := s.AttachLiveVideo(ctx, principal, photo.ID, *input.Motion); err != nil {
-		if cleanupErr := s.Delete(context.WithoutCancel(ctx), principal, photo.ID, true); cleanupErr != nil {
+		if cleanupErr := s.Discard(context.WithoutCancel(ctx), principal, photo.ID, true); cleanupErr != nil {
 			s.logLivePhotoRollbackFailure(photo.ID, cleanupErr)
 		}
 		return Photo{}, err
@@ -71,6 +72,11 @@ func (s *Service) logLivePhotoRollbackFailure(photoID string, err error) {
 }
 
 func (s *Service) AttachLiveVideo(ctx context.Context, principal acl.Principal, photoID string, input LiveVideoInput) error {
+	unlock := s.storage.LockMutations()
+	defer unlock()
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		return err
+	}
 	if input.Body == nil || s.maxSize < 1 {
 		return ErrUploadFailed
 	}
@@ -182,7 +188,7 @@ func (s *Service) AttachLiveVideo(ctx context.Context, principal acl.Principal, 
 	if hadExisting {
 		_ = os.Remove(backupPath)
 	}
-	return nil
+	return s.setMotionSource(ctx, photoID, "uploaded", "")
 }
 
 func (s *Service) LiveVideoPath(ctx context.Context, principal acl.Principal, photoID string) (Photo, string, error) {
@@ -222,6 +228,11 @@ func (s *Service) LivePhotoIDs(ctx context.Context, principal acl.Principal, ids
 }
 
 func (s *Service) RemoveLiveVideo(ctx context.Context, principal acl.Principal, photoID string) error {
+	unlock := s.storage.LockMutations()
+	defer unlock()
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		return err
+	}
 	photo, err := s.Get(ctx, principal, photoID)
 	if err != nil {
 		return err
@@ -229,7 +240,11 @@ func (s *Service) RemoveLiveVideo(ctx context.Context, principal acl.Principal, 
 	if !s.canWrite(ctx, principal, photo) {
 		return ErrForbidden
 	}
-	return s.removeLiveMotionArtifacts(photoID)
+	if err := s.removeLiveMotionArtifacts(photoID); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, "DELETE FROM photo_motion_sources WHERE photo_id=?", photoID)
+	return err
 }
 
 func (s *Service) removeLiveMotionArtifacts(photoID string) error {

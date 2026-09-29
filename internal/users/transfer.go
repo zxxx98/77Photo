@@ -51,6 +51,10 @@ func (s *Service) moveUserStorage(ctx context.Context, tx *sql.Tx, fromID, toID,
 		if err := rewritePrefix(ctx, tx, "photos", from, to, now); err != nil {
 			return moves, err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_motion_sources SET source_path=?||substr(source_path,length(?)+1)
+WHERE source_path=? OR substr(source_path,1,length(?)+1)=?||'/'`, to, from, from, from, from); err != nil {
+			return moves, err
+		}
 		if name != entry.Name() {
 			if _, err := tx.ExecContext(ctx, "UPDATE folders SET name=? WHERE storage_path=?", name, to); err != nil {
 				return moves, fmt.Errorf("rename transferred folder: %w", err)

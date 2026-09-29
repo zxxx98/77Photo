@@ -15,6 +15,7 @@ import (
 
 	"github.com/zxxx98/77Photo/internal/acl"
 	"github.com/zxxx98/77Photo/internal/auth"
+	"github.com/zxxx98/77Photo/internal/maintenance"
 	"github.com/zxxx98/77Photo/internal/storage"
 	"github.com/zxxx98/77Photo/internal/thumbnails"
 )
@@ -175,7 +176,7 @@ func (h *HTTPHandler) liveUpload(w http.ResponseWriter, r *http.Request) {
 	fileSeen, motionSeen, partsStarted := false, false, false
 	cleanup := func() {
 		if photo != nil {
-			if cleanupErr := h.service.Delete(context.WithoutCancel(r.Context()), principal(authenticated.Account), photo.ID, true); cleanupErr != nil {
+			if cleanupErr := h.service.Discard(context.WithoutCancel(r.Context()), principal(authenticated.Account), photo.ID, true); cleanupErr != nil {
 				h.service.logLivePhotoRollbackFailure(photo.ID, cleanupErr)
 			}
 			photo = nil
@@ -671,6 +672,12 @@ func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {
 
 func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, maintenance.ErrBusy):
+		writeError(w, r, 409, "MAINTENANCE_IN_PROGRESS", "another maintenance operation is running", maintenance.Details(err))
+	case errors.Is(err, storage.ErrRecoveryRequired), errors.Is(err, ErrTrashPending):
+		writeError(w, r, 409, "TRASH_RECOVERY_REQUIRED", "a file operation needs recovery", nil)
+	case errors.Is(err, ErrTrashChanged):
+		writeError(w, r, 409, "SOURCE_CHANGED", "source changed; rescan before deleting", nil)
 	case errors.Is(err, ErrForbidden):
 		code, message := "WRITE_FORBIDDEN", "photo folder is not writable"
 		if r.Method == http.MethodGet {

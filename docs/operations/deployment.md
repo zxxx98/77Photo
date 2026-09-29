@@ -25,6 +25,7 @@ photos.example.test {
 | `PHOTO_LISTEN_ADDR` | `:8080` | 监听地址 |
 | `PHOTO_THUMBNAIL_WORKERS` | `2` | 固定缩略图 worker，范围 1–64 |
 | `PHOTO_MAX_UPLOAD_SIZE` | `10737418240` | 单文件字节上限 |
+| `PHOTO_TRASH_RETENTION_DAYS` | `30` | 新移入回收站项目的保留天数，范围 1–3650；不修改已有到期时间 |
 | `PHOTO_FFMPEG_PATH` | `ffmpeg` | FFmpeg 可执行文件路径；用于视频帧和 motion 提取 |
 | `PHOTO_FFPROBE_PATH` | `ffprobe` | FFprobe 可执行文件路径；用于视频流校验 |
 | `PHOTO_HEIF_CONVERT_PATH` | `heif-convert` | libheif 解码器路径；用于 HEIC/HEIF 预览 |

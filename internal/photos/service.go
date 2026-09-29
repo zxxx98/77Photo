@@ -24,6 +24,7 @@ import (
 
 	"github.com/rwcarlsen/goexif/exif"
 	"github.com/zxxx98/77Photo/internal/acl"
+	"github.com/zxxx98/77Photo/internal/maintenance"
 	"github.com/zxxx98/77Photo/internal/media"
 	"github.com/zxxx98/77Photo/internal/storage"
 	"github.com/zxxx98/77Photo/internal/thumbnails"
@@ -109,20 +110,22 @@ type Photo struct {
 }
 
 type Service struct {
-	db         *sql.DB
-	storage    storage.Store
-	maxSize    int64
-	cache      CacheInvalidator
-	queue      ThumbnailEnqueuer
-	mediaTools *media.Tools
-	logger     *slog.Logger
-	cursorKey  [32]byte
-	cursorTTL  time.Duration
-	authorizer *acl.Authorizer
+	db             *sql.DB
+	storage        storage.Store
+	maxSize        int64
+	cache          CacheInvalidator
+	queue          ThumbnailEnqueuer
+	mediaTools     *media.Tools
+	logger         *slog.Logger
+	cursorKey      [32]byte
+	cursorTTL      time.Duration
+	authorizer     *acl.Authorizer
+	maintenance    *maintenance.Lock
+	trashRetention time.Duration
 }
 
 func NewService(db *sql.DB, store storage.Store, maxUploadSize int64) *Service {
-	service := &Service{db: db, storage: store, maxSize: maxUploadSize, cursorTTL: 15 * time.Minute, logger: slog.Default()}
+	service := &Service{db: db, storage: store, maxSize: maxUploadSize, cursorTTL: 15 * time.Minute, logger: slog.Default(), trashRetention: 30 * 24 * time.Hour}
 	if _, err := rand.Read(service.cursorKey[:]); err != nil {
 		fallback := sha256.Sum256([]byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
 		copy(service.cursorKey[:], fallback[:])
@@ -171,6 +174,11 @@ func (s *Service) canReadFolder(ctx context.Context, principal acl.Principal, fo
 }
 
 func (s *Service) Upload(ctx context.Context, principal acl.Principal, input UploadInput) (Photo, error) {
+	unlock := s.storage.LockMutations()
+	defer unlock()
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		return Photo{}, err
+	}
 	if input.Body == nil || s.maxSize < 1 {
 		return Photo{}, ErrUploadFailed
 	}
@@ -333,6 +341,12 @@ func (s *Service) Get(ctx context.Context, principal acl.Principal, id string) (
 // callers serving user requests must continue to use Get for ACL checks.
 func (s *Service) LoadPhoto(ctx context.Context, id string) (thumbnails.Photo, error) {
 	photo, err := s.getRaw(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		var found string
+		if e := s.db.QueryRowContext(ctx, "SELECT photo_id FROM trash_items WHERE photo_id=? AND state='trashed'", id).Scan(&found); e == nil {
+			photo, err = s.photoIncludingDeleted(ctx, id)
+		}
+	}
 	if err != nil {
 		return thumbnails.Photo{}, err
 	}
@@ -340,6 +354,11 @@ func (s *Service) LoadPhoto(ctx context.Context, id string) (thumbnails.Photo, e
 }
 
 func (s *Service) Rename(ctx context.Context, principal acl.Principal, id string, input RenameInput) (Photo, error) {
+	unlock := s.storage.LockMutations()
+	defer unlock()
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		return Photo{}, err
+	}
 	photo, err := s.getRaw(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Photo{}, ErrNotFound
@@ -383,6 +402,11 @@ func (s *Service) Move(ctx context.Context, principal acl.Principal, id, targetF
 }
 
 func (s *Service) MoveWithConflict(ctx context.Context, principal acl.Principal, id, targetFolderID string, conflict ConflictStrategy) (Photo, error) {
+	unlock := s.storage.LockMutations()
+	defer unlock()
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		return Photo{}, err
+	}
 	photo, err := s.getRaw(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Photo{}, ErrNotFound
@@ -436,6 +460,14 @@ func (s *Service) MoveWithConflict(ctx context.Context, principal acl.Principal,
 var ErrConfirmationRequired = errors.New("explicit deletion confirmation required")
 
 func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string, confirmed bool) error {
+	return s.Trash(ctx, principal, id, confirmed)
+}
+
+// Discard is internal cleanup for failed uploads and confirmed broken files.
+// User-facing deletion must always go through Trash.
+func (s *Service) Discard(ctx context.Context, principal acl.Principal, id string, confirmed bool) error {
+	unlock := s.storage.LockMutations()
+	defer unlock()
 	if !confirmed {
 		return ErrConfirmationRequired
 	}

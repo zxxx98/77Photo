@@ -127,6 +127,11 @@ func (s *Service) StartWithOptions(ctx context.Context, principal acl.Principal,
 		s.mu.Unlock()
 		return Job{}, err
 	}
+	if err := storage.CheckPendingTrash(ctx, s.db); err != nil {
+		release()
+		s.mu.Unlock()
+		return Job{}, err
+	}
 	s.job = job
 	done := make(chan struct{})
 	s.done = done

@@ -29,6 +29,10 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 	if journalMode != "wal" {
 		t.Fatalf("journal_mode = %q, want wal", journalMode)
 	}
+	var synchronous int
+	if err := db.QueryRowContext(ctx, "PRAGMA synchronous").Scan(&synchronous); err != nil || synchronous != 2 {
+		t.Fatalf("journal durability = %d, err %v; want FULL", synchronous, err)
+	}
 	var foreignKeys int
 	if err := db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
 		t.Fatal(err)
@@ -40,7 +44,7 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 	for _, table := range []string{
 		"users", "folders", "photos", "shares", "sessions",
 		"share_links", "share_link_access", "mobile_devices", "mobile_tokens",
-		"server_identity", "schema_migrations", "face_profile", "face_jobs", "face_items", "face_analyses", "people", "faces", "face_exclusions",
+		"trash_items", "photo_motion_sources", "server_identity", "schema_migrations", "face_profile", "face_jobs", "face_items", "face_analyses", "people", "faces", "face_exclusions",
 	} {
 		var count int
 		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&count); err != nil {
@@ -54,8 +58,8 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 9 {
-		t.Fatalf("schema migration count = %d, want 9", migrationCount)
+	if migrationCount != 10 {
+		t.Fatalf("schema migration count = %d, want 10", migrationCount)
 	}
 }
 
@@ -90,8 +94,8 @@ VALUES ('u-restart', 'restart', 'hash', 'user', '2026-01-01T00:00:00Z', '2026-01
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 9 {
-		t.Fatalf("schema migration count = %d, want 9", migrationCount)
+	if migrationCount != 10 {
+		t.Fatalf("schema migration count = %d, want 10", migrationCount)
 	}
 }
 
@@ -303,5 +307,55 @@ func TestMigrationFreesUsernamesOfExistingTombstones(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES ('u_new', 'Alice', 'hash', 'user', '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z')`); err != nil {
 		t.Fatalf("reusing the deleted username failed: %v", err)
+	}
+}
+
+func TestUpgradeNineToTrashPreservesData(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "upgrade.db")
+	db, err := sql.Open(driverName, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := fstest.MapFS{}
+	entries, err := fs.ReadDir(migrations.FS, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() >= "010" {
+			continue
+		}
+		data, err := fs.ReadFile(migrations.FS, entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		old[entry.Name()] = &fstest.MapFile{Data: data}
+	}
+	if err := MigrateFS(ctx, db, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO users(id,username,password_hash,role,created_at,updated_at) VALUES('upgrade-owner','upgrade','hash','user','2026-01-01','2026-01-01')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var owner string
+	if err := db.QueryRow("SELECT username FROM users WHERE id='upgrade-owner'").Scan(&owner); err != nil || owner != "upgrade" {
+		t.Fatalf("owner lost: %s %v", owner, err)
+	}
+	var integrity string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		t.Fatalf("integrity: %s %v", integrity, err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM trash_items").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("trash upgrade: %d %v", count, err)
 	}
 }

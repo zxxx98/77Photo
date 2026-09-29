@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" fill="none" role="img" aria-labelledby="title">
+  <title id="title">Image preview unavailable</title>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="640" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F3F5F8"/>
+      <stop offset="1" stop-color="#E5EBF2"/>
+    </linearGradient>
+    <linearGradient id="surface" x1="258" y1="180" x2="382" y2="300" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity=".35"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#background)" d="M0 0h640v480H0z"/>
+  <circle cx="320" cy="240" r="108" stroke="#D9E1EB" stroke-opacity=".55"/>
+  <circle cx="320" cy="240" r="82" fill="#E0E7F0" fill-opacity=".55"/>
+  <rect x="254" y="189" width="132" height="102" rx="23" fill="url(#surface)" stroke="#A0AFC2" stroke-width="3"/>
+  <circle cx="342" cy="218" r="9" fill="#B6C4D6"/>
+  <path d="m270 270 28-32a5 5 0 0 1 8 0l20 23 12-13a5 5 0 0 1 8 0l24 22" stroke="#869AB4" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M294 310h52" stroke="#C8D3E1" stroke-width="3" stroke-linecap="round"/>
+</svg>
