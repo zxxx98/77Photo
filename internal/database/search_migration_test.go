@@ -112,7 +112,28 @@ VALUES('photo-1','owner','shared','original.jpg','Family.jpg','image/jpeg',?,?,?
 		t.Fatalf("integrity=%q err=%v", integrity, err)
 	}
 	var migrationCount int
-	if err := restored.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil || migrationCount != 12 {
+	if err := restored.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil || migrationCount != 13 {
 		t.Fatalf("migrations=%d err=%v", migrationCount, err)
+	}
+	// The M4 relation must survive an SQLite-consistent backup alongside the
+	// stable photo ID created by the older database.
+	if _, err := restored.ExecContext(ctx, "INSERT INTO photo_favorites(user_id,photo_id,created_at) VALUES('member','photo-1',?)", stamp); err != nil {
+		t.Fatal(err)
+	}
+	favoriteBackup := filepath.Join(root, "favorite-backup.db")
+	if _, err := restored.ExecContext(ctx, "VACUUM INTO ?", favoriteBackup); err != nil {
+		t.Fatal(err)
+	}
+	copyDB, err := Open(ctx, favoriteBackup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer copyDB.Close()
+	var favoriteUser, favoritePhoto string
+	if err := copyDB.QueryRowContext(ctx, "SELECT user_id,photo_id FROM photo_favorites").Scan(&favoriteUser, &favoritePhoto); err != nil || favoriteUser != "member" || favoritePhoto != "photo-1" {
+		t.Fatalf("restored favorite=%q/%q err=%v", favoriteUser, favoritePhoto, err)
+	}
+	if err := copyDB.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		t.Fatalf("favorite backup integrity=%q err=%v", integrity, err)
 	}
 }

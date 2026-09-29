@@ -45,7 +45,7 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 	for _, table := range []string{
 		"users", "folders", "photos", "shares", "sessions",
 		"share_links", "share_link_access", "mobile_devices", "mobile_tokens",
-		"trash_items", "photo_motion_sources", "server_identity", "schema_migrations", "face_profile", "face_jobs", "face_items", "face_analyses", "people", "faces", "face_exclusions",
+		"trash_items", "photo_motion_sources", "photo_favorites", "server_identity", "schema_migrations", "face_profile", "face_jobs", "face_items", "face_analyses", "people", "faces", "face_exclusions",
 	} {
 		var count int
 		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&count); err != nil {
@@ -59,8 +59,8 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 12 {
-		t.Fatalf("schema migration count = %d, want 12", migrationCount)
+	if migrationCount != 13 {
+		t.Fatalf("schema migration count = %d, want 13", migrationCount)
 	}
 }
 
@@ -95,8 +95,8 @@ VALUES ('u-restart', 'restart', 'hash', 'user', '2026-01-01T00:00:00Z', '2026-01
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 12 {
-		t.Fatalf("schema migration count = %d, want 12", migrationCount)
+	if migrationCount != 13 {
+		t.Fatalf("schema migration count = %d, want 13", migrationCount)
 	}
 }
 

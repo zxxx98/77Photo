@@ -2,9 +2,10 @@ import {useCallback, useEffect, useRef, useState, useSyncExternalStore} from 're
 import {ApiError} from '../auth/api';
 import {BrowseApi, errorState, type LoadState, type Photo} from './api';
 
-export function usePhotos(api: BrowseApi, folderId?: string) {
+export function usePhotos(api: BrowseApi, folderId?: string, favorite = false) {
   const revision = useSyncExternalStore(api.subscribe, api.getRevision);
   const [items, setItems] = useState<Photo[]>([]);
+  const [favoritesSupported, setFavoritesSupported] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>('loading');
   const [moreState, setMoreState] = useState<LoadState>('ready');
@@ -21,9 +22,10 @@ export function usePhotos(api: BrowseApi, folderId?: string) {
     if (restart) {setState('loading'); setItems([]); cursorRef.current = null; setCursor(null);}
     else {setMoreState('loading');}
     try {
-      const page = await api.listPhotos(folderId, nextCursor);
+      const page = await api.listPhotos(folderId, nextCursor, 50, favorite);
       if (ticket !== generation.current) {return;}
       const incoming = page.items;
+      setFavoritesSupported(page.favorites_supported === true || incoming.some(p => typeof p.is_favorite === 'boolean'));
       setItems(old => restart ? incoming : [...old, ...incoming.filter(p => !old.some(existing => existing.id === p.id))]);
       cursorRef.current = page.next_cursor;
       setCursor(page.next_cursor);
@@ -46,12 +48,12 @@ export function usePhotos(api: BrowseApi, folderId?: string) {
       }
       if (restart) {setState(errorState(error));} else {setMoreState(errorState(error));}
     } finally {if (ticket === generation.current) {busy.current = false;}}
-  }, [api, folderId]);
+  }, [api, folderId, favorite]);
 
   useEffect(() => {
     load(true);
     const currentGeneration = generation.current;
     return () => {generation.current = currentGeneration + 1; busy.current = false;};
   }, [load, revision]);
-  return {items, cursor, state, moreState, refresh: () => load(true), loadMore: () => load(false)};
+  return {items, cursor, state, moreState, favoritesSupported, refresh: () => load(true), loadMore: () => load(false)};
 }

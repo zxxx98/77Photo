@@ -22,6 +22,7 @@ var (
 )
 
 type ListFilter struct {
+	Favorite  bool
 	FolderID  *string
 	From      *time.Time
 	To        *time.Time
@@ -33,8 +34,9 @@ type ListFilter struct {
 }
 
 type PhotoPage struct {
-	Items      []Photo `json:"items"`
-	NextCursor *string `json:"next_cursor"`
+	Items              []Photo `json:"items"`
+	NextCursor         *string `json:"next_cursor"`
+	FavoritesSupported bool    `json:"favorites_supported"`
 }
 
 type photoCursor struct {
@@ -47,6 +49,7 @@ type photoCursor struct {
 	BBox         string `json:"b,omitempty"`
 	Query        string `json:"q,omitempty"`
 	MediaType    string `json:"m,omitempty"`
+	Favorite     bool   `json:"fav,omitempty"`
 	LastCaptured string `json:"c"`
 	LastID       string `json:"i"`
 	ExpiresAt    int64  `json:"e"`
@@ -108,7 +111,7 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 		if err != nil {
 			return PhotoPage{}, err
 		}
-		if cursor.UserID != principal.UserID || cursor.Role != string(principal.Role) || cursor.FolderID != folderID || cursor.From != fromValue || cursor.To != toValue || cursor.BBox != bboxValue || cursor.Query != queryText || cursor.MediaType != mediaType {
+		if cursor.UserID != principal.UserID || cursor.Role != string(principal.Role) || cursor.FolderID != folderID || cursor.From != fromValue || cursor.To != toValue || cursor.BBox != bboxValue || cursor.Query != queryText || cursor.MediaType != mediaType || cursor.Favorite != filter.Favorite {
 			return PhotoPage{}, ErrInvalidCursor
 		}
 		lastCaptured, lastID = cursor.LastCaptured, cursor.LastID
@@ -116,12 +119,24 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 
 	// Without the timeline hint SQLite chooses scan_status_idx and sorts the
 	// entire active library before returning the first page (see M3 measurements).
-	query := `SELECT p.id, p.owner_id, p.folder_id, p.storage_path, p.filename, p.mime_type, p.size, p.width, p.height, p.checksum, p.captured_at, p.captured_at_source, p.file_created_at, p.indexed_at, p.source_revision, p.scan_status, p.camera_make, p.camera_model, p.orientation, p.focal_length, p.aperture, p.iso, p.gps_latitude, p.gps_longitude, p.created_at, p.updated_at FROM photos p INDEXED BY photos_active_timeline_idx`
+	query := `SELECT p.id, p.owner_id, p.folder_id, p.storage_path, p.filename, p.mime_type, p.size, p.width, p.height, p.checksum, p.captured_at, p.captured_at_source, p.file_created_at, p.indexed_at, p.source_revision, p.scan_status, p.camera_make, p.camera_model, p.orientation, p.focal_length, p.aperture, p.iso, p.gps_latitude, p.gps_longitude, p.created_at, p.updated_at, `
 	args := make([]any, 0, 10)
 	where := []string{"p.deleted_at IS NULL", "p.scan_status='indexed'"}
+	if filter.Favorite {
+		// SQLite may otherwise scan every indexed photo before probing the
+		// user's favorites. CROSS JOIN keeps the small user relation outermost.
+		query += `1 FROM photo_favorites fav CROSS JOIN photos p`
+		where = append(where, "fav.user_id=?", "p.id=fav.photo_id")
+	} else {
+		query += `EXISTS(SELECT 1 FROM photo_favorites fav WHERE fav.user_id=? AND fav.photo_id=p.id) FROM photos p INDEXED BY photos_active_timeline_idx`
+		args = append(args, principal.UserID)
+	}
 	if folderID != "" {
 		query += ` JOIN (WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id) SELECT id FROM descendants) d ON d.id=p.folder_id`
 		args = append(args, folderID)
+	}
+	if filter.Favorite {
+		args = append(args, principal.UserID)
 	}
 	appendVisibilityPredicate(&where, &args, principal, s.authorizer != nil)
 	appendCapturedRange(&where, &args, fromValue, toValue)
@@ -140,7 +155,7 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 	defer rows.Close()
 	items := make([]Photo, 0, limit)
 	for rows.Next() {
-		photo, scanErr := scanPhoto(rows)
+		photo, scanErr := scanPhotoFavorite(rows)
 		if scanErr != nil {
 			return PhotoPage{}, scanErr
 		}
@@ -154,27 +169,32 @@ func (s *Service) List(ctx context.Context, principal acl.Principal, filter List
 	if err := rows.Err(); err != nil {
 		return PhotoPage{}, err
 	}
-	page := PhotoPage{Items: items}
+	page := PhotoPage{Items: items, FavoritesSupported: true}
 	if len(items) == limit {
 		// A full page only gets a cursor when there is another row. Re-run a
 		// bounded existence check using the final tuple to avoid emitting a
 		// cursor at the end of an exact-size result set.
 		last := items[len(items)-1]
-		if hasMore, checkErr := s.hasPhotoAfter(ctx, principal, folderID, fromValue, toValue, filter.BBox, queryText, mediaType, last.CapturedAt, last.ID); checkErr != nil {
+		if hasMore, checkErr := s.hasPhotoAfter(ctx, principal, folderID, fromValue, toValue, filter.BBox, queryText, mediaType, filter.Favorite, last.CapturedAt, last.ID); checkErr != nil {
 			return PhotoPage{}, checkErr
 		} else if hasMore {
-			cursor := s.encodeCursor(photoCursor{Version: 1, UserID: principal.UserID, Role: string(principal.Role), FolderID: folderID, From: fromValue, To: toValue, BBox: bboxValue, Query: queryText, MediaType: mediaType, LastCaptured: last.CapturedAt.UTC().Format(time.RFC3339Nano), LastID: last.ID, ExpiresAt: time.Now().Add(s.cursorTTL).Unix()})
+			cursor := s.encodeCursor(photoCursor{Version: 1, UserID: principal.UserID, Role: string(principal.Role), FolderID: folderID, From: fromValue, To: toValue, BBox: bboxValue, Query: queryText, MediaType: mediaType, Favorite: filter.Favorite, LastCaptured: last.CapturedAt.UTC().Format(time.RFC3339Nano), LastID: last.ID, ExpiresAt: time.Now().Add(s.cursorTTL).Unix()})
 			page.NextCursor = &cursor
 		}
 	}
 	return page, nil
 }
 
-func (s *Service) hasPhotoAfter(ctx context.Context, principal acl.Principal, folderID, fromValue, toValue string, box *BBox, queryText, mediaType string, captured time.Time, id string) (bool, error) {
+func (s *Service) hasPhotoAfter(ctx context.Context, principal acl.Principal, folderID, fromValue, toValue string, box *BBox, queryText, mediaType string, favorite bool, captured time.Time, id string) (bool, error) {
 	query := "SELECT 1 FROM photos p INDEXED BY photos_active_timeline_idx"
 	args := make([]any, 0, 10)
 	where := []string{"p.deleted_at IS NULL", "p.scan_status='indexed'", "(p.captured_at<? OR (p.captured_at=? AND p.id<?))"}
 	args = append(args, captured.UTC().Format(time.RFC3339Nano), captured.UTC().Format(time.RFC3339Nano), id)
+	if favorite {
+		query = "SELECT 1 FROM photo_favorites fav CROSS JOIN photos p"
+		where = append(where, "fav.user_id=?", "p.id=fav.photo_id")
+		args = append(args, principal.UserID)
+	}
 	if folderID != "" {
 		query += ` JOIN (WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id) SELECT id FROM descendants) d ON d.id=p.folder_id`
 		args = append([]any{folderID}, args...)

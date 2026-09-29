@@ -107,6 +107,15 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.move(w, r, sourceID)
 		return
 	}
+	if strings.HasSuffix(id, "/favorite") {
+		sourceID := strings.TrimSuffix(id, "/favorite")
+		if sourceID == "" || strings.Contains(sourceID, "/") {
+			writeError(w, r, http.StatusNotFound, "NOT_FOUND", "route not found", nil)
+			return
+		}
+		h.favorite(w, r, sourceID)
+		return
+	}
 	if strings.HasSuffix(id, "/thumbnail") {
 		sourceID := strings.TrimSuffix(id, "/thumbnail")
 		if sourceID == "" || strings.Contains(sourceID, "/") || r.Method != http.MethodGet {
@@ -277,6 +286,13 @@ func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
 	filter := ListFilter{Cursor: r.URL.Query().Get("cursor")}
 	filter.Query = r.URL.Query().Get("q")
 	filter.MediaType = r.URL.Query().Get("media_type")
+	if value, present := r.URL.Query()["favorite"]; present {
+		if len(value) != 1 || value[0] != "true" {
+			writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "favorite must be true", nil)
+			return
+		}
+		filter.Favorite = true
+	}
 	if value := strings.TrimSpace(r.URL.Query().Get("folder_id")); value != "" {
 		filter.FolderID = &value
 	}
@@ -437,6 +453,29 @@ func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, photo)
+}
+
+func (h *HTTPHandler) favorite(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPut && r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "PUT, DELETE")
+		writeError(w, r, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed", nil)
+		return
+	}
+	authenticated, err := h.authService.AuthenticateRequest(r.Context(), r)
+	if err != nil {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required", nil)
+		return
+	}
+	if err := h.authService.AuthorizeWrite(r, authenticated); err != nil {
+		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
+		return
+	}
+	favorite := r.Method == http.MethodPut
+	if err := h.service.SetFavorite(r.Context(), principal(authenticated.Account), id, favorite); err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"is_favorite": favorite})
 }
 
 func (h *HTTPHandler) thumbnail(w http.ResponseWriter, r *http.Request, id string) {

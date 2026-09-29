@@ -82,6 +82,7 @@ func (e *DuplicateError) Unwrap() error { return ErrDuplicatePhoto }
 
 type Photo struct {
 	ID               string     `json:"id"`
+	IsFavorite       bool       `json:"is_favorite"`
 	OwnerID          string     `json:"owner_id"`
 	FolderID         string     `json:"folder_id"`
 	StoragePath      string     `json:"-"`
@@ -334,6 +335,9 @@ func (s *Service) Get(ctx context.Context, principal acl.Principal, id string) (
 	if !s.canRead(ctx, principal, photo) {
 		return Photo{}, ErrForbidden
 	}
+	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM photo_favorites WHERE user_id=? AND photo_id=?)", principal.UserID, id).Scan(&photo.IsFavorite); err != nil {
+		return Photo{}, err
+	}
 	return photo, nil
 }
 
@@ -561,13 +565,25 @@ func (s *Service) filenameTaken(ctx context.Context, folderID, filename string) 
 func newStorageRevision(previous string) string { return previous + ":changed" }
 
 func scanPhoto(row interface{ Scan(...any) error }) (Photo, error) {
+	return scanPhotoResult(row, false)
+}
+
+func scanPhotoFavorite(row interface{ Scan(...any) error }) (Photo, error) {
+	return scanPhotoResult(row, true)
+}
+
+func scanPhotoResult(row interface{ Scan(...any) error }, withFavorite bool) (Photo, error) {
 	var photo Photo
 	var width, height sql.NullInt64
 	var fileCreated, captured, indexed, created, updated string
 	var makeValue, modelValue sql.NullString
 	var orientation, iso sql.NullInt64
 	var focal, aperture, latitude, longitude sql.NullFloat64
-	if err := row.Scan(&photo.ID, &photo.OwnerID, &photo.FolderID, &photo.StoragePath, &photo.Filename, &photo.MIMEType, &photo.Size, &width, &height, &photo.Checksum, &captured, &photo.CapturedAtSource, &fileCreated, &indexed, &photo.SourceRevision, &photo.ScanStatus, &makeValue, &modelValue, &orientation, &focal, &aperture, &iso, &latitude, &longitude, &created, &updated); err != nil {
+	values := []any{&photo.ID, &photo.OwnerID, &photo.FolderID, &photo.StoragePath, &photo.Filename, &photo.MIMEType, &photo.Size, &width, &height, &photo.Checksum, &captured, &photo.CapturedAtSource, &fileCreated, &indexed, &photo.SourceRevision, &photo.ScanStatus, &makeValue, &modelValue, &orientation, &focal, &aperture, &iso, &latitude, &longitude, &created, &updated}
+	if withFavorite {
+		values = append(values, &photo.IsFavorite)
+	}
+	if err := row.Scan(values...); err != nil {
 		return Photo{}, err
 	}
 	photo.Width, photo.Height = int(width.Int64), int(height.Int64)

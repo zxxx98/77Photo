@@ -28,6 +28,7 @@ export interface Folder {
 
 export interface Photo {
   id: string;
+  is_favorite?: boolean;
   owner_id: string;
   folder_id: string;
   filename: string;
@@ -46,12 +47,14 @@ export interface Photo {
 export interface PhotoPage {
   items: Photo[];
   next_cursor: string | null;
+  favorites_supported?: boolean;
 }
 
 /** West, south, east, north in degrees. West greater than east crosses the antimeridian. */
 export type BBox = [west: number, south: number, east: number, north: number];
 
 export interface ListPhotosParams {
+  favorite?: boolean;
   folderId?: string;
   q?: string;
   mediaType?: 'photo' | 'video';
@@ -285,6 +288,7 @@ export interface ApiClient {
   setCsrfToken(token: string | null): void;
   listPhotos(params?: ListPhotosParams): Promise<PhotoPage>;
   getPhoto(id: string): Promise<Photo>;
+  setFavorite?(id: string, favorite: boolean): Promise<void>;
   getMapConfig(): Promise<MapConfig>;
   getMapPoints(): Promise<MapPoints>;
   listFolders(parentId?: string): Promise<{ items: Folder[] }>;
@@ -452,6 +456,7 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
     listPhotos: async (params = {}) => {
       const query = new URLSearchParams();
       if (params.folderId) query.set('folder_id', params.folderId);
+      if (params.favorite) query.set('favorite', 'true');
       if (params.q) query.set('q', params.q);
       if (params.mediaType) query.set('media_type', params.mediaType);
       if (params.bbox) query.set('bbox', params.bbox.join(','));
@@ -468,6 +473,7 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
       const [withStatus] = await withLiveStatus([photo]);
       return withStatus;
     },
+    setFavorite: async (id, favorite) => { await request(`/api/v1/photos/${encodeURIComponent(id)}/favorite`, { method: favorite ? 'PUT' : 'DELETE' }); },
     getMapConfig: () => {
       mapConfig ??= (request<MapConfig>('/api/v1/map/config') as Promise<MapConfig>).catch((error: unknown) => {
         mapConfig = null;

@@ -575,6 +575,9 @@ func TestResetAndStartRebuildsIndexWithoutDeletingOriginals(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT id FROM photos WHERE filename='keep.jpg'").Scan(&oldID); err != nil {
 		t.Fatal(err)
 	}
+	if err := photoService.SetFavorite(ctx, principal, oldID, true); err != nil {
+		t.Fatal(err)
+	}
 	linkService := sharelinks.NewService(db, store, nil, false)
 	link, err := linkService.Create(ctx, principal, sharelinks.CreateInput{ResourceType: sharelinks.ResourcePhoto, ResourceID: oldID, Duration: sharelinks.DurationForever})
 	if err != nil {
@@ -609,6 +612,10 @@ func TestResetAndStartRebuildsIndexWithoutDeletingOriginals(t *testing.T) {
 	if newID != oldID {
 		t.Fatalf("photo id = %q, want stable id %q", newID, oldID)
 	}
+	favorites, err := photoService.List(ctx, principal, photos.ListFilter{Favorite: true})
+	if err != nil || len(favorites.Items) != 1 || favorites.Items[0].ID != oldID {
+		t.Fatalf("favorite lost on reset: %+v %v", favorites, err)
+	}
 	var shareLinks int
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM share_links WHERE resource_type='photo'").Scan(&shareLinks); err != nil {
 		t.Fatal(err)
@@ -630,6 +637,10 @@ func TestResetAndStartRebuildsIndexWithoutDeletingOriginals(t *testing.T) {
 	if err := photoService.Trash(ctx, principal, oldID, true); err != nil {
 		t.Fatal(err)
 	}
+	favorites, err = photoService.List(ctx, principal, photos.ListFilter{Favorite: true})
+	if err != nil || len(favorites.Items) != 0 {
+		t.Fatalf("trashed favorite visible: %+v %v", favorites, err)
+	}
 	if _, err := linkService.Inspect(ctx, link.Token); !errors.Is(err, sharelinks.ErrUnavailable) {
 		t.Fatalf("trashed share still public: %v", err)
 	}
@@ -645,6 +656,10 @@ func TestResetAndStartRebuildsIndexWithoutDeletingOriginals(t *testing.T) {
 	restored, err := photoService.RestoreTrash(ctx, principal, oldID, photos.RestoreInput{})
 	if err != nil || restored.ID != oldID {
 		t.Fatalf("restore after reset: %+v %v", restored, err)
+	}
+	favorites, err = photoService.List(ctx, principal, photos.ListFilter{Favorite: true})
+	if err != nil || len(favorites.Items) != 1 || favorites.Items[0].ID != oldID {
+		t.Fatalf("favorite lost after trash reset restore: %+v %v", favorites, err)
 	}
 	managed, err = linkService.ListManaged(ctx, principal, sharelinks.ManageFilter{})
 	if err != nil || len(managed.Items) != 1 || managed.Items[0].Status != "revoked" {

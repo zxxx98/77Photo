@@ -1,9 +1,12 @@
 package users
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
+	"image"
+	"image/jpeg"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,6 +15,7 @@ import (
 	"github.com/zxxx98/77Photo/internal/auth"
 	dbstore "github.com/zxxx98/77Photo/internal/database"
 	"github.com/zxxx98/77Photo/internal/folders"
+	"github.com/zxxx98/77Photo/internal/photos"
 	"github.com/zxxx98/77Photo/internal/sharelinks"
 	"github.com/zxxx98/77Photo/internal/storage"
 )
@@ -125,6 +129,18 @@ func TestRetainedDeletedAccountSharesStayUnderAdminManagement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatal(err)
+	}
+	photoService := photos.NewService(service.db, store, 1<<20)
+	photo, err := photoService.Upload(ctx, principal, photos.UploadInput{FolderID: folder.ID, Filename: "retained.jpg", DeclaredMIME: "image/jpeg", Body: &encoded})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := photoService.SetFavorite(ctx, principal, photo.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	links := sharelinks.NewService(service.db, store, nil, false)
 	link, err := links.Create(ctx, principal, sharelinks.CreateInput{ResourceType: sharelinks.ResourceFolder, ResourceID: folder.ID, Duration: sharelinks.DurationForever})
 	if err != nil {
@@ -132,6 +148,13 @@ func TestRetainedDeletedAccountSharesStayUnderAdminManagement(t *testing.T) {
 	}
 	if err := service.Delete(ctx, admin, owner.ID, DeleteInput{PhotoAction: "retain"}); err != nil {
 		t.Fatal(err)
+	}
+	var favoriteCount, photoCount int
+	if err := service.db.QueryRowContext(ctx, "SELECT count(*) FROM photo_favorites WHERE user_id=?", owner.ID).Scan(&favoriteCount); err != nil || favoriteCount != 0 {
+		t.Fatalf("deleted user's favorites=%d err=%v", favoriteCount, err)
+	}
+	if err := service.db.QueryRowContext(ctx, "SELECT count(*) FROM photos WHERE id=?", photo.ID).Scan(&photoCount); err != nil || photoCount != 1 {
+		t.Fatalf("retained photos=%d err=%v", photoCount, err)
 	}
 	page, err := links.ListManaged(ctx, admin, sharelinks.ManageFilter{})
 	if err != nil || len(page.Items) != 1 || page.Items[0].ID != link.ID || page.Items[0].Status != "active" {

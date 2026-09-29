@@ -542,6 +542,11 @@ paths:
           required: false
           schema: { type: string, enum: [photo, video] }
           description: Photo includes still and Live Photos; video includes standalone videos. Omit for all media.
+        - name: favorite
+          in: query
+          required: false
+          schema: { type: string, enum: ['true'] }
+          description: Return only the caller's currently visible favorites. Bound into the signed cursor and combinable with other filters.
         - $ref: '#/components/parameters/FromFilter'
         - $ref: '#/components/parameters/ToFilter'
         - $ref: '#/components/parameters/BBoxFilter'
@@ -779,6 +784,29 @@ paths:
         '422':
           description: Explicit confirmation missing
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /api/v1/photos/{id}/favorite:
+    parameters:
+      - $ref: '#/components/parameters/PhotoID'
+      - $ref: '#/components/parameters/CSRFHeader'
+    put:
+      tags: [photos]
+      summary: Idempotently add a currently readable photo to the caller's favorites
+      operationId: setPhotoFavorite
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200': { description: Favorite set, including when already set }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [photos]
+      summary: Idempotently remove the caller's favorite, including an inaccessible or deleted photo
+      operationId: unsetPhotoFavorite
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200': { description: Favorite removed, including when already absent }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /api/v1/photos/{id}/move:
     post:
@@ -2314,7 +2342,7 @@ components:
         conflict: { type: string, enum: [reject, rename], default: reject }
     Photo:
       type: object
-      required: [id, owner_id, folder_id, filename, mime_type, size, checksum, captured_at, captured_at_source, indexed_at, created_at, updated_at]
+      required: [id, owner_id, folder_id, filename, mime_type, size, checksum, captured_at, captured_at_source, indexed_at, created_at, updated_at, is_favorite]
       properties:
         id: { $ref: '#/components/schemas/ID' }
         owner_id: { $ref: '#/components/schemas/ID' }
@@ -2340,6 +2368,7 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         is_live_photo: { type: boolean, description: True when a validated motion companion exists; may be omitted by list endpoints before status enrichment. }
+        is_favorite: { type: boolean, description: Whether the authenticated caller has favorited this photo; never exposed by public shares. }
     PhotoPage:
       type: object
       required: [items, next_cursor]
@@ -2351,6 +2380,7 @@ components:
           anyOf:
             - type: string
             - type: 'null'
+        favorites_supported: { type: boolean, description: True on the main photo list; clients use absence to detect older servers. }
     ThumbnailPending:
       type: object
       required: [status, retry_after_ms, photo_id]

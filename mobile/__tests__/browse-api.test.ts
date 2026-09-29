@@ -42,6 +42,25 @@ test('parallel 401 responses share one token rotation and retry once', async () 
   expect(seen.filter(value => value === 'Bearer new')).toHaveLength(2);
 });
 
+test('favorite requests are idempotent methods and the list is scoped to the caller', async () => {
+  const calls: {url: string; method: string; token: string}[] = [];
+  globalThis.fetch = jest.fn(async (url, init) => {
+    const options = init as RequestInit;
+    const headers = options.headers as {Authorization: string};
+    calls.push({url: String(url), method: options.method ?? 'GET', token: headers.Authorization});
+    return {ok: true, status: 200, json: async () => ({items: [], next_cursor: null, favorites_supported: true})} as Response;
+  });
+  const api = new BrowseApi(session, jest.fn());
+  await api.setFavorite('photo/1', true);
+  await api.setFavorite('photo/1', false);
+  await api.listPhotos(undefined, undefined, 50, true);
+  expect(calls.map(call => [call.url.replace(session.server, ''), call.method, call.token])).toEqual([
+    ['/api/v1/photos/photo%2F1/favorite', 'PUT', 'Bearer old'],
+    ['/api/v1/photos/photo%2F1/favorite', 'DELETE', 'Bearer old'],
+    ['/api/v1/photos?limit=50&favorite=true', 'GET', 'Bearer old'],
+  ]);
+});
+
 test('uses captured_at date without client timezone conversion', () => {
   const base = {id: '1', owner_id: 'o', folder_id: 'f', filename: 'a', mime_type: 'image/jpeg', size: 1};
   const groups = groupPhotos([

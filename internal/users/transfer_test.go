@@ -47,6 +47,9 @@ func TestDeleteWithTransferMovesFilesIntoRecipientRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := service.db.ExecContext(ctx, "INSERT INTO photo_favorites(user_id,photo_id,created_at) VALUES(?,?,?)", alice.ID, photo.ID, "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
 	managed := sharelinks.NewService(service.db, store, nil, false)
 	link, err := managed.Create(ctx, alicePrincipal, sharelinks.CreateInput{ResourceType: sharelinks.ResourcePhoto, ResourceID: photo.ID, Duration: sharelinks.DurationForever})
 	if err != nil {
@@ -68,6 +71,10 @@ func TestDeleteWithTransferMovesFilesIntoRecipientRoot(t *testing.T) {
 	wantPrefix := "users/" + bob.ID + "/Trip (2)/"
 	if owner != bob.ID || !strings.HasPrefix(photoPath, wantPrefix) {
 		t.Fatalf("photo owner=%s path=%s, want bob under %s", owner, photoPath, wantPrefix)
+	}
+	var favorites int
+	if err := service.db.QueryRowContext(ctx, "SELECT count(*) FROM photo_favorites WHERE photo_id=?", photo.ID).Scan(&favorites); err != nil || favorites != 0 {
+		t.Fatalf("transferred photo retained deleted user's favorite: %d, %v", favorites, err)
 	}
 	var snapshotOwner string
 	if err := service.db.QueryRowContext(ctx, "SELECT owner_id FROM share_links WHERE id=?", link.ID).Scan(&snapshotOwner); err != nil || snapshotOwner != bob.ID {

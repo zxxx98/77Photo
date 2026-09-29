@@ -5,6 +5,7 @@ import {clearSession, saveSession, type MobileSession} from '../auth/session';
 export type Photo = {
   id: string; owner_id: string; folder_id: string; filename: string; mime_type: string;
   size: number; captured_at: string; width?: number; height?: number;
+  is_favorite?: boolean;
   camera_make?: string | null; camera_model?: string | null; is_live_photo?: boolean;
 };
 export type Folder = {
@@ -13,7 +14,7 @@ export type Folder = {
   effective_permission?: 'read' | 'write';
   photo_count?: number; child_folder_count?: number;
 };
-export type PhotoPage = {items: Photo[]; next_cursor: string | null};
+export type PhotoPage = {items: Photo[]; next_cursor: string | null; favorites_supported?: boolean};
 
 export type LoadState = 'loading' | 'ready' | 'empty' | 'offline' | 'forbidden' | 'expired' | 'failed';
 
@@ -43,6 +44,7 @@ export class BrowseApi {
   private revision = 0;
   subscribe = (listener: () => void) => {this.listeners.add(listener); return () => {this.listeners.delete(listener);};};
   getRevision = () => this.revision;
+  refreshBrowsing() {this.notifyConnection();}
   private notifyConnection() {this.revision++; this.listeners.forEach(listener => listener());}
   private reconnecting: Promise<MobileSession> | null = null;
   private reconnectedAt = 0;
@@ -145,9 +147,31 @@ export class BrowseApi {
     return await response.json() as T;
   }
 
-  listPhotos(folderId?: string, cursor?: string, limit = 50): Promise<PhotoPage> {
+  async setFavorite(id: string, favorite: boolean, retried = false): Promise<void> {
+    const session = await this.validSession();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    let response: Response;
+    try {
+      response = await fetch(session.server + `/api/v1/photos/${encodeURIComponent(id)}/favorite`, {
+        method: favorite ? 'PUT' : 'DELETE', signal: controller.signal,
+        headers: {Accept: 'application/json', Authorization: `Bearer ${session.accessToken}`},
+      });
+    } finally {clearTimeout(timer);}
+    if (response.status === 401 && !retried) {
+      if (session.accessToken === this.session.accessToken) {await this.rotate();}
+      return this.setFavorite(id, favorite, true);
+    }
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new ApiError(response.status, body?.error?.code ?? '', body?.error?.message ?? '收藏操作失败');
+    }
+  }
+
+  listPhotos(folderId?: string, cursor?: string, limit = 50, favorite = false): Promise<PhotoPage> {
     const params = new URLSearchParams({limit: String(limit)});
     if (folderId) {params.set('folder_id', folderId);}
+    if (favorite) {params.set('favorite', 'true');}
     if (cursor) {params.set('cursor', cursor);}
     return this.request<PhotoPage>(`/api/v1/photos?${params}`);
   }

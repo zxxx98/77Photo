@@ -31,6 +31,17 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+it('shows favorites only when supported and sends the filter to the server', async () => {
+  const listPhotos = vi.fn().mockResolvedValue({items: [], next_cursor: null, favorites_supported: true});
+  const api = {listPhotos, listFolders: vi.fn().mockResolvedValue({items: []}), listShares: vi.fn().mockResolvedValue({items: []})} as unknown as ApiClient;
+  await act(async () => {root.render(<I18nProvider><GalleryWorkspace api={api} /></I18nProvider>); await Promise.resolve();});
+  const button = [...container.querySelectorAll('button')].find(item => item.textContent?.trim() === '收藏');
+  expect(button).toBeDefined();
+  await act(async () => {button!.click(); await Promise.resolve();});
+  expect(listPhotos).toHaveBeenLastCalledWith(expect.objectContaining({favorite: true}));
+  expect(window.location.hash).toContain('favorite=true');
+});
+
 it('debounces filename search and ignores an older response', async () => {
   const first = deferred<PhotoPage>();
   const second = deferred<PhotoPage>();

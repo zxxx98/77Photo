@@ -1,5 +1,5 @@
 import { lazy, Suspense, TouchEvent, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, CirclePlay, Download, ExternalLink, Info, MapPinned, MoveRight, Pencil, Share2, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CirclePlay, Download, ExternalLink, Heart, Info, LoaderCircle, MapPinned, MoveRight, Pencil, Share2, Trash2, X } from 'lucide-react';
 import { useI18n } from '../../app/I18nProvider';
 import type { ApiClient, Folder, MapConfig, Photo } from '../../app/api';
 import { mapFocusHash } from '../../app/routes';
@@ -15,14 +15,18 @@ type ViewerProps = {
   onClose: () => void;
   onDeleted: (id: string) => void;
   onUpdated: (photo: Photo) => void;
+  onFavoriteSettled?: () => void;
 };
 
-export default function Viewer({ api, photos, selected, onClose, onDeleted, onUpdated }: ViewerProps) {
+export default function Viewer({ api, photos, selected, onClose, onDeleted, onUpdated, onFavoriteSettled }: ViewerProps) {
   const { t, formatDate } = useI18n();
   const [index, setIndex] = useState(selected);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
+  const viewerMounted = useRef(true);
+  const pendingFavorites = useRef(new Set<string>());
+  const [favoritePendingIDs, setFavoritePendingIDs] = useState<Set<string>>(() => new Set());
   const [name, setName] = useState(photos[selected]?.filename ?? '');
   const [folders, setFolders] = useState<Folder[]>([]);
   const [currentFolder, setCurrentFolder] = useState<Folder | null>(null);
@@ -32,9 +36,13 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
   const [mapConfig, setMapConfig] = useState<MapConfig | null>(null);
   const touchStart = useRef<number | null>(null);
   const photo = photos[index];
+  const activePhotoID = useRef(photo?.id);
+  activePhotoID.current = photo?.id;
   const location = photo && typeof photo.gps_latitude === 'number' && typeof photo.gps_longitude === 'number'
     ? { lat: photo.gps_latitude, lng: photo.gps_longitude }
     : null;
+
+  useEffect(() => { viewerMounted.current = true; return () => { viewerMounted.current = false; }; }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -105,6 +113,25 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
     }
   }
 
+  async function toggleFavorite() {
+    if (!photo || !api.setFavorite || pendingFavorites.current.has(photo.id)) return;
+    const previous = !!photo.is_favorite;
+    onUpdated({ ...photo, is_favorite: !previous });
+    pendingFavorites.current.add(photo.id);
+    setFavoritePendingIDs(new Set(pendingFavorites.current));
+    setMessage(null);
+    try {
+      await api.setFavorite(photo.id, !previous);
+    } catch {
+      onUpdated({ ...photo, is_favorite: previous });
+      if (viewerMounted.current && activePhotoID.current === photo.id) setMessage(t('viewer.favoriteFailed'));
+    } finally {
+      pendingFavorites.current.delete(photo.id);
+      if (viewerMounted.current) setFavoritePendingIDs(new Set(pendingFavorites.current));
+      else onFavoriteSettled?.();
+    }
+  }
+
   async function renamePhoto() {
     if (!name.trim() || name.trim() === photo.filename) return;
     setBusy(true);
@@ -160,6 +187,7 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
             <span>{formatDate(photo.captured_at)}</span>
           </div>
           <div className="immersive-viewer__toolbar">
+            {typeof photo.is_favorite === 'boolean' && api.setFavorite && <button className={`immersive-viewer__icon${photo.is_favorite ? ' is-active' : ''}`} type="button" aria-label={t(photo.is_favorite ? 'viewer.removeFavorite' : 'viewer.addFavorite')} title={t(photo.is_favorite ? 'viewer.removeFavorite' : 'viewer.addFavorite')} aria-pressed={photo.is_favorite} aria-busy={favoritePendingIDs.has(photo.id)} disabled={favoritePendingIDs.has(photo.id)} onClick={() => void toggleFavorite()}>{favoritePendingIDs.has(photo.id) ? <LoaderCircle size={20} className="spin" /> : <Heart size={20} fill={photo.is_favorite ? 'currentColor' : 'none'} />}</button>}
             <button className="immersive-viewer__icon" type="button" aria-label={t('viewer.sharePhoto')} title={t('viewer.sharePhoto')} onClick={() => setShareOpen(true)}>
               <Share2 size={20} />
             </button>
@@ -173,6 +201,7 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
         </header>
 
         <main className="immersive-viewer__content">
+          {message && <p className="immersive-viewer__message immersive-viewer__toast" role="status">{message}</p>}
           <button className="immersive-viewer__nav immersive-viewer__nav--prev" aria-label={t('common.previousPhoto')} disabled={index === 0} onClick={() => setIndex((value) => value - 1)}>
             <ArrowLeft size={23} />
           </button>
@@ -280,7 +309,6 @@ export default function Viewer({ api, photos, selected, onClose, onDeleted, onUp
             </button>
           </div>
 
-          {message && <p className="immersive-viewer__message" role="status">{message}</p>}
 
           <div className="immersive-viewer__details-actions">
             <a className="immersive-viewer__action" href={`/api/v1/photos/${encodeURIComponent(photo.id)}/original`} download>

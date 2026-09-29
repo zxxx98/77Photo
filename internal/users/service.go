@@ -268,6 +268,9 @@ func (s *Service) Delete(ctx context.Context, principal acl.Principal, id string
 	if err := s.auth.RevokeMobileSessionsForUserTx(ctx, tx, id); err != nil {
 		return fmt.Errorf("revoke deleted user mobile sessions: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM photo_favorites WHERE user_id=?", id); err != nil {
+		return fmt.Errorf("remove deleted user's favorites: %w", err)
+	}
 	var moves []storageMove
 	committed := false
 	defer func() {

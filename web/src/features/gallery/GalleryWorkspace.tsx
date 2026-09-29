@@ -12,6 +12,8 @@ export default function GalleryWorkspace({ api }: { api: ApiClient }) {
   const [searchInput, setSearchInput] = useState(initialFilters.q);
   const [query, setQuery] = useState(initialFilters.q);
   const [mediaType, setMediaType] = useState<'' | 'photo' | 'video'>(initialFilters.mediaType);
+  const [favorite, setFavorite] = useState(initialFilters.favorite);
+  const [favoritesSupported, setFavoritesSupported] = useState(false);
   const [folderId, setFolderId] = useState(initialFilters.folderId);
   const [fromDate, setFromDate] = useState(initialFilters.fromDate);
   const [toDate, setToDate] = useState(initialFilters.toDate);
@@ -43,8 +45,8 @@ export default function GalleryWorkspace({ api }: { api: ApiClient }) {
     return () => { active = false; };
   }, [api]);
 
-  const activeFilters = useMemo(() => ({ q: query, mediaType, folderId, fromDate, toDate }), [query, mediaType, folderId, fromDate, toDate]);
-  const hasFilters = !!(query || mediaType || folderId || fromDate || toDate);
+  const activeFilters = useMemo(() => ({ q: query, mediaType, folderId, fromDate, toDate, favorite }), [query, mediaType, folderId, fromDate, toDate, favorite]);
+  const hasFilters = !!(query || mediaType || folderId || fromDate || toDate || favorite);
   const invalidDates = !!(fromDate && toDate && fromDate > toDate);
 
   const load = useCallback(async (nextCursor?: string) => {
@@ -62,12 +64,16 @@ export default function GalleryWorkspace({ api }: { api: ApiClient }) {
         cursor: nextCursor, limit: 50, signal: controller.signal,
         q: activeFilters.q || undefined,
         mediaType: activeFilters.mediaType || undefined,
+        favorite: activeFilters.favorite || undefined,
         folderId: activeFilters.folderId || undefined,
         from: activeFilters.fromDate ? localDateBoundary(activeFilters.fromDate) : undefined,
         to: activeFilters.toDate ? localDateBoundary(activeFilters.toDate, true) : undefined,
       };
       const page = await api.listPhotos(params);
       if (generation !== generationRef.current || controller.signal.aborted) return;
+      const supported = page.favorites_supported === true || page.items.some((item) => typeof item.is_favorite === 'boolean');
+      setFavoritesSupported(supported);
+      if (!supported && activeFilters.favorite) setFavorite(false);
       if (!nextCursor && !hasFilters) {
         libraryEmptyRef.current = page.items.length === 0;
         setLibraryEmpty(libraryEmptyRef.current);
@@ -224,7 +230,8 @@ export default function GalleryWorkspace({ api }: { api: ApiClient }) {
         <div className="gallery-media-filters" aria-label={t('gallery.mediaType')}>
           {(['', 'photo', 'video'] as const).map((type) => <button key={type} type="button" className={`filter-chip${mediaType === type ? ' is-active' : ''}`} aria-pressed={mediaType === type} onClick={() => setMediaType(type)}>{t(type === '' ? 'gallery.allPhotos' : type === 'photo' ? 'gallery.photos' : 'gallery.videos')}</button>)}
         </div>
-        {hasFilters && <button type="button" className="button button-secondary" onClick={() => { setSearchInput(''); setQuery(''); setMediaType(''); setFolderId(''); setFromDate(''); setToDate(''); }}>{t('gallery.clearFilters')}</button>}
+        {favoritesSupported && <button type="button" className={`filter-chip${favorite ? ' is-active' : ''}`} aria-pressed={favorite} onClick={() => setFavorite((value) => !value)}>{t('gallery.favorites')}</button>}
+        {hasFilters && <button type="button" className="button button-secondary" onClick={() => { setSearchInput(''); setQuery(''); setMediaType(''); setFolderId(''); setFromDate(''); setToDate(''); setFavorite(false); }}>{t('gallery.clearFilters')}</button>}
       </div>
       {invalidDates && <div className="inline-state" role="alert">{t('gallery.invalidDates')}</div>}
       {bulkError && <div className="inline-state" role="alert">{bulkError}</div>}
@@ -247,7 +254,7 @@ export default function GalleryWorkspace({ api }: { api: ApiClient }) {
         />
       ))}
       <div ref={sentinel} className="gallery-sentinel" aria-hidden="true">{loadingMore && <LoaderCircle className="spin" size={18} />}</div>
-      {selected !== null && !selectionMode && <Viewer api={api} photos={photos} selected={selected} onClose={() => setSelected(null)} onDeleted={(id) => setPhotos((current) => current.filter((photo) => photo.id !== id))} onUpdated={(photo) => setPhotos((current) => current.map((item) => item.id === photo.id ? photo : item))} />}
+      {selected !== null && !selectionMode && <Viewer api={api} photos={photos} selected={selected} onClose={() => { setSelected(null); if (favorite) void load(); }} onDeleted={(id) => setPhotos((current) => current.filter((photo) => photo.id !== id))} onUpdated={(photo) => setPhotos((current) => current.map((item) => item.id === photo.id ? photo : item))} onFavoriteSettled={() => { if (favorite) void load(); }} />}
 
       {selectionMode && (
         <div style={bulkBarStyle} aria-live="polite">
@@ -298,7 +305,7 @@ function openUpload() {
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
-type GalleryFilters = { q: string; mediaType: '' | 'photo' | 'video'; folderId: string; fromDate: string; toDate: string };
+type GalleryFilters = { q: string; mediaType: '' | 'photo' | 'video'; folderId: string; fromDate: string; toDate: string; favorite: boolean };
 const galleryFilterKey = 'gallery-filters';
 
 function readGalleryFilters(): GalleryFilters {
@@ -307,7 +314,7 @@ function readGalleryFilters(): GalleryFilters {
   const media = params.get('media_type');
   return {
     q: params.get('q') || '', mediaType: media === 'photo' || media === 'video' ? media : '',
-    folderId: params.get('folder_id') || '', fromDate: validLocalDate(params.get('from')), toDate: validLocalDate(params.get('to')),
+    folderId: params.get('folder_id') || '', fromDate: validLocalDate(params.get('from')), toDate: validLocalDate(params.get('to')), favorite: params.get('favorite') === 'true',
   };
 }
 
@@ -325,6 +332,7 @@ function writeGalleryFilters(filters: GalleryFilters) {
   if (filters.folderId) params.set('folder_id', filters.folderId);
   if (filters.fromDate) params.set('from', filters.fromDate);
   if (filters.toDate) params.set('to', filters.toDate);
+  if (filters.favorite) params.set('favorite', 'true');
   const query = params.toString();
   window.sessionStorage.setItem(galleryFilterKey, query);
   if (window.location.hash.startsWith('#/gallery')) window.history.replaceState(window.history.state, '', `#/gallery${query ? `?${query}` : ''}`);

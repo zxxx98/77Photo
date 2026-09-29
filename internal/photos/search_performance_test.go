@@ -50,9 +50,18 @@ func TestSearchPerformance(t *testing.T) {
 		{"folder", ListFilter{FolderID: &fixture.folderID, Limit: 50}},
 		{"media", ListFilter{MediaType: "video", Limit: 50}},
 		{"combined", ListFilter{FolderID: &fixture.folderID, From: &from, To: &to, MediaType: "photo", Query: "family-trip", Limit: 50}},
+		{"favorite", ListFilter{Favorite: true, Limit: 50}},
+		{"favorite-combined", ListFilter{Favorite: true, FolderID: &fixture.folderID, From: &from, To: &to, MediaType: "photo", Query: "family-trip", Limit: 50}},
 	}
 	for _, size := range []int{10000, 100000} {
 		seedSearchRows(t, ctx, fixture, privateFolder.ID, size)
+		for _, userID := range []string{admin.UserID, member.UserID} {
+			if _, err := db.ExecContext(ctx, `INSERT INTO photo_favorites(user_id,photo_id,created_at)
+SELECT ?,id,'2026-09-29T00:00:00Z' FROM photos WHERE folder_id=? AND CAST(substr(id,6) AS INTEGER)%102=0
+ON CONFLICT(user_id,photo_id) DO NOTHING`, userID, fixture.folderID); err != nil {
+				t.Fatal(err)
+			}
+		}
 		for _, user := range []struct {
 			name      string
 			principal acl.Principal
@@ -123,12 +132,21 @@ func seedSearchRows(t *testing.T, ctx context.Context, fixture uploadFixture, pr
 
 func searchQueryPlan(t *testing.T, ctx context.Context, service *Service, principal acl.Principal, filter ListFilter) []string {
 	t.Helper()
-	query := "EXPLAIN QUERY PLAN SELECT p.id FROM photos p INDEXED BY photos_active_timeline_idx"
+	query := "EXPLAIN QUERY PLAN SELECT p.id, EXISTS(SELECT 1 FROM photo_favorites own WHERE own.user_id=? AND own.photo_id=p.id) FROM photos p INDEXED BY photos_active_timeline_idx"
 	args := []any{}
 	where := []string{"p.deleted_at IS NULL", "p.scan_status='indexed'"}
+	if filter.Favorite {
+		query = "EXPLAIN QUERY PLAN SELECT p.id FROM photo_favorites fav CROSS JOIN photos p"
+		where = append(where, "fav.user_id=?", "p.id=fav.photo_id")
+	} else {
+		args = append(args, principal.UserID)
+	}
 	if filter.FolderID != nil {
 		query += ` JOIN (WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id) SELECT id FROM descendants) d ON d.id=p.folder_id`
 		args = append(args, *filter.FolderID)
+	}
+	if filter.Favorite {
+		args = append(args, principal.UserID)
 	}
 	appendVisibilityPredicate(&where, &args, principal, service.authorizer != nil)
 	fromValue, toValue := "", ""

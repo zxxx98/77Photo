@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApiClient, Photo } from '../../app/api';
@@ -78,6 +78,74 @@ describe('Viewer filmstrip thumbnails', () => {
       await Promise.resolve();
     });
     expect(container.querySelector<HTMLImageElement>('.immersive-viewer__thumb img')?.getAttribute('src')).toBe('/video-placeholder.svg');
+  });
+});
+
+describe('Viewer favorites', () => {
+  it('rolls back an optimistic favorite when the server rejects the write', async () => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    let reject!: (error: Error) => void;
+    const write = new Promise<void>((_resolve, fail) => {reject = fail;});
+    const api = {listFolders: vi.fn().mockResolvedValue({items: []}), getFolder: vi.fn().mockResolvedValue({id: 'folder-1', name: 'Family'}), setFavorite: vi.fn().mockReturnValue(write)} as unknown as ApiClient;
+    function Harness() {
+      const [items, setItems] = useState<Photo[]>([{...videoPhoto, is_favorite: false}]);
+      return <I18nProvider><Viewer api={api} photos={items} selected={0} onClose={vi.fn()} onDeleted={vi.fn()} onUpdated={photo => setItems([photo])} /></I18nProvider>;
+    }
+    try {
+      await act(async () => {root.render(<Harness />); await Promise.resolve();});
+      const button = container.querySelector<HTMLButtonElement>('[aria-label="加入收藏"]')!;
+      await act(async () => {button.click(); await Promise.resolve();});
+      expect(container.querySelector('[aria-label="取消收藏"]')?.getAttribute('aria-pressed')).toBe('true');
+      await act(async () => {reject(new Error('offline')); await Promise.resolve();});
+      expect(container.querySelector('[aria-label="加入收藏"]')?.getAttribute('aria-pressed')).toBe('false');
+      expect(container.textContent).toContain('收藏操作失败');
+    } finally {act(() => root.unmount()); container.remove();}
+  });
+
+  it('keeps another photo unchanged when an earlier favorite request fails', async () => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    let reject!: (error: Error) => void;
+    const write = new Promise<void>((_resolve, fail) => {reject = fail;});
+    const api = {listFolders: vi.fn().mockResolvedValue({items: []}), getFolder: vi.fn().mockResolvedValue({id: 'folder-1', name: 'Family'}), setFavorite: vi.fn().mockReturnValue(write)} as unknown as ApiClient;
+    function Harness() {
+      const [items, setItems] = useState<Photo[]>([{...videoPhoto, is_favorite: false}, {...videoPhoto, id: 'video-2', filename: 'other.mp4', is_favorite: true}]);
+      return <I18nProvider><Viewer api={api} photos={items} selected={0} onClose={vi.fn()} onDeleted={vi.fn()} onUpdated={updated => setItems(current => current.map(item => item.id === updated.id ? updated : item))} /></I18nProvider>;
+    }
+    try {
+      await act(async () => {root.render(<Harness />); await Promise.resolve();});
+      await act(async () => {container.querySelector<HTMLButtonElement>('[aria-label="加入收藏"]')!.click(); await Promise.resolve();});
+      await act(async () => {container.querySelector<HTMLButtonElement>('.immersive-viewer__nav--next')!.click(); await Promise.resolve();});
+      expect(container.querySelector('[aria-label="取消收藏"]')?.getAttribute('aria-pressed')).toBe('true');
+      await act(async () => {reject(new Error('offline')); await Promise.resolve();});
+      expect(container.querySelector('[aria-label="取消收藏"]')?.getAttribute('aria-pressed')).toBe('true');
+      expect(container.textContent).not.toContain('收藏操作失败');
+      await act(async () => {container.querySelector<HTMLButtonElement>('.immersive-viewer__nav--prev')!.click(); await Promise.resolve();});
+      expect(container.querySelector('[aria-label="加入收藏"]')?.getAttribute('aria-pressed')).toBe('false');
+    } finally {act(() => root.unmount()); container.remove();}
+  });
+
+  it('refreshes a closed favorites list after an in-flight write settles', async () => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    let resolve!: () => void;
+    const write = new Promise<void>(done => {resolve = done;});
+    const settled = vi.fn();
+    const api = {listFolders: vi.fn().mockResolvedValue({items: []}), getFolder: vi.fn().mockResolvedValue({id: 'folder-1', name: 'Family'}), setFavorite: vi.fn().mockReturnValue(write)} as unknown as ApiClient;
+    try {
+      await act(async () => {root.render(<I18nProvider><Viewer api={api} photos={[{...videoPhoto, is_favorite: false}]} selected={0} onClose={vi.fn()} onDeleted={vi.fn()} onUpdated={vi.fn()} onFavoriteSettled={settled} /></I18nProvider>); await Promise.resolve();});
+      await act(async () => {container.querySelector<HTMLButtonElement>('[aria-label="加入收藏"]')!.click(); await Promise.resolve();});
+      act(() => root.unmount());
+      await act(async () => {resolve(); await Promise.resolve();});
+      expect(settled).toHaveBeenCalledOnce();
+    } finally {container.remove();}
   });
 });
 
@@ -164,4 +232,3 @@ describe('Viewer location', () => {
     expect(client.getMapConfig).not.toHaveBeenCalled();
   });
 });
-

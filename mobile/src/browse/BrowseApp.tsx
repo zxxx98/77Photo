@@ -73,7 +73,9 @@ function FolderCover({api, folder}: {api: BrowseApi; folder: Folder}) {
 }
 
 function Photos({api, open, settings}: {api: BrowseApi; open: (photo: Photo, all: Photo[]) => void; settings: () => void}) {
-  const page = usePhotos(api);
+  const [favorite, setFavorite] = useState(false);
+  const page = usePhotos(api, undefined, favorite);
+  useEffect(() => {if (favorite && page.state === 'ready' && !page.favoritesSupported) {setFavorite(false);}}, [favorite, page.state, page.favoritesSupported]);
   const timeline = useMemo(() => groupPhotos(page.items).flatMap(group => {
     const rows: ({type: 'date'; key: string; date: string} | {type: 'row'; key: string; photos: Photo[]})[] =
       [{type: 'date', key: group.date, date: group.date}];
@@ -83,7 +85,7 @@ function Photos({api, open, settings}: {api: BrowseApi; open: (photo: Photo, all
     return rows;
   }), [page.items]);
   return <View style={styles.page}>
-    <View style={styles.topRow}><Text style={styles.title}>77Photo</Text><Pressable style={styles.settingsButton} accessibilityRole="button" accessibilityLabel="设置" onPress={settings}><Icon name="settings" size={22} /></Pressable></View>
+    <View style={styles.topRow}><Text style={styles.title}>77Photo</Text>{page.favoritesSupported ? <Pressable style={styles.settingsButton} accessibilityRole="button" accessibilityLabel={favorite ? '查看全部照片' : '查看收藏'} accessibilityState={{selected: favorite}} onPress={() => setFavorite(value => !value)}><Text style={styles.meta}>{favorite ? '全部照片' : '♥ 收藏'}</Text></Pressable> : null}<Pressable style={styles.settingsButton} accessibilityRole="button" accessibilityLabel="设置" onPress={settings}><Icon name="settings" size={22} /></Pressable></View>
     {page.state !== 'ready' ? <StateView state={page.state} retry={page.refresh} /> :
       <FlatList data={timeline} keyExtractor={item => item.key} onEndReached={() => {if (page.cursor && page.moreState === 'ready') {page.loadMore();}}}
         onEndReachedThreshold={0.4} windowSize={7} initialNumToRender={8} refreshing={false} onRefresh={() => {page.refresh();}}
@@ -136,6 +138,8 @@ function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; 
   const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(Math.max(0, photos.findIndex(p => p.id === initial.id)));
   const selected = photos[index] ?? initial;
+  const selectedID = useRef(selected.id);
+  selectedID.current = selected.id;
   const [photo, setPhoto] = useState(selected);
   const [folderName, setFolderName] = useState('');
   const revision = useSyncExternalStore(api.subscribe, api.getRevision);
@@ -146,24 +150,29 @@ function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; 
   const [state, setState] = useState<LoadState>('loading');
   const [downloading, setDownloading] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const viewerMounted = useRef(true);
+  const pendingFavorites = useRef(new Set<string>());
+  const favoriteOverrides = useRef(new Map<string, boolean>());
+  const [favoritePendingIDs, setFavoritePendingIDs] = useState<Set<string>>(() => new Set());
   const [notice, setNotice] = useState('');
   const [mediaRetry, setMediaRetry] = useState(0);
   const [motionRetry, setMotionRetry] = useState(0);
   const [zoom, setZoom] = useState(1);
   const touch = useRef({x: 0, time: 0, distance: 0, zoom: 1});
   const lastTap = useRef(0);
+  useEffect(() => {viewerMounted.current = true; return () => {viewerMounted.current = false;};}, []);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', next => setForeground(next === 'active'));
     return () => subscription.remove();
   }, []);
   useEffect(() => {
     let active = true;
-    setPhoto(selected); setFolderName(''); setZoom(1); setState('loading'); setSource(undefined);
+    setPhoto({...selected, is_favorite: favoriteOverrides.current.get(selected.id) ?? selected.is_favorite}); setFolderName(''); setZoom(1); setState('loading'); setSource(undefined);
     setMotionSource(undefined); setMotionState('none'); setNotice('');
     Promise.all([api.photo(selected.id), api.mediaSource(selected.id, 'preview'), api.liveStatus([selected.id]).catch(() => selected.is_live_photo ? [selected.id] : [])]).then(([detail, preview, liveIds]) => {
       if (!active) {return;}
       const isLive = liveIds.includes(selected.id);
-      setPhoto({...detail, is_live_photo: isLive}); setSource(preview); setState('ready');
+      setPhoto({...detail, is_favorite: favoriteOverrides.current.get(selected.id) ?? detail.is_favorite, is_live_photo: isLive}); setSource(preview); setState('ready');
       api.folder(detail.folder_id).then(folder => {if (active) {setFolderName(folder.name);}}).catch(() => {});
       if (isLive) {
         setMotionState('loading');
@@ -203,6 +212,28 @@ function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; 
     } catch (error) {setNotice(error instanceof Error ? error.message : '分享失败，请重试');}
     finally {setSharing(false);}
   }
+  async function toggleFavorite() {
+    if (typeof photo.is_favorite !== 'boolean' || pendingFavorites.current.has(photo.id)) {return;}
+    const targetID = photo.id;
+    const previous = photo.is_favorite;
+    const priorOverride = favoriteOverrides.current.get(targetID);
+    favoriteOverrides.current.set(targetID, !previous);
+    setPhoto(current => current.id === targetID ? {...current, is_favorite: !previous} : current);
+    pendingFavorites.current.add(targetID);
+    setFavoritePendingIDs(new Set(pendingFavorites.current));
+    setNotice('');
+    try {await api.setFavorite(targetID, !previous);}
+    catch (error) {
+      if (priorOverride === undefined) {favoriteOverrides.current.delete(targetID);}
+      else {favoriteOverrides.current.set(targetID, priorOverride);}
+      setPhoto(current => current.id === targetID ? {...current, is_favorite: previous} : current);
+      if (selectedID.current === targetID) {setNotice(error instanceof Error ? error.message : '收藏操作失败，请重试');}
+    } finally {
+      pendingFavorites.current.delete(targetID);
+      setFavoritePendingIDs(new Set(pendingFavorites.current));
+      if (!viewerMounted.current) {api.refreshBrowsing();}
+    }
+  }
   const video = photo.mime_type.startsWith('video/');
   function beginTouch(points: readonly {pageX: number; pageY: number}[]) {
     touch.current.x = points[0]?.pageX ?? 0;
@@ -229,6 +260,7 @@ function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; 
       <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel="返回浏览" onPress={close}><Icon name="back" tone="light" size={24} /></Pressable>
       <Text style={styles.viewerCount}>{index + 1} / {photos.length}</Text>
       <View style={styles.viewerActions}>
+        {typeof photo.is_favorite === 'boolean' ? <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel={photo.is_favorite ? '取消收藏' : '加入收藏'} accessibilityState={{selected: photo.is_favorite, busy: favoritePendingIDs.has(photo.id)}} disabled={favoritePendingIDs.has(photo.id)} onPress={toggleFavorite}>{favoritePendingIDs.has(photo.id) ? <ActivityIndicator color="#FFF" /> : <Text style={styles.favoriteIcon}>{photo.is_favorite ? '♥' : '♡'}</Text>}</Pressable> : null}
         <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel="分享原文件" disabled={sharing} onPress={share}>{sharing ? <ActivityIndicator color="#FFF" /> : <Icon name="share" tone="light" size={23} />}</Pressable>
         <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel="下载原文件" disabled={downloading} onPress={download}>{downloading ? <ActivityIndicator color="#FFF" /> : <Icon name="download" tone="light" size={23} />}</Pressable>
       </View>
@@ -283,19 +315,19 @@ export default function BrowseApp({session, onSession, onSignOut, error}: {sessi
   const [settings, setSettings] = useState(false);
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (viewer) {setViewer(null); return true;}
+      if (viewer) {setViewer(null); api.refreshBrowsing(); return true;}
       if (settings) {setSettings(false); return true;}
       if (tab === 'folders' && stack.length) {setStack(stack.slice(0, -1)); return true;}
       if (tab !== 'photos') {setTab('photos'); return true;}
       return false;
     });
     return () => subscription.remove();
-  }, [viewer, settings, tab, stack]);
+  }, [api, viewer, settings, tab, stack]);
   const open = (photo: Photo, photos: Photo[]) => setViewer({photo, photos});
   return <SafeAreaView style={[styles.root, viewer && styles.viewerRoot]} edges={viewer ? ['top'] : ['top', 'bottom']}>
     <StatusBar barStyle="dark-content" />
     {connectionNotice ? <Text accessibilityRole="alert" style={styles.error}>{connectionNotice}</Text> : null}
-    {viewer ? <Viewer api={api} initial={viewer.photo} photos={viewer.photos} close={() => setViewer(null)} /> : settings ?
+    {viewer ? <Viewer api={api} initial={viewer.photo} photos={viewer.photos} close={() => {setViewer(null); api.refreshBrowsing();}} /> : settings ?
       <ScrollView style={styles.page} keyboardShouldPersistTaps="handled"><Pressable accessibilityRole="button" style={styles.back} onPress={() => setSettings(false)}><Icon name="back" size={22} /><Text style={styles.backLabel}>返回</Text></Pressable>
         <Text style={styles.title}>设置</Text><Text style={styles.meta}>{session.username}</Text>
         <ServerAddresses api={api} session={session} />
@@ -332,6 +364,7 @@ const styles = StyleSheet.create({
   tabs: {height: 66, flexDirection: 'row', borderTopWidth: 1, borderColor: border, backgroundColor: '#FFF', paddingHorizontal: 8, paddingTop: 4}, tab: {flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', gap: 3, borderRadius: 14}, tabSelected: {backgroundColor: '#F2F3F2'}, tabText: {fontSize: 12, color: muted}, tabActive: {color: ink, fontWeight: '700'},
   error: {color: '#A65757', fontSize: 14, margin: 16},
   viewer: {flex: 1, backgroundColor: '#161B22'}, viewerTop: {height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8}, viewerActions: {flexDirection: 'row'}, viewerButton: {width: 52, height: 52, justifyContent: 'center', alignItems: 'center'}, viewerCount: {color: '#FFFFFF', fontSize: 13, fontWeight: '600'}, viewerMedia: {flex: 1, justifyContent: 'center', overflow: 'hidden'}, fullMedia: {width: '100%', height: '100%'}, motionMedia: {position: 'absolute', width: '100%', height: '100%', top: 0, left: 0},
+  favoriteIcon: {color: '#FFFFFF', fontSize: 26},
   liveBadge: {position: 'absolute', top: 12, left: 16, backgroundColor: '#161B22BB', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5}, liveBadgeText: {color: '#FFFFFF', fontSize: 11, fontWeight: '600'}, motionRetry: {position: 'absolute', bottom: 18, alignSelf: 'center', minHeight: 48, justifyContent: 'center', paddingHorizontal: 18, borderRadius: 16, backgroundColor: '#FFFFFFE8'}, motionRetryText: {color: ink, fontSize: 13, fontWeight: '600'},
   viewerSheet: {backgroundColor: paper, borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingTop: 8, paddingHorizontal: 10}, viewerNav: {flexDirection: 'row', alignItems: 'center', minHeight: 64}, navButton: {minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center'}, viewerIdentity: {flex: 1, alignItems: 'center', paddingHorizontal: 4}, viewerName: {fontSize: 15, fontWeight: '600', color: ink, textAlign: 'center'}, viewerMeta: {fontSize: 12, color: muted, marginTop: 4}, viewerNotice: {fontSize: 13, color: ink, textAlign: 'center', marginBottom: 8},
 });

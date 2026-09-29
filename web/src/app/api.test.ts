@@ -2,6 +2,20 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiError, createApiClient } from './api';
 
 describe('API client', () => {
+  it('uses explicit favorite methods and composes the favorite list filter', async () => {
+    const fetcher = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ items: [], next_cursor: null, favorites_supported: true }), { status: 200 }));
+    const client = createApiClient(fetcher as typeof fetch);
+    client.setCsrfToken('csrf');
+    await client.setFavorite?.('p/1', true);
+    await client.setFavorite?.('p/1', false);
+    await client.listPhotos({favorite: true, q: 'family'});
+    expect(fetcher.mock.calls.map(([path, init]) => [path, init.method])).toEqual([
+      ['/api/v1/photos/p%2F1/favorite', 'PUT'],
+      ['/api/v1/photos/p%2F1/favorite', 'DELETE'],
+      ['/api/v1/photos?favorite=true&q=family', 'GET'],
+    ]);
+    expect(new Headers(fetcher.mock.calls[0][1].headers).get('X-CSRF-Token')).toBe('csrf');
+  });
   it('reads setup status and submits first administrator credentials', async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ required: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
