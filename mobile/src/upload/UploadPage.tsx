@@ -17,6 +17,8 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
   const itemsRef = useRef<UploadItem[]>([]);
   const saving = useRef<Promise<void>>(Promise.resolve());
   const running = useRef(false);
+  const queueEpoch = useRef(0);
+  const currentUpload = useRef<{id: string; controller: AbortController} | null>(null);
   const mountedRef = useRef(true);
   const ready = useRef(false);
   const foreground = useRef(true);
@@ -36,11 +38,13 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
     if (!mountedRef.current) {return;}
     itemsRef.current = next;
     setItems(next);
-    saving.current = saving.current.catch(() => {}).then(() => saveQueue(sessionRef.current, next));
+    const scopedSession = sessionRef.current;
+    saving.current = saving.current.catch(() => {}).then(() => saveQueue(scopedSession, next));
     saving.current.catch(() => setNotice('无法保存上传队列，请检查设备存储空间'));
   }, []);
   useEffect(() => {
     let mounted = true;
+    const epoch = ++queueEpoch.current;
     mountedRef.current = true;
     allowQueue(sessionRef.current);
     ready.current = false;
@@ -60,7 +64,7 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
         setResumeSignal(value => value + 1);
       }
     });
-    return () => {mounted = false; mountedRef.current = false; sub.remove();};
+    return () => {mounted = false; mountedRef.current = false; queueEpoch.current = epoch + 1; currentUpload.current?.controller.abort(); sub.remove();};
   }, [accountKey, commit]);
   useEffect(() => {
     if (incomingFolder) {setFolder(incomingFolder); setChoosing(false); clearIncoming();}
@@ -88,26 +92,54 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
   }, [api, choosing, folderStack]);
 
   const process = useCallback(async () => {
-    if (running.current || !ready.current || !foreground.current) {return;}
+    if (running.current || !ready.current || !foreground.current || !mountedRef.current) {return;}
     running.current = true;
+    const epoch = queueEpoch.current;
     try {
-      while (foreground.current) {
+      while (foreground.current && mountedRef.current && epoch === queueEpoch.current) {
         const item = itemsRef.current.find(entry => entry.status === 'waiting');
         if (!item) {break;}
-        const update = (patch: Partial<UploadItem>) => commit(itemsRef.current.map(entry => entry.id === item.id ? {...entry, ...patch} : entry));
-        if (!await ReactNativeBlobUtil.fs.exists(item.path) || (item.motion && !await ReactNativeBlobUtil.fs.exists(item.motion.path))) {
-          update({status: 'failed', message: '本机文件已不可用，请重新选择'});
-          continue;
-        }
+        const controller = new AbortController();
+        currentUpload.current = {id: item.id, controller};
+        const update = (patch: Partial<UploadItem>) => {
+          if (controller.signal.aborted || epoch !== queueEpoch.current) {return;}
+          commit(itemsRef.current.map(entry => entry.id === item.id && entry.status !== 'cancelled' ? {...entry, ...patch} : entry));
+        };
         update({status: 'uploading', progress: 0, message: undefined});
         try {
-          const result = await uploadOne(api, item, value => update({progress: value}));
+          if (!await ReactNativeBlobUtil.fs.exists(item.path) || (item.motion && !await ReactNativeBlobUtil.fs.exists(item.motion.path))) {
+            update({status: 'failed', message: '本机文件已不可用，请重新选择'});
+            continue;
+          }
+          if (controller.signal.aborted) {continue;}
+          const result = await uploadOne(api, item, value => update({progress: value}), controller.signal);
           update({status: result, progress: 100, message: result === 'skipped' ? '服务器已有相同内容' : undefined});
-        } catch (error) {update({status: 'failed', progress: 0, message: uploadError(error)});}
+        } catch (error) {
+          if (!controller.signal.aborted) {update({status: 'failed', progress: 0, message: uploadError(error)});}
+        } finally {
+          if (currentUpload.current?.controller === controller) {currentUpload.current = null;}
+          if (mountedRef.current) {setResumeSignal(value => value + 1);}
+        }
       }
-    } finally {running.current = false;}
+    } finally {running.current = false; if (mountedRef.current && epoch !== queueEpoch.current) {setResumeSignal(value => value + 1);}}
   }, [api, commit]);
   useEffect(() => {process();}, [items, process, resumeSignal]);
+  function cancelUpload(id: string) {
+    const item = itemsRef.current.find(entry => entry.id === id);
+    if (!item || !['waiting', 'uploading'].includes(item.status)) {return;}
+    commit(itemsRef.current.map(entry => entry.id === id ? {...entry, status: 'cancelled', message: item.status === 'waiting' ? '已取消，保留本机文件供重试' : '已取消，保留文件供重试；服务器可能已接收，请刷新核对'} : entry));
+    if (currentUpload.current?.id === id) {currentUpload.current.controller.abort();}
+  }
+  function retryUpload(id: string) {
+    if (currentUpload.current?.id === id) {return;}
+    commit(itemsRef.current.map(entry => entry.id === id ? {...entry, status: 'waiting', progress: 0, message: undefined} : entry));
+  }
+  async function removeCancelled(item: UploadItem) {
+    if (currentUpload.current?.id === item.id) {return;}
+    commit(itemsRef.current.filter(entry => entry.id !== item.id));
+    try {await saving.current; await deleteStagedFiles([item]);}
+    catch {setNotice('无法移除暂存文件，请检查设备存储空间');}
+  }
   async function selectMedia() {
     if (!folder || busy) {return;}
     setBusy(true); setNotice('');
@@ -121,12 +153,13 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
     waiting: items.filter(item => item.status === 'waiting').length,
     uploading: items.filter(item => item.status === 'uploading').length,
     failed: items.filter(item => item.status === 'failed').length,
+    cancelled: items.filter(item => item.status === 'cancelled').length,
   };
   return <View style={[styles.root, !active && styles.hidden]} accessibilityElementsHidden={!active} importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}>
     <Text style={styles.title}>备份</Text>
     <Text style={styles.subtitle}>自动备份系统相册照片，或手动选择照片与视频上传。</Text>
     <BackupSettings session={session} api={api} folder={folder} />
-    <View style={styles.summary}><Text style={styles.summaryText}>等待 {summary.waiting}</Text><Text style={styles.summaryText}>上传中 {summary.uploading}</Text><Text style={styles.summaryText}>失败 {summary.failed}</Text></View>
+    <View style={styles.summary}><Text style={styles.summaryText}>等待 {summary.waiting}</Text><Text style={styles.summaryText}>上传中 {summary.uploading}</Text><Text style={styles.summaryText}>失败 {summary.failed}</Text><Text style={styles.summaryText}>已取消 {summary.cancelled}</Text></View>
     {choosing ? <View style={styles.chooser}>
       <View style={styles.row}><Text style={styles.section}>选择服务器目标文件夹</Text><Pressable style={styles.action} accessibilityRole="button" accessibilityLabel="关闭文件夹选择" onPress={() => setChoosing(false)}><Text style={styles.actionText}>关闭</Text></Pressable></View>
       <Text style={styles.chooserPath} numberOfLines={2}>{folderStack.length ? folderStack.map(entry => entry.name).join(' / ') : '服务器文件夹'}</Text>
@@ -151,10 +184,14 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
           {item.mime.startsWith('image/') || item.thumbnailPath ? <Image source={{uri: `file://${item.thumbnailPath ?? item.path}`}} style={styles.thumb} /> : <View style={styles.thumbPlaceholder}><Icon name="video" size={26} /></View>}
           <View style={styles.itemBody}><Text style={styles.fileName} numberOfLines={1}>{item.name}{item.motion ? ' · 动态照片' : ''}</Text>
             <Text style={styles.meta} numberOfLines={1}>目标：{item.folderName}</Text>
-            <Text style={styles.meta}>{({waiting: '等待', uploading: '上传中', success: '成功', skipped: '跳过', failed: '失败'} as const)[item.status]} · {item.progress}%{item.message ? ` · ${item.message}` : ''}</Text>
+            <Text style={styles.meta}>{({waiting: '等待', uploading: '上传中', success: '成功', skipped: '跳过', failed: '失败', cancelled: '已取消'} as const)[item.status]} · {item.progress}%{item.message ? ` · ${item.message}` : ''}</Text>
             <View style={styles.track}><View style={[styles.fill, {width: `${item.progress}%`}]} /></View>
           </View>
-          {item.status === 'failed' ? <Pressable style={styles.retry} accessibilityRole="button" accessibilityLabel={`重试上传 ${item.name}`} onPress={() => commit(itemsRef.current.map(entry => entry.id === item.id ? {...entry, status: 'waiting', progress: 0, message: undefined} : entry))}><Text style={styles.actionText}>重试</Text></Pressable> : null}
+          <View>
+            {item.status === 'waiting' || item.status === 'uploading' ? <Pressable style={styles.retry} accessibilityRole="button" accessibilityLabel={`取消上传 ${item.name}`} onPress={() => cancelUpload(item.id)}><Text style={styles.actionText}>取消</Text></Pressable> : null}
+            {item.status === 'failed' || item.status === 'cancelled' ? <Pressable style={styles.retry} accessibilityRole="button" accessibilityLabel={`重试上传 ${item.name}`} disabled={currentUpload.current?.id === item.id} onPress={() => retryUpload(item.id)}><Text style={styles.actionText}>{currentUpload.current?.id === item.id ? '取消中…' : '重试'}</Text></Pressable> : null}
+            {item.status === 'cancelled' ? <Pressable style={styles.retry} accessibilityRole="button" accessibilityLabel={`移除已取消的 ${item.name}`} disabled={currentUpload.current?.id === item.id} onPress={() => removeCancelled(item)}><Text style={styles.actionText}>移除</Text></Pressable> : null}
+          </View>
         </View>)}
       </ScrollView>
     </>}

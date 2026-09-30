@@ -1,8 +1,10 @@
 import {useCallback, useEffect, useRef, useState, useSyncExternalStore} from 'react';
 import {ApiError} from '../auth/api';
-import {BrowseApi, errorState, type LoadState, type Photo} from './api';
+import {BrowseApi, errorState, type LoadState, type Photo, type PhotoFilters} from './api';
 
-export function usePhotos(api: BrowseApi, folderId?: string, favorite = false) {
+export function usePhotos(api: BrowseApi, folderId?: string, favorite = false, filters: PhotoFilters = {}, enabled = true) {
+  const {q, mediaType, from, to} = filters;
+  const bboxKey = filters.bbox?.join(',');
   const revision = useSyncExternalStore(api.subscribe, api.getRevision);
   const [items, setItems] = useState<Photo[]>([]);
   const [favoritesSupported, setFavoritesSupported] = useState(false);
@@ -14,6 +16,7 @@ export function usePhotos(api: BrowseApi, folderId?: string, favorite = false) {
   const cursorRef = useRef<string | null>(null);
 
   const load = useCallback(async (restart: boolean) => {
+    if (!enabled) {return;}
     if (busy.current && !restart) {return;}
     const ticket = restart ? ++generation.current : generation.current;
     const nextCursor = restart ? undefined : cursorRef.current ?? undefined;
@@ -22,7 +25,7 @@ export function usePhotos(api: BrowseApi, folderId?: string, favorite = false) {
     if (restart) {setState('loading'); setItems([]); cursorRef.current = null; setCursor(null);}
     else {setMoreState('loading');}
     try {
-      const page = await api.listPhotos(folderId, nextCursor, 50, favorite);
+      const page = await api.listPhotos(folderId, nextCursor, 50, favorite, {q, mediaType, from, to, ...(bboxKey ? {bbox: bboxKey.split(',').map(Number) as NonNullable<PhotoFilters['bbox']>} : {})});
       if (ticket !== generation.current) {return;}
       const incoming = page.items;
       setFavoritesSupported(page.favorites_supported === true || incoming.some(p => typeof p.is_favorite === 'boolean'));
@@ -48,12 +51,13 @@ export function usePhotos(api: BrowseApi, folderId?: string, favorite = false) {
       }
       if (restart) {setState(errorState(error));} else {setMoreState(errorState(error));}
     } finally {if (ticket === generation.current) {busy.current = false;}}
-  }, [api, folderId, favorite]);
+  }, [api, folderId, favorite, q, mediaType, from, to, bboxKey, enabled]);
 
   useEffect(() => {
     load(true);
     const currentGeneration = generation.current;
     return () => {generation.current = currentGeneration + 1; busy.current = false;};
   }, [load, revision]);
-  return {items, cursor, state, moreState, favoritesSupported, refresh: () => load(true), loadMore: () => load(false)};
+  const remove = (ids: string[]) => {const removed = new Set(ids); setItems(old => old.filter(photo => !removed.has(photo.id)));};
+  return {remove, items, cursor, state, moreState, favoritesSupported, refresh: () => load(true), loadMore: () => load(false)};
 }

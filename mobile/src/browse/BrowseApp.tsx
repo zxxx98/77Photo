@@ -10,6 +10,14 @@ import {BrowseApi, errorState, groupPhotos, type Folder, type LoadState, type Ph
 import {usePhotos} from './usePhotos';
 import UploadPage from '../upload/UploadPage';
 import Icon from './Icon';
+import {Action, CreateFolder, Sheet, ui} from './ManagementUI';
+import PhotoFilters, {emptyFilters, hasFilters, queryFilters, type GalleryFilters} from './PhotoFilters';
+import {PhotoActions, usePhotoSelection} from './PhotoActions';
+import TrashPage from './TrashPage';
+import PhotoDetails from './PhotoDetails';
+import PeoplePage from './PeoplePage';
+import MapPage from '../map/MapPage';
+import type {MapFocus} from '../map/geometry';
 
 const ink = '#3D4A5C';
 const muted = '#75808A';
@@ -30,7 +38,7 @@ function StateView({state, retry}: {state: LoadState; retry: () => void}) {
   </View>;
 }
 
-function MediaTile({api, photo, size, open}: {api: BrowseApi; photo: Photo; size: number; open: () => void}) {
+function MediaTile({api, photo, size, open, longPress, selected}: {api: BrowseApi; photo: Photo; size: number; open: () => void; longPress?: () => void; selected?: boolean}) {
   const revision = useSyncExternalStore(api.subscribe, api.getRevision);
   const [source, setSource] = useState<{uri: string; headers: {Authorization: string}}>();
   const [failed, setFailed] = useState(false);
@@ -47,17 +55,18 @@ function MediaTile({api, photo, size, open}: {api: BrowseApi; photo: Photo; size
   }
   return <Pressable style={[styles.tile, {width: size, height: size}]} accessibilityRole="button"
     accessibilityLabel={`${photo.is_live_photo ? '动态照片' : photo.mime_type.startsWith('video/') ? '视频' : '照片'}，${photo.filename}`}
-    onPress={open}>
+    onPress={open} onLongPress={longPress} accessibilityState={selected === undefined ? undefined : {selected}}>
     {source && !failed ? <Image source={source} style={styles.tileImage} onError={imageError} resizeMode="cover" /> :
       <Text style={styles.tileFallback}>{failed ? '预览失败' : ''}</Text>}
+    {selected !== undefined ? <Text style={[styles.selectionBadge, selected && styles.selectionChecked]}>{selected ? '✓' : '○'}</Text> : null}
     {photo.is_live_photo ? <Text style={styles.badge}>LIVE</Text> : photo.mime_type.startsWith('video/') ? <View style={styles.badgeRow}><Icon name="video" tone="light" size={15} /><Text style={styles.badgeLabel}>视频</Text></View> : null}
   </Pressable>;
 }
 
-function MediaGrid({api, photos, open}: {api: BrowseApi; photos: Photo[]; open: (photo: Photo, all: Photo[]) => void}) {
+function MediaGrid({api, photos, open, selection}: {api: BrowseApi; photos: Photo[]; open: (photo: Photo, all: Photo[]) => void; selection?: ReturnType<typeof usePhotoSelection>}) {
   const {width} = useWindowDimensions();
   const size = Math.floor((width - 36) / 3);
-  return <View style={styles.grid}>{photos.map(photo => <MediaTile key={photo.id} api={api} photo={photo} size={size} open={() => open(photo, photos)} />)}</View>;
+  return <View style={styles.grid}>{photos.map(photo => <MediaTile key={photo.id} api={api} photo={photo} size={size} selected={selection?.selecting ? selection.ids.has(photo.id) : undefined} longPress={() => selection?.start(photo.id)} open={() => selection?.selecting ? selection.toggle(photo.id) : open(photo, photos)} />)}</View>;
 }
 
 function FolderCover({api, folder}: {api: BrowseApi; folder: Folder}) {
@@ -72,9 +81,21 @@ function FolderCover({api, folder}: {api: BrowseApi; folder: Folder}) {
   return <View style={styles.folderIcon}>{source ? <Image source={source} style={styles.folderImage} /> : <Icon name="folders" size={24} />}</View>;
 }
 
-function Photos({api, open, settings}: {api: BrowseApi; open: (photo: Photo, all: Photo[]) => void; settings: () => void}) {
+function Photos({api, open, settings, trash, map, people}: {api: BrowseApi; open: (photo: Photo, all: Photo[]) => void; settings: () => void; trash: () => void; map: () => void; people?: () => void}) {
   const [favorite, setFavorite] = useState(false);
-  const page = usePhotos(api, undefined, favorite);
+  const [filters, setFilters] = useState<GalleryFilters>(emptyFilters);
+  const [filtering, setFiltering] = useState(false);
+  const selection = usePhotoSelection();
+  const page = usePhotos(api, filters.folder?.id, favorite, queryFilters(filters));
+  const [libraryEmpty, setLibraryEmpty] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    setLibraryEmpty(null);
+    if (page.state === 'empty' && (hasFilters(filters) || favorite)) {
+      api.listPhotos(undefined, undefined, 1).then(result => {if (active) {setLibraryEmpty(result.items.length === 0);}}).catch(() => {});
+    }
+    return () => {active = false;};
+  }, [api, page.state, filters, favorite]);
   useEffect(() => {if (favorite && page.state === 'ready' && !page.favoritesSupported) {setFavorite(false);}}, [favorite, page.state, page.favoritesSupported]);
   const timeline = useMemo(() => groupPhotos(page.items).flatMap(group => {
     const rows: ({type: 'date'; key: string; date: string} | {type: 'row'; key: string; photos: Photo[]})[] =
@@ -85,14 +106,25 @@ function Photos({api, open, settings}: {api: BrowseApi; open: (photo: Photo, all
     return rows;
   }), [page.items]);
   return <View style={styles.page}>
-    <View style={styles.topRow}><Text style={styles.title}>77Photo</Text>{page.favoritesSupported ? <Pressable style={styles.settingsButton} accessibilityRole="button" accessibilityLabel={favorite ? '查看全部照片' : '查看收藏'} accessibilityState={{selected: favorite}} onPress={() => setFavorite(value => !value)}><Text style={styles.meta}>{favorite ? '全部照片' : '♥ 收藏'}</Text></Pressable> : null}<Pressable style={styles.settingsButton} accessibilityRole="button" accessibilityLabel="设置" onPress={settings}><Icon name="settings" size={22} /></Pressable></View>
-    {page.state !== 'ready' ? <StateView state={page.state} retry={page.refresh} /> :
-      <FlatList data={timeline} keyExtractor={item => item.key} onEndReached={() => {if (page.cursor && page.moreState === 'ready') {page.loadMore();}}}
-        onEndReachedThreshold={0.4} windowSize={7} initialNumToRender={8} refreshing={false} onRefresh={() => {page.refresh();}}
-        renderItem={({item}) => item.type === 'date' ? <Text style={styles.date}>{item.date.replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_, y, m, d) => `${y}年${Number(m)}月${Number(d)}日`)}</Text> :
-          <MediaGrid api={api} photos={item.photos} open={photo => open(photo, page.items)} />}
+    <View style={styles.topRow}><Text style={styles.title}>77Photo</Text><Pressable style={styles.settingsButton} accessibilityRole="button" accessibilityLabel="设置" onPress={settings}><Icon name="settings" size={22} /></Pressable></View>
+    <View style={ui.row}>
+      <Action label={hasFilters(filters) ? '搜索与筛选 · 已应用' : '搜索与筛选'} selected={hasFilters(filters)} onPress={() => setFiltering(true)} />
+      {page.favoritesSupported ? <Action label="♥ 收藏" selected={favorite} onPress={() => {selection.reset(); setFavorite(value => !value);}} /> : null}
+      <Action label="地图" onPress={map} />
+      {people ? <Action label="人物" onPress={people} /> : null}
+      <Action label="回收站" onPress={trash} />
+      {!selection.selecting ? <Action label="选择" disabled={!page.items.length} onPress={() => selection.start()} /> : null}
+    </View>
+    {hasFilters(filters) ? <View style={ui.row}><Text style={styles.path}>{[filters.q && `名称：${filters.q}`, filters.folder?.name, filters.fromDate && `从 ${filters.fromDate}`, filters.toDate && `至 ${filters.toDate}`, filters.mediaType === 'photo' ? '照片' : filters.mediaType === 'video' ? '视频' : ''].filter(Boolean).join(' · ')}</Text><Action label="清除筛选" onPress={() => {selection.reset(); setFilters(emptyFilters);}} /></View> : null}
+    {page.state === 'empty' ? <View style={styles.state}><Text style={styles.stateText}>{(hasFilters(filters) || favorite) && libraryEmpty !== true ? '没有匹配的照片，试试清除筛选或收藏条件' : '图库还没有照片'}</Text></View> : page.state !== 'ready' ? <StateView state={page.state} retry={page.refresh} /> :
+      <FlatList data={timeline} extraData={selection.ids} keyExtractor={item => item.key} onEndReached={() => {if (page.cursor && page.moreState === 'ready') {page.loadMore();}}}
+        onEndReachedThreshold={0.4} windowSize={7} initialNumToRender={8} refreshing={false} onRefresh={() => {selection.reset(); page.refresh();}}
+        renderItem={({item}) => item.type === 'date' ? <View style={ui.row}><Text style={styles.date}>{item.date.replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_, y, m, d) => `${y}年${Number(m)}月${Number(d)}日`)}</Text>{selection.selecting ? <Action label={page.items.filter(photo => photo.captured_at.slice(0, 10) === item.date).every(photo => selection.ids.has(photo.id)) ? '取消当天' : '选择当天'} onPress={() => selection.toggleDay(page.items.filter(photo => photo.captured_at.slice(0, 10) === item.date))} /> : null}</View> :
+          <MediaGrid api={api} photos={item.photos} selection={selection} open={photo => open(photo, page.items)} />}
         ListFooterComponent={page.moreState === 'loading' ? <ActivityIndicator color={ink} /> : page.moreState !== 'ready' ? <StateView state={page.moreState} retry={page.loadMore} /> : undefined}
         contentContainerStyle={styles.list} />}
+    {selection.selecting ? <PhotoActions api={api} photos={page.items.filter(photo => selection.ids.has(photo.id))} completed={page.remove} retain={ids => selection.setIds(new Set(ids))} close={() => {selection.reset(); api.refreshBrowsing();}} /> : null}
+    {filtering ? <PhotoFilters api={api} value={filters} close={() => setFiltering(false)} apply={value => {selection.reset(); setFilters(value);}} /> : null}
   </View>;
 }
 
@@ -100,21 +132,31 @@ function Folders({api, stack, setStack, open, settings, upload}: {api: BrowseApi
   const revision = useSyncExternalStore(api.subscribe, api.getRevision);
   const current = stack[stack.length - 1];
   const viewportHeight = useRef(0);
+  const folderGeneration = useRef(0);
+  const [creating, setCreating] = useState(false);
+  const selection = usePhotoSelection();
   const [folders, setFolders] = useState<Folder[]>([]);
   const [state, setState] = useState<LoadState>('loading');
-  const page = usePhotos(api, current?.id);
+  const page = usePhotos(api, current?.id, false, {}, !!current);
   const load = useCallback(async () => {
-    setState('loading');
-    try {const result = await api.listFolders(current?.id); setFolders(result); setState(result.length ? 'ready' : 'empty');}
-    catch (error) {setState(errorState(error));}
+    const ticket = ++folderGeneration.current;
+    setState('loading'); setFolders([]);
+    try {const result = await api.listFolders(current?.id); if (ticket === folderGeneration.current) {setFolders(result); setState(result.length ? 'ready' : 'empty');}}
+    catch (error) {if (ticket === folderGeneration.current) {setState(errorState(error));}}
   }, [api, current?.id]);
-  useEffect(() => {load();}, [load, revision]);
+  useEffect(() => {load(); const ticket = folderGeneration.current; return () => {folderGeneration.current = ticket + 1;};}, [load, revision]);
+  const resetSelection = selection.reset;
+  useEffect(() => {resetSelection();}, [current?.id, resetSelection]);
   const loadNearEnd = (remaining: number) => {
     if (current && remaining < 320 && page.cursor && page.moreState === 'ready') {page.loadMore();}
   };
   return <View style={styles.page}>
     <View style={styles.headingRow}>{current ? <Pressable accessibilityRole="button" accessibilityLabel="返回上级文件夹" style={styles.back} onPress={() => setStack(stack.slice(0, -1))}><Icon name="back" size={24} /></Pressable> : null}
       <Text style={styles.folderHeading} numberOfLines={1}>{current?.name ?? '文件夹'}</Text><View style={styles.headingActions}>{current?.effective_permission === 'write' ? <Pressable style={styles.headerAction} accessibilityRole="button" accessibilityLabel={`上传到 ${current.name}`} onPress={() => upload(current)}><Icon name="plus" size={22} /></Pressable> : null}<Pressable style={styles.headerAction} accessibilityRole="button" accessibilityLabel="设置" onPress={settings}><Icon name="settings" size={22} /></Pressable></View></View>
+    <View style={ui.row}>
+      {!current || current.effective_permission === 'write' ? <Action label="新建文件夹" disabled={state === 'loading' || ['offline', 'failed', 'forbidden', 'expired'].includes(state)} onPress={() => setCreating(true)} /> : null}
+      {current && !selection.selecting ? <Action label="选择照片" disabled={!page.items.length} onPress={() => selection.start()} /> : null}
+    </View>
     <ScrollView contentContainerStyle={styles.list} scrollEventThrottle={120}
       onLayout={event => {viewportHeight.current = event.nativeEvent.layout.height;}}
       onContentSizeChange={(_width, height) => loadNearEnd(height - viewportHeight.current)}
@@ -127,14 +169,16 @@ function Folders({api, stack, setStack, open, settings, upload}: {api: BrowseApi
         </Pressable>) : state !== 'empty' ? <StateView state={state} retry={load} /> : null}
       {current ? <>
         <Text style={styles.section}>此目录及子目录媒体</Text>
-        {page.state === 'ready' ? <><MediaGrid api={api} photos={page.items} open={open} />
+        {page.state === 'ready' ? <><MediaGrid api={api} photos={page.items} open={open} selection={selection} />
           {page.moreState === 'loading' ? <ActivityIndicator style={styles.moreSpinner} color={ink} /> : page.moreState !== 'ready' ? <StateView state={page.moreState} retry={page.loadMore} /> : null}</> : <StateView state={page.state} retry={page.refresh} />}
       </> : state === 'empty' ? <StateView state="empty" retry={load} /> : null}
     </ScrollView>
+    {selection.selecting ? <PhotoActions api={api} photos={page.items.filter(photo => selection.ids.has(photo.id))} completed={ids => {page.remove(ids); load();}} retain={ids => selection.setIds(new Set(ids))} close={() => {selection.reset(); api.refreshBrowsing();}} /> : null}
+    {creating ? <CreateFolder api={api} parent={current} close={() => setCreating(false)} created={() => {load();}} /> : null}
   </View>;
 }
 
-function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; photos: Photo[]; close: () => void}) {
+function Viewer({api, initial, photos, close, onMap}: {api: BrowseApi; initial: Photo; photos: Photo[]; close: () => void; onMap: (focus: MapFocus) => void}) {
   const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(Math.max(0, photos.findIndex(p => p.id === initial.id)));
   const selected = photos[index] ?? initial;
@@ -142,6 +186,9 @@ function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; 
   selectedID.current = selected.id;
   const [photo, setPhoto] = useState(selected);
   const [folderName, setFolderName] = useState('');
+  const [canManage, setCanManage] = useState(false);
+  const [managing, setManaging] = useState(false);
+  const [details, setDetails] = useState(false);
   const revision = useSyncExternalStore(api.subscribe, api.getRevision);
   const [source, setSource] = useState<{uri: string; headers: {Authorization: string}}>();
   const [motionSource, setMotionSource] = useState<{uri: string; headers: {Authorization: string}}>();
@@ -167,13 +214,14 @@ function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; 
   }, []);
   useEffect(() => {
     let active = true;
-    setPhoto({...selected, is_favorite: favoriteOverrides.current.get(selected.id) ?? selected.is_favorite}); setFolderName(''); setZoom(1); setState('loading'); setSource(undefined);
+    setDetails(false);
+    setPhoto({...selected, is_favorite: favoriteOverrides.current.get(selected.id) ?? selected.is_favorite}); setFolderName(''); setCanManage(false); setZoom(1); setState('loading'); setSource(undefined);
     setMotionSource(undefined); setMotionState('none'); setNotice('');
     Promise.all([api.photo(selected.id), api.mediaSource(selected.id, 'preview'), api.liveStatus([selected.id]).catch(() => selected.is_live_photo ? [selected.id] : [])]).then(([detail, preview, liveIds]) => {
       if (!active) {return;}
       const isLive = liveIds.includes(selected.id);
       setPhoto({...detail, is_favorite: favoriteOverrides.current.get(selected.id) ?? detail.is_favorite, is_live_photo: isLive}); setSource(preview); setState('ready');
-      api.folder(detail.folder_id).then(folder => {if (active) {setFolderName(folder.name);}}).catch(() => {});
+      api.writableFolder(detail.folder_id).then(folder => {if (active) {setFolderName(folder.name); setCanManage(folder.effective_permission === 'write');}}).catch(() => {});
       if (isLive) {
         setMotionState('loading');
         api.mediaSource(selected.id, 'motion').then(value => {if (active) {setMotionSource(value);}})
@@ -276,6 +324,7 @@ function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; 
       {motionState === 'failed' ? <Pressable accessibilityRole="button" accessibilityLabel="重试播放动态片段" style={styles.motionRetry} onPress={() => setMotionRetry(value => value + 1)}><Text style={styles.motionRetryText}>重试动态片段</Text></Pressable> : null}
     </View>
     <View style={[styles.viewerSheet, {paddingBottom: Math.max(insets.bottom, 12)}]}>
+      <View style={ui.row}><Action label="照片详情" disabled={state !== 'ready'} onPress={() => setDetails(true)} />{canManage ? <Action label="管理照片 · 移动 / 删除" onPress={() => setManaging(true)} /> : null}</View>
       <View style={styles.viewerNav}>
         <Pressable disabled={index === 0} accessibilityRole="button" accessibilityLabel="上一项" accessibilityState={{disabled: index === 0}} style={styles.navButton} onPress={() => setIndex(index - 1)}><Icon name="back" tone={index === 0 ? 'muted' : 'ink'} size={22} /></Pressable>
         <View style={styles.viewerIdentity}><Text style={styles.viewerName} numberOfLines={1}>{photo.filename}</Text><Text style={styles.viewerMeta} numberOfLines={1}>{photo.captured_at.replace('T', ' ').slice(0, 16)}{folderName ? ` · ${folderName}` : ''} · {(photo.size / 1024 / 1024).toFixed(1)} MB</Text></View>
@@ -283,6 +332,10 @@ function Viewer({api, initial, photos, close}: {api: BrowseApi; initial: Photo; 
       </View>
       {notice ? <Text accessibilityRole="alert" style={styles.viewerNotice}>{notice}</Text> : null}
     </View>
+    {details ? <PhotoDetails api={api} photo={photo} folderName={folderName} close={() => setDetails(false)} onMap={onMap} /> : null}
+    {managing ? <Sheet title="管理照片" close={() => setManaging(false)}>
+      <PhotoActions api={api} photos={[photo]} completed={ids => {if (ids.includes(photo.id)) {close();}}} close={() => setManaging(false)} />
+    </Sheet> : null}
   </View>;
 }
 
@@ -313,37 +366,49 @@ export default function BrowseApp({session, onSession, onSignOut, error}: {sessi
   const [uploadFolder, setUploadFolder] = useState<Folder | null>(null);
   const [viewer, setViewer] = useState<{photo: Photo; photos: Photo[]} | null>(null);
   const [settings, setSettings] = useState(false);
+  const [trash, setTrash] = useState(false);
+  const [workspace, setWorkspace] = useState<'map' | 'people' | null>(null);
+  const [mapFocus, setMapFocus] = useState<MapFocus>();
+  const [admin, setAdmin] = useState(false);
+  const revision = useSyncExternalStore(api.subscribe, api.getRevision);
+  useEffect(() => {
+    let active = true;
+    api.me().then(me => {if (active) {setAdmin(me.role === 'admin');}}).catch(() => {if (active) {setAdmin(false);}});
+    return () => {active = false;};
+  }, [api, revision]);
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (viewer) {setViewer(null); api.refreshBrowsing(); return true;}
       if (settings) {setSettings(false); return true;}
+      if (trash) {setTrash(false); api.refreshBrowsing(); return true;}
+      if (workspace) {return false;}
       if (tab === 'folders' && stack.length) {setStack(stack.slice(0, -1)); return true;}
       if (tab !== 'photos') {setTab('photos'); return true;}
       return false;
     });
     return () => subscription.remove();
-  }, [api, viewer, settings, tab, stack]);
+  }, [api, viewer, settings, trash, workspace, tab, stack]);
   const open = (photo: Photo, photos: Photo[]) => setViewer({photo, photos});
   return <SafeAreaView style={[styles.root, viewer && styles.viewerRoot]} edges={viewer ? ['top'] : ['top', 'bottom']}>
     <StatusBar barStyle="dark-content" />
     {connectionNotice ? <Text accessibilityRole="alert" style={styles.error}>{connectionNotice}</Text> : null}
-    {viewer ? <Viewer api={api} initial={viewer.photo} photos={viewer.photos} close={() => {setViewer(null); api.refreshBrowsing();}} /> : settings ?
+    {trash ? <TrashPage api={api} close={() => {setTrash(false); api.refreshBrowsing();}} /> : viewer ? <Viewer api={api} initial={viewer.photo} photos={viewer.photos} close={() => {setViewer(null); api.refreshBrowsing();}} onMap={focus => {setMapFocus(focus); setWorkspace('map'); setViewer(null); api.refreshBrowsing();}} /> : settings ?
       <ScrollView style={styles.content} contentContainerStyle={styles.settingsContent} keyboardShouldPersistTaps="handled">
         <View style={styles.settingsHeader}><Text style={styles.settingsTitle}>设置</Text><Pressable accessibilityRole="button" accessibilityLabel="返回" style={styles.settingsBack} onPress={() => setSettings(false)}><Icon name="back" size={22} /><Text style={styles.backLabel}>返回</Text></Pressable></View>
         <Text style={styles.settingsUsername}>{session.username}</Text>
         <ServerAddresses api={api} session={session} />
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         <Pressable accessibilityRole="button" style={styles.retry} onPress={onSignOut}><Text style={styles.retryText}>退出当前设备</Text></Pressable></ScrollView> : null}
-    <View style={[styles.content, (settings || !!viewer) && styles.hidden]} accessibilityElementsHidden={settings || !!viewer} importantForAccessibility={settings || viewer ? 'no-hide-descendants' : 'auto'}>
-      <View style={styles.content}>{tab === 'photos' ? <Photos api={api} open={open} settings={() => setSettings(true)} /> : tab === 'folders' ? <Folders api={api} stack={stack} setStack={setStack} open={open} settings={() => setSettings(true)} upload={folder => {setUploadFolder(folder); setTab('backup');}} /> : null}
-        <UploadPage api={api} session={session} active={tab === 'backup' && !settings && !viewer} incomingFolder={uploadFolder} clearIncoming={() => setUploadFolder(null)} /></View>
-      <View style={styles.tabs}>{(['photos', 'folders', 'backup'] as const).map(item => {
+    <View style={[styles.content, (settings || !!viewer || trash) && styles.hidden]} accessibilityElementsHidden={settings || !!viewer || trash} importantForAccessibility={settings || viewer || trash ? 'no-hide-descendants' : 'auto'}>
+      <View style={styles.content}>{workspace === 'map' ? <MapPage api={api} close={() => setWorkspace(null)} open={open} focus={mapFocus} /> : workspace === 'people' ? <PeoplePage api={api} close={() => setWorkspace(null)} open={open} /> : tab === 'photos' ? <Photos api={api} open={open} settings={() => setSettings(true)} trash={() => setTrash(true)} map={() => {setMapFocus(undefined); setWorkspace('map');}} people={admin ? () => setWorkspace('people') : undefined} /> : tab === 'folders' ? <Folders api={api} stack={stack} setStack={setStack} open={open} settings={() => setSettings(true)} upload={folder => {setUploadFolder(folder); setTab('backup');}} /> : null}
+        <UploadPage api={api} session={session} active={tab === 'backup' && !settings && !viewer && !trash && !workspace} incomingFolder={uploadFolder} clearIncoming={() => setUploadFolder(null)} /></View>
+      {!workspace ? <View style={styles.tabs}>{(['photos', 'folders', 'backup'] as const).map(item => {
         const label = {photos: '照片', folders: '文件夹', backup: '备份'}[item];
         const active = tab === item;
         return <Pressable key={item} accessibilityRole="tab" accessibilityLabel={label} accessibilityState={{selected: active}} style={[styles.tab, active && styles.tabSelected]} onPress={() => setTab(item)}>
           <Icon name={item} tone={active ? 'ink' : 'muted'} size={23} /><Text style={[styles.tabText, active && styles.tabActive]}>{label}</Text>
         </Pressable>;
-      })}</View>
+      })}</View> : null}
     </View>
   </SafeAreaView>;
 }
@@ -357,6 +422,7 @@ const styles = StyleSheet.create({
   folderHeading: {flex: 1, minWidth: 0, fontSize: 26, color: ink, fontWeight: '700', marginLeft: 20, marginRight: 8}, headingActions: {flexDirection: 'row', alignItems: 'center', marginRight: 12}, headerAction: {width: 48, height: 48, alignItems: 'center', justifyContent: 'center'}, moreSpinner: {marginVertical: 20},
   topRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}, settingsButton: {minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center', marginRight: 12}, settingsText: {fontSize: 23, color: ink},
   list: {paddingBottom: 28}, date: {fontSize: 18, fontWeight: '600', color: ink, marginHorizontal: 16, marginTop: 20, marginBottom: 12},
+  selectionBadge: {position: 'absolute', left: 5, top: 5, backgroundColor: '#FFF', color: '#3D4A5C', fontWeight: '700', fontSize: 18, borderRadius: 14, width: 28, height: 28, textAlign: 'center', lineHeight: 28}, selectionChecked: {backgroundColor: '#3D4A5C', color: '#FFF'},
   grid: {flexDirection: 'row', flexWrap: 'wrap', gap: 2, marginHorizontal: 16}, tile: {backgroundColor: '#ECE9E5', alignItems: 'center', justifyContent: 'center'}, tileImage: {width: '100%', height: '100%'}, tileFallback: {color: muted, fontSize: 12},
   badge: {position: 'absolute', right: 5, bottom: 5, backgroundColor: '#263543CC', color: '#FFF', fontSize: 11, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 5, overflow: 'hidden'}, badgeRow: {position: 'absolute', right: 5, bottom: 5, backgroundColor: '#263543CC', borderRadius: 6, paddingHorizontal: 5, paddingVertical: 3, flexDirection: 'row', alignItems: 'center'}, badgeLabel: {color: '#FFF', fontSize: 11, marginLeft: 2},
   state: {minHeight: 130, alignItems: 'center', justifyContent: 'center', padding: 20}, stateText: {fontSize: 15, color: muted, textAlign: 'center', marginTop: 10},

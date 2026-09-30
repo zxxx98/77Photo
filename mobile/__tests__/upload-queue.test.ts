@@ -106,3 +106,20 @@ test('video upload can use a longer timeout than the ordinary upload', async () 
 test('server disk-full response names the condition for backup retry', () => {
   expect(uploadError(new ApiError(507, 'STORAGE_FULL', 'server storage is full'))).toContain('服务器存储空间不足');
 });
+
+test('cancelled work stays cancelled on relaunch and keeps staged files for retry', async () => {
+  const session = {server: 'http://192.168.1.6', username: 'alice', accessToken: 'a', accessExpiresAt: '', refreshToken: 'r', refreshExpiresAt: ''};
+  const item = {...pairMedia([{path: '/cancelled', name: 'cancelled.jpg', mime: 'image/jpeg', size: 20}], folder)[0], status: 'cancelled' as const};
+  (NativeModules.Photo77Picker.deleteFile as jest.Mock).mockClear();
+  await saveQueue(session, [item]); expect(await loadQueue(session)).toMatchObject([{status: 'cancelled'}]);
+  expect(NativeModules.Photo77Picker.deleteFile).not.toHaveBeenCalled();
+});
+
+test('cancelling before folder lookup finishes never starts native transfer', async () => {
+  const controller = new AbortController(); let finish!: () => void;
+  const api = {request: jest.fn(() => new Promise<void>(resolve => {finish = resolve;})), validSession: jest.fn()} as unknown as BrowseApi;
+  (ReactNativeBlobUtil.config as jest.Mock).mockClear();
+  const item = pairMedia([{path: '/a', name: 'a.jpg', mime: 'image/jpeg', size: 20}], folder)[0];
+  const result = uploadOne(api, item, jest.fn(), controller.signal); controller.abort(); finish();
+  await expect(result).rejects.toThrow('取消'); expect(ReactNativeBlobUtil.config).not.toHaveBeenCalled();
+});

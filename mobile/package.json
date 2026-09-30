@@ -1,6 +1,6 @@
 {
   "name": "Photo77",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
@@ -20,7 +20,8 @@
     "react-native-blob-util": "^0.24.12",
     "react-native-keychain": "^10.0.0",
     "react-native-safe-area-context": "^5.5.2",
-    "react-native-video": "^6.19.3"
+    "react-native-video": "^6.19.3",
+    "supercluster": "^9.1.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

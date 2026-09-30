@@ -40,6 +40,32 @@ Automatic selection tries the last working address first and then verified addre
 
 Manual device checks (ARM64 only): configure LAN and overlay addresses, switch Wi-Fi to cellular with the overlay enabled, disable the overlay to verify offline recovery, reject a different server, reconnect after token expiry, and interrupt an upload before switching addresses. Confirm media reloads, login survives offline periods, and pending uploads remain visible.
 
+## Photo management
+
+In **Photos**, use **搜索与筛选** to combine a filename query, media type, folder and capture-date range with the existing favorites filter. Dates use `YYYY-MM-DD`; the end date includes the entire day in the device's local timezone. Clearing filters leaves the favorites toggle independent. An empty library and a search without matches have separate messages.
+
+Long-press a thumbnail, or tap **选择**, to enter selection mode. The timeline can select the currently loaded photos for a day; folder browsing also supports selection. Use **移动** to choose a writable directory belonging to the same photo owner, or **删除** to move selected media into trash. Moving supports automatic renaming on a filename conflict. Selection can include more than 500 items; delete/restore/purge requests are chunked to the server limit. Moves run sequentially using the existing single-photo endpoint. Read-only selections disable management actions; mixed writable/read-only selections may partially fail and retain the failed items. Android Back exits selection mode first.
+
+In the viewer, **管理照片 · 移动 / 删除** offers the same operations for one item when its folder is writable. In **Folders**, use **新建文件夹** to create a root directory or a child of the current writable directory; it becomes available for browsing and upload selection.
+
+Open **回收站** from **Photos** to view your own deleted media, expiry times and previews. Select items to restore to their original directories or another writable directory of the same owner, optionally renaming conflicts. **永久删除** and **清空我的回收站** require confirmation. Clearing includes eligible items not yet loaded, using a fixed cutoff for the whole operation. Pending file operations can be retried. This view does not expose an administrator's all-user trash scope.
+
+Partial failures retain the failed selection and show per-item reasons. Lost write responses are never automatically replayed; refresh to reconcile the server result before retrying. Trash does not grant shared-folder writers access to another owner's deleted library. Photo deletion uses the server batch-delete endpoint so Live Photo companions follow the server's trash lifecycle.
+
+ARM64 device acceptance: combine filters and load multiple pages; long-press/select a day; move and delete single/multiple images, videos and Live Photos; create root/nested folders and upload into them; browse read/write shares; restore after a target disappears or a name conflicts; permanently delete and clear unpaged trash; interrupt a write and reconcile by refreshing. Verify Android Back, keyboard and bottom-sheet layout on a small screen. See the [mobile priority plan](../docs/superpowers/plans/2026-09-30-mobile-feature-priorities.md) for implementation and verification status.
+
+## Map, people, details and manual upload cancellation
+
+From **Photos**, open **地图相册** to browse geotagged media. Drag or pinch the map, expand a cluster, browse the current area or a co-located place, and choose a year. Area photo lists paginate. Map availability, tile layers and attribution come from the server; failed tiles can be retried. Tile requests carry no account credentials, while media thumbnails use the authenticated media API.
+
+**人物相册** is available to administrators, matching the Web API permissions, when face recognition is enabled. Browse paginated people and person photos, then use **人物命名** to name or clear a name. Photos with multiple faces belonging to the person appear once. Revision conflicts keep the input and ask you to refresh before retrying.
+
+In the viewer, open **照片详情** for size, dimensions, capture time, folder and available camera metadata. Valid GPS coordinates show a mini map when the server enables maps; jump to the full map or open the position in Amap using WGS84. Missing metadata is omitted, and absent or invalid coordinates show a clear message.
+
+In the manual upload queue, **取消** stops waiting or active work and retains staged files for **重试**. **移除** persists removal before deleting those files. Retry/removal wait until the old transfer settles, and late progress or success cannot revive a cancelled item. If the server already received the upload, refresh the library to reconcile it; retries use existing server deduplication. Cancellation persists across relaunch. Leaving the page by unmounting it or changing accounts aborts the old transfer; switching tabs preserves the mounted queue's normal behavior.
+
+ARM64 device acceptance: drag/pinch and transition back to one finger; expand clusters and co-located places; filter years and paginate; inspect locations across the date line; interrupt tile loading and retry. Verify ordinary users cannot enter people administration, disabled recognition and empty lists have messages, person pagination and naming conflicts work, and Android Back returns to the correct context. Inspect absent and zero GPS coordinates, disabled maps, mini-map/full-map jumps and Amap with/without an installed app. Cancel waiting and active image/video/Live Photo uploads, exercise late responses, retry/remove, relaunch and change accounts; verify automatic backup still works independently.
+
 ## Automatic photo backup
 
 In **Backup**, select a writable server folder, enable **自动备份照片**, and grant access to all photos. Android 14+ selected-photo access is insufficient for automatic backup; manual uploads remain available without full library access. Automatic backup includes all existing and newly added photos visible in Android MediaStore, including images with embedded motion. Standalone videos and separate MOV companions still use manual upload.

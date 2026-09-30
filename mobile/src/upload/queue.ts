@@ -7,7 +7,7 @@ import type {BrowseApi, Folder} from '../browse/api';
 
 export type PickedFile = {path: string; name: string; mime: string; size: number; thumbnailPath?: string};
 export type UploadItem = PickedFile & {
-  id: string; folderId: string; folderName: string; status: 'waiting' | 'uploading' | 'success' | 'skipped' | 'failed';
+  id: string; folderId: string; folderName: string; status: 'waiting' | 'uploading' | 'success' | 'skipped' | 'failed' | 'cancelled';
   progress: number; message?: string; motion?: PickedFile;
 };
 const picker = NativeModules.Photo77Picker as {
@@ -79,7 +79,7 @@ function decodeError(status: number, body: string): ApiError {
 
 export async function uploadOne(api: BrowseApi, item: UploadItem, progress: (value: number) => void,
   signal?: AbortSignal, timeoutMs = 120000): Promise<'success' | 'skipped'> {
-  const checkCancelled = () => {if (signal?.aborted) {throw new Error('上传已暂停');}};
+  const checkCancelled = () => {if (signal?.aborted) {throw new Error('上传已取消或暂停');}};
   checkCancelled();
   // A deleted or newly unreadable target fails early. The upload endpoint is
   // authoritative for write permission, including inherited shared grants.
@@ -101,6 +101,7 @@ export async function uploadOne(api: BrowseApi, item: UploadItem, progress: (val
     request.uploadProgress({interval: 250}, (sent, total) => {if (total > 0) {progress(Math.min(99, Math.round(sent / total * 100)));}});
     const cancel = () => {request.cancel(() => {});};
     signal?.addEventListener('abort', cancel);
+    if (signal?.aborted) {cancel();}
     let response;
     try {response = await request;}
     finally {signal?.removeEventListener('abort', cancel);}
