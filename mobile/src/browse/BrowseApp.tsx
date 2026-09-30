@@ -328,8 +328,9 @@ export default function BrowseApp({session, onSession, onSignOut, error}: {sessi
     <StatusBar barStyle="dark-content" />
     {connectionNotice ? <Text accessibilityRole="alert" style={styles.error}>{connectionNotice}</Text> : null}
     {viewer ? <Viewer api={api} initial={viewer.photo} photos={viewer.photos} close={() => {setViewer(null); api.refreshBrowsing();}} /> : settings ?
-      <ScrollView style={styles.page} keyboardShouldPersistTaps="handled"><Pressable accessibilityRole="button" style={styles.back} onPress={() => setSettings(false)}><Icon name="back" size={22} /><Text style={styles.backLabel}>返回</Text></Pressable>
-        <Text style={styles.title}>设置</Text><Text style={styles.meta}>{session.username}</Text>
+      <ScrollView style={styles.content} contentContainerStyle={styles.settingsContent} keyboardShouldPersistTaps="handled">
+        <View style={styles.settingsHeader}><Text style={styles.settingsTitle}>设置</Text><Pressable accessibilityRole="button" accessibilityLabel="返回" style={styles.settingsBack} onPress={() => setSettings(false)}><Icon name="back" size={22} /><Text style={styles.backLabel}>返回</Text></Pressable></View>
+        <Text style={styles.settingsUsername}>{session.username}</Text>
         <ServerAddresses api={api} session={session} />
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         <Pressable accessibilityRole="button" style={styles.retry} onPress={onSignOut}><Text style={styles.retryText}>退出当前设备</Text></Pressable></ScrollView> : null}
@@ -350,6 +351,8 @@ export default function BrowseApp({session, onSession, onSignOut, error}: {sessi
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: paper}, viewerRoot: {backgroundColor: '#161B22'}, content: {flex: 1}, hidden: {display: 'none'}, page: {flex: 1, paddingTop: 14},
   title: {fontSize: 26, color: ink, fontWeight: '700', marginHorizontal: 20, marginBottom: 14},
+  settingsContent: {paddingTop: 14, paddingBottom: 32}, settingsHeader: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14},
+  settingsTitle: {fontSize: 26, color: ink, fontWeight: '700', marginLeft: 20}, settingsBack: {minHeight: 48, flexDirection: 'row', alignItems: 'center', marginRight: 12}, settingsUsername: {color: muted, fontSize: 13, marginHorizontal: 20, marginTop: 5},
   headingRow: {flexDirection: 'row', alignItems: 'center'}, back: {minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center'}, backText: {color: ink, fontSize: 30}, backLabel: {color: ink, fontSize: 15, marginRight: 12},
   folderHeading: {flex: 1, minWidth: 0, fontSize: 26, color: ink, fontWeight: '700', marginLeft: 20, marginRight: 8}, headingActions: {flexDirection: 'row', alignItems: 'center', marginRight: 12}, headerAction: {width: 48, height: 48, alignItems: 'center', justifyContent: 'center'}, moreSpinner: {marginVertical: 20},
   topRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}, settingsButton: {minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center', marginRight: 12}, settingsText: {fontSize: 23, color: ink},
