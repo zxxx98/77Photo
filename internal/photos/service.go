@@ -214,15 +214,15 @@ func (s *Service) Upload(ctx context.Context, principal acl.Principal, input Upl
 		if errors.Is(err, ErrUploadTooLarge) {
 			return Photo{}, err
 		}
-		return Photo{}, fmt.Errorf("%w: %v", ErrUploadFailed, err)
+		return Photo{}, fmt.Errorf("%w: %w", ErrUploadFailed, err)
 	}
 	if err := temporary.Sync(); err != nil {
 		cleanup()
-		return Photo{}, fmt.Errorf("%w: sync temporary file: %v", ErrUploadFailed, err)
+		return Photo{}, fmt.Errorf("%w: sync temporary file: %w", ErrUploadFailed, err)
 	}
 	if err := temporary.Close(); err != nil {
 		_ = os.Remove(temporaryPath)
-		return Photo{}, fmt.Errorf("%w: close temporary file: %v", ErrUploadFailed, err)
+		return Photo{}, fmt.Errorf("%w: close temporary file: %w", ErrUploadFailed, err)
 	}
 	temporary = nil
 	checksum := hex.EncodeToString(hash[:])

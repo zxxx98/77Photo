@@ -1,6 +1,7 @@
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import type {BrowseApi} from '../src/browse/api';
-import {loadQueue, pairMedia, saveQueue, uploadOne} from '../src/upload/queue';
+import {loadQueue, pairMedia, saveQueue, uploadError, uploadOne} from '../src/upload/queue';
+import {ApiError} from '../src/auth/api';
 import {NativeModules} from 'react-native';
 
 jest.mock('@react-native-async-storage/async-storage', () => {
@@ -91,4 +92,17 @@ test('backup cancellation aborts the active upload and never starts another requ
   await expect(result).rejects.toThrow('cancelled');
   expect(request.cancel).toHaveBeenCalledTimes(1);
   expect(send).toHaveBeenCalledTimes(1);
+});
+
+test('video upload can use a longer timeout than the ordinary upload', async () => {
+  const response = Object.assign(Promise.resolve({info: () => ({status: 201})}), {uploadProgress: jest.fn()});
+  (ReactNativeBlobUtil.config as jest.Mock).mockReturnValue({fetch: jest.fn(() => response)});
+  const api = {request: jest.fn().mockResolvedValue(folder), validSession: jest.fn().mockResolvedValue({server: 'http://192.168.1.5', accessToken: 'a'})} as unknown as BrowseApi;
+  const item = pairMedia([{path: '/clip', name: 'clip.mp4', mime: 'video/mp4', size: 50}], folder)[0];
+  await expect(uploadOne(api, item, jest.fn(), undefined, 30 * 60 * 1000)).resolves.toBe('success');
+  expect(ReactNativeBlobUtil.config).toHaveBeenCalledWith({timeout: 30 * 60 * 1000, followRedirect: false});
+});
+
+test('server disk-full response names the condition for backup retry', () => {
+  expect(uploadError(new ApiError(507, 'STORAGE_FULL', 'server storage is full'))).toContain('服务器存储空间不足');
 });

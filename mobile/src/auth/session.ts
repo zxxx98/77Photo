@@ -6,6 +6,7 @@ export type MobileSession = {
   server: string;
   profile?: ServerProfile;
   username: string;
+  userId?: string;
   accessToken: string;
   accessExpiresAt: string;
   refreshToken: string;

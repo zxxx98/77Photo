@@ -32,13 +32,14 @@ type SessionResponse = {
   access_token_expires_at: string;
   refresh_token: string;
   refresh_token_expires_at: string;
-  user: {username: string};
+  user: {id: string; username: string};
 };
 
 function sessionFromResponse(server: string, data: SessionResponse): MobileSession {
   return {
     server,
     username: data.user.username,
+    userId: data.user.id,
     accessToken: data.access_token,
     accessExpiresAt: data.access_token_expires_at,
     refreshToken: data.refresh_token,
@@ -77,11 +78,10 @@ export async function refresh(session: MobileSession): Promise<MobileSession> {
   return {...session, ...sessionFromResponse(session.server, data)};
 }
 
-export async function me(session: MobileSession): Promise<string> {
-  const data = await request<{username: string}>(session.server, '/api/v1/auth/me', {
+export async function me(session: MobileSession): Promise<{id: string; username: string}> {
+  return request<{id: string; username: string}>(session.server, '/api/v1/auth/me', {
     headers: {Authorization: `Bearer ${session.accessToken}`},
   });
-  return data.username;
 }
 
 export async function revokeDevice(session: MobileSession): Promise<void> {

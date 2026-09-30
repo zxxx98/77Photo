@@ -32,17 +32,23 @@ const newSession: MobileSession = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  (me as jest.Mock).mockResolvedValue('lin');
+  (me as jest.Mock).mockResolvedValue({id: 'user-1', username: 'lin'});
   (saveSession as jest.Mock).mockResolvedValue(undefined);
   (clearSession as jest.Mock).mockResolvedValue(undefined);
 });
 
 test('rotates and stores the token pair before validating the device', async () => {
   (refresh as jest.Mock).mockResolvedValue(newSession);
-  await expect(restoreSession(oldSession)).resolves.toEqual(newSession);
+  await expect(restoreSession(oldSession)).resolves.toEqual({...newSession, userId: 'user-1'});
   expect(refresh).toHaveBeenCalledTimes(1);
   expect(saveSession).toHaveBeenCalledWith(newSession);
   expect(me).toHaveBeenCalledWith(newSession);
+});
+
+test('restoring an older session binds it to the immutable account ID', async () => {
+  const current = {...oldSession, accessExpiresAt: '2030-01-01T00:00:00Z'};
+  await expect(restoreSession(current)).resolves.toEqual({...current, userId: 'user-1'});
+  expect(saveSession).toHaveBeenCalledWith({...current, userId: 'user-1'});
 });
 
 test('concurrent restore calls share one refresh', async () => {

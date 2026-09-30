@@ -649,6 +649,16 @@ paths:
         '422':
           description: Invalid or unsafe media (including excessive pixel count)
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+        '507':
+          description: Server storage or quota is full
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example:
+                error:
+                  code: STORAGE_FULL
+                  message: server storage is full
+                  request_id: req_01JABC
 
   /api/v1/photos/live-upload:
     post:
@@ -688,6 +698,7 @@ paths:
         '413': { description: Still or motion part exceeds PHOTO_MAX_UPLOAD_SIZE, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '415': { description: Unsupported, malformed or content-type-mismatched media, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '422': { description: Invalid or unsafe media, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '507': { description: Server storage or quota is full, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
   /api/v1/live-photos/status:
     get:

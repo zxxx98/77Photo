@@ -77,7 +77,8 @@ function decodeError(status: number, body: string): ApiError {
   return new ApiError(status, error.code ?? '', error.message ?? `服务器错误 ${status}`);
 }
 
-export async function uploadOne(api: BrowseApi, item: UploadItem, progress: (value: number) => void, signal?: AbortSignal): Promise<'success' | 'skipped'> {
+export async function uploadOne(api: BrowseApi, item: UploadItem, progress: (value: number) => void,
+  signal?: AbortSignal, timeoutMs = 120000): Promise<'success' | 'skipped'> {
   const checkCancelled = () => {if (signal?.aborted) {throw new Error('上传已暂停');}};
   checkCancelled();
   // A deleted or newly unreadable target fails early. The upload endpoint is
@@ -95,7 +96,7 @@ export async function uploadOne(api: BrowseApi, item: UploadItem, progress: (val
       ...(item.motion ? [{name: 'motion', filename: item.motion.name, type: item.motion.mime, data: ReactNativeBlobUtil.wrap(item.motion.path)}] : []),
     ];
     const route = live ? 'live-upload' : 'upload';
-    const request = ReactNativeBlobUtil.config({timeout: 120000, followRedirect: false}).fetch('POST', `${session.server}/api/v1/photos/${route}`,
+    const request = ReactNativeBlobUtil.config({timeout: timeoutMs, followRedirect: false}).fetch('POST', `${session.server}/api/v1/photos/${route}`,
       {Authorization: `Bearer ${session.accessToken}`, Accept: 'application/json'}, body);
     request.uploadProgress({interval: 250}, (sent, total) => {if (total > 0) {progress(Math.min(99, Math.round(sent / total * 100)));}});
     const cancel = () => {request.cancel(() => {});};
@@ -120,6 +121,7 @@ export function uploadError(error: unknown): string {
     if (error.status === 401) {return '登录已失效，请重新登录';}
     if (error.status === 403) {return '目标文件夹已无写入权限';}
     if (error.status === 413) {return '文件超过服务器大小限制';}
+    if (error.status === 507 || error.code === 'STORAGE_FULL') {return '服务器存储空间不足，请联系管理员清理后重试';}
     if (error.status === 415 || error.status === 422) {return '服务器不支持或无法读取此媒体';}
     return error.message || `服务器错误 ${error.status}`;
   }

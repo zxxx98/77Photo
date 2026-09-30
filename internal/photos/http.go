@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/zxxx98/77Photo/internal/acl"
@@ -371,6 +372,9 @@ func (h *HTTPHandler) upload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusForbidden, "CSRF_INVALID", "csrf token is invalid", nil)
 		return
 	}
+	// The server's ordinary 30s read / 60s write deadlines are too short for
+	// a large video. Only authenticated uploads receive the longer window.
+	setUploadDeadline(w, 6*time.Hour)
 	account := authenticated.Account
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -438,6 +442,13 @@ func (h *HTTPHandler) upload(w http.ResponseWriter, r *http.Request) {
 		_ = part.Close()
 	}
 	writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "exactly one file part is required", nil)
+}
+
+func setUploadDeadline(w http.ResponseWriter, duration time.Duration) {
+	deadline := time.Now().Add(duration)
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(deadline)
+	_ = controller.SetWriteDeadline(deadline)
 }
 
 func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request, id string) {
@@ -735,6 +746,8 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 		writeError(w, r, http.StatusUnprocessableEntity, "INVALID_REQUEST", "filename is invalid", nil)
 	case errors.Is(err, ErrUploadTooLarge):
 		writeError(w, r, http.StatusRequestEntityTooLarge, "UPLOAD_TOO_LARGE", "upload exceeds the configured maximum size", nil)
+	case errors.Is(err, syscall.ENOSPC), errors.Is(err, syscall.EDQUOT):
+		writeError(w, r, http.StatusInsufficientStorage, "STORAGE_FULL", "server storage is full", nil)
 	case errors.Is(err, ErrUnsupportedMedia):
 		writeError(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "media type or extension is not supported", nil)
 	case errors.Is(err, ErrInvalidMedia):

@@ -36,7 +36,9 @@ export async function restoreSession(session: MobileSession): Promise<MobileSess
     if (expiresSoon(current)) {
       current = await refreshOnce(current);
     }
-    await me(current);
+    const account = await me(current);
+    if (!account.id) {throw new Error('服务器未返回账号 ID');}
+    if (current.userId !== account.id) {current = {...current, userId: account.id}; await saveSession(current);}
     return current;
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
@@ -46,7 +48,9 @@ export async function restoreSession(session: MobileSession): Promise<MobileSess
       }
       try {
         current = await refreshOnce(current);
-        await me(current);
+        const account = await me(current);
+        if (!account.id) {throw new Error('服务器未返回账号 ID');}
+        if (current.userId !== account.id) {current = {...current, userId: account.id}; await saveSession(current);}
         return current;
       } catch (retryError) {
         if (retryError instanceof ApiError && retryError.status === 401) {
