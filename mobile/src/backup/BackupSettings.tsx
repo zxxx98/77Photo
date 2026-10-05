@@ -8,7 +8,7 @@ import {bindBackup, cancelVisibleBackup, configureBackup, isVisibleBackupRunning
 
 type Props = {session: MobileSession; api: BrowseApi; folder: Folder | null};
 export default function BackupSettings({session, api, folder}: Props) {
-  const [settings, setSettings] = useState<Settings>({enabled: false, videoEnabled: false, wifiOnly: true, folder: null});
+  const [settings, setSettings] = useState<Settings>({enabled: false, videoEnabled: false, wifiOnly: true, folder: null, dateFolders: true});
   const [message, setMessage] = useState('');
   const [lastRun, setLastRun] = useState<string>();
   const [lastVideoRun, setLastVideoRun] = useState<string>();
@@ -59,10 +59,11 @@ export default function BackupSettings({session, api, folder}: Props) {
     } catch (error) {setMessage(error instanceof Error ? error.message : '无法更新备份设置');}
     finally {setBusy(false);}
   }
+  const backupFolder = settings.enabled || settings.videoEnabled ? settings.folder : folder ?? settings.folder;
   return <View style={styles.card}>
-    <View style={styles.row}><Text style={styles.title}>自动备份照片</Text><Switch accessibilityLabel="自动备份照片" value={settings.enabled} disabled={busy || !ready} onValueChange={enabled => change({...settings, enabled, folder: enabled ? folder ?? settings.folder : settings.folder})} /></View>
+    <View style={styles.row}><Text style={styles.title}>自动备份照片</Text><Switch accessibilityLabel="自动备份照片" value={settings.enabled} disabled={busy || !ready} onValueChange={enabled => change({...settings, enabled, folder: enabled ? backupFolder : settings.folder})} /></View>
     <Text style={styles.detail}>开启后备份系统相册中的全部照片及后续新增照片。后台由系统定期执行；强行停止应用后需重新打开。</Text>
-    <View style={styles.row}><Text style={styles.title}>备份视频</Text><Switch accessibilityLabel="备份视频" value={!!settings.videoEnabled} disabled={busy || !ready} onValueChange={videoEnabled => change({...settings, videoEnabled, folder: videoEnabled ? folder ?? settings.folder : settings.folder})} /></View>
+    <View style={styles.row}><Text style={styles.title}>备份视频</Text><Switch accessibilityLabel="备份视频" value={!!settings.videoEnabled} disabled={busy || !ready} onValueChange={videoEnabled => change({...settings, videoEnabled, folder: videoEnabled ? backupFolder : settings.folder})} /></View>
     <Text style={styles.detail}>默认关闭。开启后扫描现有及新增的 MP4、WebM；超过 128 MB 的视频等待你启动可见传输，其他格式会显示未完成原因。</Text>
     {settings.videoEnabled ? visibleActive ? <View style={styles.row}>
       <Pressable accessibilityRole="button" onPress={() => pauseVisibleBackup().catch(error => setMessage(error instanceof Error ? error.message : '暂停失败'))}><Text style={styles.retry}>暂停视频传输</Text></Pressable>
@@ -73,7 +74,9 @@ export default function BackupSettings({session, api, folder}: Props) {
         .finally(() => setStartingVisible(false));
     }}><Text style={styles.retry}>{pendingVideo ? '继续待处理视频' : '开始可见视频传输'}</Text></Pressable> : null}
     {settings.videoEnabled ? <Text style={styles.detail}>可见传输会显示系统通知，可从通知暂停或取消。</Text> : null}
-    <Text style={styles.detail}>备份到：{settings.folder?.name ?? '开启时使用下方所选文件夹'}。更改目录请先关闭再开启。</Text>
+    <Text style={styles.detail}>备份根目录：{settings.folder?.name ?? '开启时使用下方所选文件夹'}。更改目录请先关闭照片和视频备份，再选择目录并开启。</Text>
+    <View style={styles.row}><Text style={styles.label}>按年月日归档</Text><Switch accessibilityLabel="按年月日归档" value={!!settings.dateFolders} disabled={busy || !ready || settings.enabled || !!settings.videoEnabled} onValueChange={dateFolders => change({...settings, dateFolders})} /></View>
+    <Text style={styles.detail}>{settings.dateFolders ? '按系统相册中的拍摄日期自动创建年/月/日目录，例如 2026/10/05；无拍摄时间时使用加入相册时间或修改时间，均缺失时放入“日期未知”。' : '照片和视频直接上传到备份根目录。'}更改归档方式请先关闭照片和视频备份；重新开启后会上传到对应目录，原有文件保留。</Text>
     <View style={styles.row}><Text style={styles.label}>仅 Wi-Fi</Text><Switch accessibilityLabel="仅 Wi-Fi 自动备份" value={settings.wifiOnly} disabled={busy || !ready} onValueChange={wifiOnly => change({...settings, wifiOnly})} /></View>
     <Text style={styles.detail}>已确认 {completed.photo} 张照片、{completed.video} 个视频</Text>
     {lastRun ? <Text style={styles.detail}>照片最近完整检查：{new Date(lastRun).toLocaleString()}</Text> : null}

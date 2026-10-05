@@ -28,7 +28,7 @@ jest.mock('../src/auth/session', () => ({loadSession: jest.fn()}));
 jest.mock('../src/browse/api', () => ({BrowseApi: jest.fn()}));
 const session = {server: 'http://192.168.1.5', username: 'alice', accessToken: 'a', accessExpiresAt: '', refreshToken: 'r', refreshExpiresAt: ''};
 const folder: Folder = {id: 'f1', name: '相册', owner_id: 'u1', parent_id: null, is_shared: false};
-const api = {request: jest.fn()} as unknown as BrowseApi;
+const api = {request: jest.fn(), createFolder: jest.fn()} as unknown as BrowseApi;
 const native = NativeModules.Photo77Backup;
 const photo = {id: '1', uri: 'content://media/external/images/media/1', fingerprint: 'v1:1:20:100', name: 'a.jpg', mime: 'image/jpeg', size: 20};
 const enabled = {enabled: true, wifiOnly: true, folder};
@@ -65,6 +65,70 @@ test('persists successful backups, skips them on the next scan, and cleans stagi
   expect(uploadOne).toHaveBeenCalledTimes(1);
   expect((await readBackup(session)).completed).toEqual({[photo.fingerprint]: true});
   expect(NativeModules.Photo77Picker.deleteFile).toHaveBeenCalledWith('/staging/backup-current');
+});
+
+function dateFolderApi() {
+  const folders: Folder[] = [];
+  (api.request as jest.Mock).mockImplementation(async (path: string) => {
+    if (!path.includes('?')) {return folder;}
+    const parentId = new URL(`http://server${path}`).searchParams.get('parent_id');
+    return {items: folders.filter(entry => entry.parent_id === parentId)};
+  });
+  (api.createFolder as jest.Mock).mockImplementation(async (name: string, parentId: string) => {
+    const created = {...folder, id: `${parentId}/${name}`, parent_id: parentId, name};
+    folders.push(created);
+    return created;
+  });
+}
+
+test('new configurations default to date folders while existing configurations stay flat', async () => {
+  expect((await readBackup({...session, username: 'new-user'})).settings.dateFolders).toBe(true);
+  const record = await readBackup(session);
+  delete record.settings.dateFolders;
+  await AsyncStorage.setItem(backupKey(session), JSON.stringify(record));
+  expect((await readBackup(session)).settings.dateFolders).toBe(false);
+});
+
+test('photos upload to their date folders and changing layout keeps separate history', async () => {
+  await runBackup(session, api);
+  dateFolderApi();
+  native.scan.mockImplementation(async (cursor: string) => cursor === '0'
+    ? {items: [{...photo, capturedAt: new Date(2026, 9, 5).getTime()}], next: '1'} : {items: [], next: cursor});
+  await configureBackup(session, {...enabled, dateFolders: true});
+  expect((await readBackup(session)).completed).toEqual({});
+  await runBackup(session, api);
+  expect(uploadOne).toHaveBeenLastCalledWith(api, expect.objectContaining({folderId: 'f1/2026/10/05'}), expect.any(Function), expect.anything(), undefined);
+  expect(api.createFolder).toHaveBeenCalledTimes(3);
+  await runBackup(session, api);
+  expect(uploadOne).toHaveBeenCalledTimes(2);
+  await configureBackup(session, enabled);
+  await runBackup(session, api);
+  await configureBackup(session, {...enabled, dateFolders: true});
+  await runBackup(session, api);
+  expect(uploadOne).toHaveBeenCalledTimes(2);
+});
+
+test('photo and video backup share date directories but keep separate completion records', async () => {
+  dateFolderApi();
+  const capturedAt = new Date(2026, 0, 2).getTime();
+  const video = {...photo, id: '7', fingerprint: 'video:7', name: 'clip.mp4', mime: 'video/mp4', capturedAt};
+  native.scan.mockImplementation(async (cursor: string, kind: string) => cursor === '0'
+    ? {items: [kind === 'photo' ? {...photo, capturedAt} : video], next: kind === 'photo' ? '1' : '7'} : {items: [], next: cursor});
+  await configureBackup(session, {...enabled, dateFolders: true, videoEnabled: true});
+  await runBackup(session, api);
+  expect((uploadOne as jest.Mock).mock.calls.map(call => call[1].folderId)).toEqual(['f1/2026/01/02', 'f1/2026/01/02']);
+  expect(api.createFolder).toHaveBeenCalledTimes(3);
+  expect((await readBackup(session)).completed).toEqual({[photo.fingerprint]: true, [video.fingerprint]: true});
+});
+
+test('a date folder permission failure stops before staging and never uploads to the root', async () => {
+  dateFolderApi();
+  (api.createFolder as jest.Mock).mockRejectedValueOnce(new ApiError(403, 'WRITE_FORBIDDEN', 'forbidden'));
+  await configureBackup(session, {...enabled, dateFolders: true});
+  await runBackup(session, api);
+  expect(native.stage).not.toHaveBeenCalled();
+  expect(uploadOne).not.toHaveBeenCalled();
+  expect((await readBackup(session)).targetBlocked).toContain('无写入权限');
 });
 
 test('does not access photos or upload on cellular until Wi-Fi-only is disabled', async () => {

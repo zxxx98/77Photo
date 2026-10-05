@@ -129,9 +129,10 @@ class BackupModule(private val context: ReactApplicationContext) : ReactContextB
           else "请允许访问全部${label}后启用自动备份"
         }
         val collection = if (mediaType == "video") MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val projection = if (Build.VERSION.SDK_INT >= 29)
+        val identityColumns = if (Build.VERSION.SDK_INT >= 29)
           arrayOf("_id", "_display_name", "mime_type", "_size", "date_modified", MediaStore.MediaColumns.VOLUME_NAME)
         else arrayOf("_id", "_display_name", "mime_type", "_size", "date_modified")
+        val projection = identityColumns + arrayOf("datetaken", "date_added")
         val args = android.os.Bundle().apply {
           val visibility = when {
             Build.VERSION.SDK_INT >= 30 -> " AND is_pending = 0 AND is_trashed = 0"
@@ -148,6 +149,8 @@ class BackupModule(private val context: ReactApplicationContext) : ReactContextB
         val items = Arguments.createArray()
         var cursorId = after
         context.contentResolver.query(collection, projection, args, null)?.use { cursor ->
+          val takenColumn = cursor.getColumnIndexOrThrow("datetaken")
+          val addedColumn = cursor.getColumnIndexOrThrow("date_added")
           while (cursor.moveToNext() && items.size() < 200) {
             val id = cursor.getLong(0)
             cursorId = id.toString()
@@ -163,6 +166,11 @@ class BackupModule(private val context: ReactApplicationContext) : ReactContextB
             item.putString("name", cursor.getString(1) ?: if (mediaType == "video") "video.mp4" else "photo.jpg")
             item.putString("mime", cursor.getString(2) ?: "")
             item.putDouble("size", cursor.getLong(3).toDouble())
+            // DATE_TAKEN is milliseconds; DATE_ADDED/DATE_MODIFIED are seconds.
+            // Keep date metadata out of the fingerprint to preserve old history.
+            item.putDouble("capturedAt", cursor.getLong(takenColumn).toDouble())
+            item.putDouble("addedAt", cursor.getLong(addedColumn).toDouble() * 1000)
+            item.putDouble("modifiedAt", cursor.getLong(4).toDouble() * 1000)
             items.pushMap(item)
           }
         } ?: error("无法读取系统相册")

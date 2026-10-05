@@ -5,9 +5,10 @@ import {loadSession, type MobileSession} from '../auth/session';
 import {ApiError} from '../auth/api';
 import {BrowseApi, type Folder} from '../browse/api';
 import {uploadError, uploadOne, type UploadItem} from '../upload/queue';
+import {dateDestination, type MediaDates} from './destination';
 
-export type BackupSettings = {enabled: boolean; videoEnabled?: boolean; wifiOnly: boolean; folder: Folder | null};
-export type LibraryPhoto = {id: string; uri: string; fingerprint: string; legacyFingerprint?: string; name: string; mime: string; size: number};
+export type BackupSettings = {enabled: boolean; videoEnabled?: boolean; wifiOnly: boolean; folder: Folder | null; dateFolders?: boolean};
+export type LibraryPhoto = MediaDates & {id: string; uri: string; fingerprint: string; legacyFingerprint?: string; name: string; mime: string; size: number};
 type RetryState = {until: number; attempts: number};
 type LegacyCompletion = {completed: Record<string, true>; cursor?: string; lastRun?: string};
 type BackupRecord = {settings: BackupSettings; completed: Record<string, true>; blocked?: Record<string, string>; cursor?: string; videoCursor?: string;
@@ -26,7 +27,7 @@ const native = NativeModules.Photo77Backup as {
   interruptedVisible?(scope: string): Promise<{fingerprint: string; action: 'pause' | 'cancel'} | null>;
   clearInterruptedVisible?(scope: string): Promise<void>;
 };
-const defaults = (): BackupRecord => ({settings: {enabled: false, videoEnabled: false, wifiOnly: true, folder: null}, completed: {}});
+const defaults = (): BackupRecord => ({settings: {enabled: false, videoEnabled: false, wifiOnly: true, folder: null, dateFolders: true}, completed: {}});
 // Keep the app-side cap below Android 15's six-hour dataSync service window.
 const visibleVideoTimeoutMs = 5 * 60 * 60 * 1000;
 const backgroundVideoMaxBytes = 128 * 1024 * 1024;
@@ -49,7 +50,10 @@ const listeners = new Set<() => void>();
 const notify = () => listeners.forEach(listener => listener());
 export const subscribeBackup = (listener: () => void) => {listeners.add(listener); return () => {listeners.delete(listener);};};
 export const isVisibleBackupRunning = () => visibleRunning;
-const visibleScope = (session: MobileSession, folderId: string) => `${backupKey(session)}:${encodeURIComponent(folderId)}`;
+// Keep flat-layout keys compatible with existing backup history.
+const destinationKey = (settings: BackupSettings) => settings.folder
+  ? settings.dateFolders ? `date:v1:${settings.folder.id}` : settings.folder.id : undefined;
+const visibleScope = (session: MobileSession, settings: BackupSettings) => `${backupKey(session)}:${encodeURIComponent(destinationKey(settings) ?? '')}`;
 export async function readBackup(session: MobileSession): Promise<BackupRecord> {
   let raw = await AsyncStorage.getItem(backupKey(session));
   if (!raw && session.userId) {
@@ -82,6 +86,7 @@ export async function readBackup(session: MobileSession): Promise<BackupRecord> 
   const record = JSON.parse(raw) as BackupRecord;
   // Existing photo history stays valid when video backup is introduced.
   record.settings.videoEnabled ??= false;
+  record.settings.dateFolders ??= false;
   record.blocked ??= {};
   if (liveProgress?.key === backupKey(session)) {record.message = liveProgress.message;}
   return record;
@@ -136,15 +141,16 @@ export async function configureBackup(session: MobileSession, settings: BackupSe
   try {
     await stopBackup();
     const record = await readBackup(session);
-    // A different destination must get its own full scan.
-    if (record.settings.folder?.id !== settings.folder?.id) {
+    // Each root and layout must get its own full scan and completion history.
+    if (destinationKey(record.settings) !== destinationKey(settings)) {
       record.unverifiedLegacy = undefined;
       record.histories ??= {};
-      const oldId = record.settings.folder?.id;
+      const oldId = destinationKey(record.settings);
       if (oldId) {record.histories[oldId] = {completed: record.completed, cursor: record.cursor,
         blocked: record.blocked, videoCursor: record.videoCursor, lastRun: record.lastRun,
         lastVideoRun: record.lastVideoRun, retry: record.retry};}
-      const saved = settings.folder?.id ? record.histories[settings.folder.id] : undefined;
+      const nextId = destinationKey(settings);
+      const saved = nextId ? record.histories[nextId] : undefined;
       record.completed = saved?.completed ?? {};
       record.blocked = saved?.blocked ?? {};
       record.retry = saved?.retry ?? {};
@@ -153,8 +159,9 @@ export async function configureBackup(session: MobileSession, settings: BackupSe
       record.lastRun = saved?.lastRun;
       record.lastVideoRun = saved?.lastVideoRun;
       record.targetBlocked = undefined;
+      record.pendingForegroundVideo = undefined;
     }
-    record.settings = {...settings, videoEnabled: settings.videoEnabled ?? false};
+    record.settings = {...settings, videoEnabled: settings.videoEnabled ?? false, dateFolders: settings.dateFolders ?? false};
     if (!record.settings.videoEnabled) {record.pendingForegroundVideo = undefined;}
     record.message = settings.enabled || settings.videoEnabled ? '等待自动备份' : '自动备份已关闭';
     await writeBackup(session, record);
@@ -192,7 +199,7 @@ async function performBackup(session: MobileSession, api: BrowseApi, background 
   if ((!record.settings.enabled && !record.settings.videoEnabled) || !record.settings.folder) {return;}
   if (record.targetBlocked) {record.message = record.targetBlocked; await writeBackup(session, record); return;}
   let markerToClear = false;
-  const scope = visibleScope(session, record.settings.folder.id);
+  const scope = visibleScope(session, record.settings);
   if (background && native.interruptedVisible) {
     const marker = await native.interruptedVisible(scope).catch(() => null);
     if (marker) {
@@ -233,6 +240,7 @@ async function performBackup(session: MobileSession, api: BrowseApi, background 
     if (destination.effective_permission === 'read') {
       throw new ApiError(403, 'WRITE_FORBIDDEN', '目标文件夹已无写入权限');
     }
+    const resolveDateFolder = dateDestination(api, destination, abort.signal);
     if (record.unverifiedLegacy) {
       // The folder may have been transferred since the username-scoped record
       // was saved. Both its recorded owner and current owner must be this account.
@@ -332,6 +340,8 @@ async function performBackup(session: MobileSession, api: BrowseApi, background 
         if (!networkAllowsBackup(record.settings, await NetInfo.fetch())) {record.message = '网络条件不满足，等待下次检查'; return;}
         let path: string | undefined;
         try {
+          const uploadFolder = record.settings.dateFolders ? await resolveDateFolder(media) : destination;
+          if (stopped) {return;}
           if (background && kind === 'video') {
             // Persist the in-flight file before staging: process death may not
             // run JS cleanup, and the next job must not repeat a large copy.
@@ -359,8 +369,8 @@ async function performBackup(session: MobileSession, api: BrowseApi, background 
             }
             return;
           }
-          const item: UploadItem = {...media, path, id: media.fingerprint, folderId: record.settings.folder.id,
-            folderName: record.settings.folder.name, status: 'waiting', progress: 0};
+          const item: UploadItem = {...media, path, id: media.fingerprint, folderId: uploadFolder.id,
+            folderName: uploadFolder.name, status: 'waiting', progress: 0};
           record.message = `正在备份${kind === 'video' ? '视频' : '照片'}：${media.name}`;
           await writeBackup(session, record);
           await uploadOne(api, item, value => {
@@ -452,7 +462,7 @@ export async function runVisibleBackup(session: MobileSession, api: BrowseApi): 
     await requestMediaAccess('video');
     await requestVisibleNotificationAccess();
     if (stopVersion !== startedAfter) {throw new Error('可见视频传输已停止');}
-    await native.startVisible(visibleScope(session, record.settings.folder.id));
+    await native.startVisible(visibleScope(session, record.settings));
     if (stopVersion !== startedAfter) {
       await native.stopVisible(false);
       throw new Error('可见视频传输已停止');
