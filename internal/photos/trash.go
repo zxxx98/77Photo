@@ -83,6 +83,11 @@ func (s *Service) Trash(ctx context.Context, principal acl.Principal, id string,
 		return err
 	}
 	defer release()
+	return s.trashLocked(ctx, principal, id)
+}
+
+// trashLocked requires both the maintenance and storage mutation locks.
+func (s *Service) trashLocked(ctx context.Context, principal acl.Principal, id string) error {
 	photo, err := s.photoIncludingDeleted(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound

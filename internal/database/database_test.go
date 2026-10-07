@@ -59,8 +59,8 @@ func TestOpenInitializesSchemaAndSQLitePragmas(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 13 {
-		t.Fatalf("schema migration count = %d, want 13", migrationCount)
+	if migrationCount != 14 {
+		t.Fatalf("schema migration count = %d, want 14", migrationCount)
 	}
 }
 
@@ -95,8 +95,8 @@ VALUES ('u-restart', 'restart', 'hash', 'user', '2026-01-01T00:00:00Z', '2026-01
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 13 {
-		t.Fatalf("schema migration count = %d, want 13", migrationCount)
+	if migrationCount != 14 {
+		t.Fatalf("schema migration count = %d, want 14", migrationCount)
 	}
 }
 

@@ -31,6 +31,7 @@ const (
 // Config contains process-wide settings. Paths are resolved relative to the
 // process working directory when supplied as relative paths.
 type Config struct {
+	DuplicatesAI       bool
 	Faces              faces.Config
 	DataDir            string
 	CacheDir           string
@@ -91,6 +92,7 @@ func LoadFromEnv() (Config, error) {
 	}
 	cfg := Config{
 		TrashRetentionDays: trashDays,
+		DuplicatesAI:       envString("PHOTO_DUPLICATES_AI_ENABLED", "false") == "true",
 		Faces:              faces.Config{Enabled: envString("PHOTO_FACE_ENABLED", "false") == "true", URL: envString("PHOTO_FACE_WORKER_URL", ""), Token: envString("PHOTO_FACE_WORKER_TOKEN", ""), Timeout: faceTimeout, AllowHTTP: envString("PHOTO_FACE_ALLOW_INSECURE_LAN", "false") == "true", MatchThreshold: threshold, MatchMargin: margin, Concurrency: faceConcurrency},
 		DataDir:            envString("PHOTO_DATA_DIR", defaultDataDir),
 		CacheDir:           envString("PHOTO_CACHE_DIR", defaultCacheDir),
@@ -112,6 +114,13 @@ func LoadFromEnv() (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if c.DuplicatesAI {
+		worker := c.Faces
+		worker.Enabled = true
+		if err := worker.Validate(); err != nil {
+			return fmt.Errorf("similarity worker: %w", err)
+		}
+	}
 	if err := c.Faces.Validate(); err != nil {
 		return err
 	}

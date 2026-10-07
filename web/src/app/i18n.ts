@@ -12,6 +12,8 @@ export type TranslationParams = Record<string, string | number>;
 
 const english = {
   'shell.people': 'People',
+  'shell.duplicates': 'Duplicate photos',
+  'settings.maintenance.task.duplicate_scan': 'Similarity scanning',
   'settings.maintenance.task.face_scan': 'Face scanning',
   'settings.maintenance.task.trash': 'Trash maintenance',
   'common.close': 'Close',
@@ -422,6 +424,8 @@ export type TranslationKey = keyof typeof english;
 
 const chinese: Record<TranslationKey, string> = {
   'shell.people': '人物',
+  'shell.duplicates': '重复照片',
+  'settings.maintenance.task.duplicate_scan': '相似照片扫描',
   'settings.maintenance.task.face_scan': '人脸扫描',
   'settings.maintenance.task.trash': '回收站维护',
   'common.close': '关闭',

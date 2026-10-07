@@ -1,3 +1,4 @@
+import type { DuplicatesAPI } from '../features/duplicates/types';
 import type { FacesAPI } from '../features/people/types';
 export type Role = 'admin' | 'user';
 
@@ -230,7 +231,7 @@ export interface BrokenPhotoScanResult {
   items: BrokenPhoto[];
 }
 
-export type MaintenanceKind = 'rescan' | 'thumbnail_rebuild' | 'import' | 'cleanup' | 'user_transfer' | 'face_scan' | 'trash';
+export type MaintenanceKind = 'rescan' | 'thumbnail_rebuild' | 'import' | 'cleanup' | 'user_transfer' | 'face_scan' | 'trash' | 'duplicate_scan';
 
 export interface MaintenanceActivity {
   kind: MaintenanceKind;
@@ -280,6 +281,7 @@ export class ApiError extends Error {
 
 export interface ApiClient {
   faces?: FacesAPI;
+  duplicates?: DuplicatesAPI;
   setupStatus(): Promise<{ required: boolean }>;
   setupAdmin(username: string, password: string): Promise<AuthResponse>;
   login(username: string, password: string): Promise<AuthResponse>;
@@ -433,6 +435,14 @@ export function createApiClient(fetcher: Fetcher = fetch): ApiClient {
   }
 
   return {
+    duplicates: {
+      config: () => request('/api/v1/admin/duplicates/config') as Promise<{ ai_enabled: boolean }>,
+      groups: (kind, cursor = '', signal) => request(`/api/v1/admin/duplicates/groups?kind=${kind}&cursor=${encodeURIComponent(cursor)}`, { signal }) as ReturnType<DuplicatesAPI['groups']>,
+      jobs: () => request('/api/v1/admin/duplicates/jobs') as ReturnType<DuplicatesAPI['jobs']>,
+      start: mode => request('/api/v1/admin/duplicates/jobs', { method: 'POST', body: JSON.stringify({ mode }) }) as ReturnType<DuplicatesAPI['start']>,
+      control: (id, action) => request(`/api/v1/admin/duplicates/jobs/${encodeURIComponent(id)}/${action}`, { method: 'POST' }) as ReturnType<DuplicatesAPI['control']>,
+      cleanup: input => request('/api/v1/admin/duplicates/cleanup', { method: 'POST', body: JSON.stringify(input) }) as ReturnType<DuplicatesAPI['cleanup']>,
+    },
     faces: {
       config: () => request('/api/v1/admin/faces/config') as ReturnType<FacesAPI['config']>,
       test: () => request('/api/v1/admin/faces/test', { method: 'POST' }) as ReturnType<FacesAPI['test']>,

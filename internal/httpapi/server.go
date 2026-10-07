@@ -45,6 +45,7 @@ func NewHandler(checks HealthChecks, logger *slog.Logger) http.Handler {
 type Services struct {
 	Identity         ed25519.PrivateKey
 	Faces            http.Handler
+	Duplicates       http.Handler
 	Auth             *auth.Service
 	Users            *users.Service
 	Folders          *folders.Service
@@ -69,6 +70,9 @@ func NewHandlerWithServices(checks HealthChecks, logger *slog.Logger, services S
 	mux := http.NewServeMux()
 	if len(services.Identity) == ed25519.PrivateKeySize {
 		mux.HandleFunc("/api/v1/server/identity", identityHandler(services.Identity))
+	}
+	if services.Duplicates != nil {
+		mux.Handle("/api/v1/admin/duplicates/", services.Duplicates)
 	}
 	if services.Faces != nil {
 		mux.Handle("/api/v1/admin/faces/", services.Faces)

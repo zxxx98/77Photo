@@ -23,6 +23,7 @@ const MapWorkspace = lazy(() => import('../features/map/MapWorkspace'));
 
 const TrashWorkspace = lazy(() => import('../features/trash/TrashWorkspace'));
 
+const DuplicatesWorkspace = lazy(() => import('../features/duplicates/DuplicatesWorkspace'));
 const PeopleWorkspace = lazy(() => import('../features/people/PeopleWorkspace'));
 
 type View = AppView;
@@ -33,6 +34,7 @@ const navItems: Array<{ id: View; labelKey: TranslationKey; icon: typeof Image }
   { id: 'folders', labelKey: 'shell.folders', icon: Folder },
   { id: 'map', labelKey: 'shell.map', icon: MapIcon },
   { id: 'people', labelKey: 'shell.people', icon: Users },
+  { id: 'duplicates', labelKey: 'shell.duplicates', icon: Image },
   { id: 'trash', labelKey: 'shell.trash', icon: Trash2 },
   { id: 'settings', labelKey: 'shell.settings', icon: Settings },
 ];
@@ -132,7 +134,7 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
         </div>
         <nav className="primary-nav">
           <span className="nav-caption">{t('shell.library')}</span>
-          {navItems.filter(item => item.id !== 'people' || user?.role === 'admin').map(({ id, labelKey, icon: Icon }) => (
+          {navItems.filter(item => !['people', 'duplicates'].includes(item.id) || user?.role === 'admin').map(({ id, labelKey, icon: Icon }) => (
             <button key={id} className={`nav-item ${view === id ? 'is-active' : ''}`} onClick={() => { onViewChange(id); setSidebarOpen(false); }}>
               <Icon size={18} strokeWidth={1.7} /><span>{t(labelKey)}</span>
             </button>
@@ -175,6 +177,7 @@ function AppShell({ api, store, view, onViewChange }: { api: ReturnType<typeof c
 
 function Workspace({ api, currentUser, view, onViewChange, uploadSelection, onUploadSelectionConsumed, folderContext, onFolderChange, onUpload, onUploadComplete }: { api: ReturnType<typeof createApiClient>; currentUser: NonNullable<SessionStore['snapshot']['user']>; view: View; onViewChange: (view: View) => void; uploadSelection: UploadSelection | null; onUploadSelectionConsumed: (id: number) => void; folderContext: FolderLocation | null; onFolderChange: (folder: FolderLocation | null) => void; onUpload: (folder?: FolderLocation | null) => void; onUploadComplete: (destination: UploadDestination) => void }) {
   if (view === 'people' && currentUser.role === 'admin') return <Suspense fallback={<MapSkeleton />}><PeopleWorkspace api={api} currentUser={currentUser} /></Suspense>;
+  if (view === 'duplicates' && currentUser.role === 'admin') return <Suspense fallback={<MapSkeleton />}><DuplicatesWorkspace api={api} currentUser={currentUser} /></Suspense>;
   if (view === 'trash') return <Suspense fallback={<MapSkeleton />}><TrashWorkspace api={api} currentUser={currentUser} /></Suspense>;
   if (view === 'gallery') return <GalleryWorkspace api={api} />;
   if (view === 'map') return <Suspense fallback={<MapSkeleton />}><MapWorkspace api={api} currentUser={currentUser} /></Suspense>;

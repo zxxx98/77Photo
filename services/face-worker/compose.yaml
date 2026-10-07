@@ -8,6 +8,7 @@ services:
     environment:
       FACE_API_KEY: ${FACE_API_KEY:?set a random secret}
       FACE_MODEL_DIR: /models
+      SIMILARITY_ENABLED: ${SIMILARITY_ENABLED:-false}
     command: ["uvicorn", "app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8091", "--workers", "${FACE_WORKER_PROCESSES:-4}", "--no-access-log", "--timeout-keep-alive", "0"]
     volumes:
       - ./models:/models:ro

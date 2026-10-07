@@ -1,0 +1,72 @@
+# 重复与相似照片清理
+
+Web 管理员侧边栏新增「重复照片」。按照片所属用户分别分组，可跨文件夹查重；不会把不同用户的副本合并。普通用户和公开分享链接不能访问查重结果或清理接口。Android 客户端暂未增加整理页面。
+
+## 使用
+
+1. 「完全重复」直接读取有效照片的 SHA-256 索引，无需扫描。通过服务器外部复制的文件需先执行「重新扫描文件」入库。动态照片还需动态部分的内容一致；来源缺失、校验不一致的记录跳过。
+2. 「扫描视觉相似」使用已校正 EXIF 方向的预览计算 DCT pHash；「扫描 AI 相似」额外计算整图特征。任务保存进度，可暂停、继续和取消。服务重启后任务暂停，需手动继续。再次扫描复用同内容、同处理管线的成功特征；分析失败项会在新扫描中重试。
+3. 在分组中查看原图，选择保留项和待清理项，再检查并确认移入回收站。完全重复组提供「选择其他副本」；相似组需要逐张选择。每次最多清理 500 张。
+4. 收藏、照片分享和人物归属会影响保留建议，并显示提示；清理不会把这些记录合并到保留项。可填写页面显示的文件夹路径来优先保留该文件夹或子文件夹中的副本。建议只是辅助，最终由用户决定。
+
+页面的大小统计只计算所选原图，动态视频另随照片一起保留在回收站。移入回收站不会立即释放磁盘空间；默认保留 30 天，到期清理或永久删除后释放。恢复沿用已有回收站功能，照片分享链接不会恢复。
+
+清理提交携带分组版本。服务端重新检查所属用户、内容、文件版本、动态部分与保留项，在文件变更锁内先校验全部选择，再开始移动。照片被改动时返回 `409 DUPLICATE_GROUP_CHANGED`，应刷新并重新检查。清理的已审阅清单持久化保存，相同请求在响应丢失后可重试；移动中断由回收站日志恢复。维护锁阻止清理与人脸扫描、查重扫描、重扫、导入、用户转移等维护活动交叉执行。
+
+## 启用整图 AI
+
+复用人脸识别的 Windows NVIDIA GPU 服务地址和令牌。人脸模型与整图模型独立；两种分析共享每个 worker 的推理锁。整图模型可单独在 Go 服务侧启用，即使 `PHOTO_FACE_ENABLED=false`，仍须配置有效的 worker 地址、令牌及 LAN HTTP 选项。
+
+在 `services/face-worker/` 中创建**独立模型准备环境**，导出预训练 ResNet18 的 512 维全局图像特征。准备时下载官方 torchvision 权重并检查发布的 SHA-256 前缀；导出后将完整 ONNX SHA-256、预处理与来源写入 manifest。推理运行时不联网下载模型，也不使用 PyTorch。
+
+```powershell
+py -3 -m venv .prepare-venv
+.prepare-venv\Scripts\pip.exe install -r requirements-prepare.txt
+.prepare-venv\Scripts\python.exe prepare_similarity_model.py
+```
+
+保留原有的人脸模型和 `manifest.json`；额外生成 `models/resnet18-image.onnx`、`similarity-manifest.json` 和许可证文件。不要将权重提交 Git。
+
+在 GPU worker 的 `.env` 增加：
+
+```dotenv
+SIMILARITY_ENABLED=true
+```
+
+重建、重启 GPU 容器，使其包含新协议与模型：
+
+```powershell
+docker compose build
+docker compose up -d
+```
+
+在主服务 Compose 的 `.env` 增加下面开关，并复用已经配置的 `PHOTO_FACE_WORKER_URL`、`PHOTO_FACE_WORKER_TOKEN` 和 `PHOTO_FACE_ALLOW_INSECURE_LAN`，随后重建或更新主服务并重启：
+
+```dotenv
+PHOTO_DUPLICATES_AI_ENABLED=true
+```
+
+GPU 服务 `/v1/similarity/health` 仅允许令牌认证，报告独立整图模型管线；`/v1/similarity/analyze` 接受不含 EXIF 的 ≤1280px JPEG，返回标准化整图向量和有数量上限的 ORB 局部特征；`/v1/similarity/verify` 校验局部对应关系。旧 worker 不支持这些接口时扫描会报错，需要升级，不影响完全重复及本地 pHash。
+
+新增整图模型会增加每个进程的显存和内存占用。先沿用现有并发设置实测；显存不足时减少 `FACE_WORKER_PROCESSES`，并相应降低主服务 `PHOTO_FACE_CONCURRENCY`。
+
+## 算法与边界
+
+- 完全重复：同 owner、同原图 SHA-256、同动态内容指纹。识别针对独立文件副本，不引入存储层引用计数。
+- 视觉相似：63 位 DCT pHash，汉明距离 ≤6，排除缺少细节的画面。它可能把构图相同的不同照片列为候选，因此需要人工检查。
+- AI 相似：ResNet18 整图特征，随机超平面 LSH 检索候选，余弦相似度初始门槛 0.92；再要求 pHash 接近、ORB 双向比例匹配及 RANSAC 几何对应，或真实 EXIF 拍摄时间相距 ≤3 秒。EXIF 时间缺失时不使用文件时间推断连拍。局部匹配还要求至少 12 个内点，且在两张图上都覆盖足够面积，减少重复纹理、小水印造成的误报。
+- 相似结果以独立照片对展示，不因 A 接近 B、B 接近 C 就把 A/B/C 自动合并。
+- 保留建议优先考虑收藏、分享和人物归属，再参考分辨率、固定尺寸预览的清晰度与曝光。没有闭眼检测或专业审美评分。
+- 检索桶最多保留 128 个候选，每张图最多深入比较 8 个候选，限制高度重复图库的计算量；这种近似检索可能漏掉部分相似照片。阈值是保守初始值，需要用实际图库评估，不能当作概率或商用算法精度承诺。裁剪幅度很大、旋转、复杂拼图、极低纹理或明显不同曝光仍可能漏检。
+- 特征按 owner、原图内容与管线隔离；模型或预处理变化需新扫描。AI 所有分析在本地 GPU 服务完成，不使用云服务，也不复用人脸 embedding。
+
+## 验证
+
+```bash
+go test ./...
+go test -race ./internal/duplicates
+go vet ./...
+cd web && npm test -- --run && npm run typecheck && npm run build
+```
+
+Python API 与局部匹配测试沿用 worker 的测试环境。可设置 `SIMILARITY_TEST_MODELS` 指向导出目录，增加真实 ONNX 权重的 CPU 参考测试。CPU 参考验证输入输出、模型导出和局部特征数学；最终 CUDA 启动、显存与真实图库效果需要在 Windows GPU 容器验证。

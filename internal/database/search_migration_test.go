@@ -112,7 +112,7 @@ VALUES('photo-1','owner','shared','original.jpg','Family.jpg','image/jpeg',?,?,?
 		t.Fatalf("integrity=%q err=%v", integrity, err)
 	}
 	var migrationCount int
-	if err := restored.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil || migrationCount != 13 {
+	if err := restored.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil || migrationCount != 14 {
 		t.Fatalf("migrations=%d err=%v", migrationCount, err)
 	}
 	// The M4 relation must survive an SQLite-consistent backup alongside the

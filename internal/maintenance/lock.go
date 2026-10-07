@@ -14,6 +14,7 @@ type Kind string
 const (
 	KindTrash            Kind = "trash"
 	KindFaceScan         Kind = "face_scan"
+	KindDuplicateScan    Kind = "duplicate_scan"
 	KindRescan           Kind = "rescan"
 	KindThumbnailRebuild Kind = "thumbnail_rebuild"
 	KindImport           Kind = "import"

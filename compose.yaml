@@ -21,6 +21,7 @@ services:
       PHOTO_COOKIE_SECURE: "false"
       # Tianditu browser key for the map page. Put it in a .env file next to
       # this compose file (ignored by Git); leave it unset to disable the map.
+      PHOTO_DUPLICATES_AI_ENABLED: ${PHOTO_DUPLICATES_AI_ENABLED:-false}
       PHOTO_FACE_ENABLED: ${PHOTO_FACE_ENABLED:-false}
       PHOTO_FACE_WORKER_URL: ${PHOTO_FACE_WORKER_URL:-}
       PHOTO_FACE_WORKER_TOKEN: ${PHOTO_FACE_WORKER_TOKEN:-}

@@ -696,7 +696,7 @@ paths:
         '403': { $ref: '#/components/responses/WriteForbidden' }
         '409': { description: Duplicate content or name conflict, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '413': { description: Still or motion part exceeds PHOTO_MAX_UPLOAD_SIZE, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
-        '415': { description: Unsupported, malformed or content-type-mismatched media, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '415': { description: "Unsupported, malformed or content-type-mismatched media", content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '422': { description: Invalid or unsafe media, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '507': { description: Server storage or quota is full, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
@@ -806,7 +806,7 @@ paths:
       operationId: setPhotoFavorite
       security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       responses:
-        '200': { description: Favorite set, including when already set }
+        '200': { description: "Favorite set, including when already set" }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/ReadForbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -816,7 +816,7 @@ paths:
       operationId: unsetPhotoFavorite
       security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       responses:
-        '200': { description: Favorite removed, including when already absent }
+        '200': { description: "Favorite removed, including when already absent" }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /api/v1/photos/{id}/move:
@@ -1904,6 +1904,146 @@ paths:
         '403': { $ref: '#/components/responses/WriteForbidden' }
         '422': { description: Confirmation missing }
 
+  /api/v1/admin/duplicates/config:
+    get:
+      tags: [admin]
+      summary: Get optional local AI similarity availability; administrators only
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: Server configuration; enabling AI does not guarantee that the GPU worker is online
+          content: { application/json: { schema: { type: object, required: [ai_enabled], properties: { ai_enabled: { type: boolean } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+
+  /api/v1/admin/duplicates/groups:
+    get:
+      tags: [admin]
+      summary: List owner-isolated exact copies or reviewed similarity candidates
+      description: |
+        Administrators only. Exact groups use active image SHA-256 plus complete motion
+        content and require no similarity scan. Similar groups are independent pairs,
+        not transitive clusters. Suggestions are not duplicate probabilities. Unverifiable
+        motion sources are skipped. Always follow next_cursor even when items is empty.
+        Exact pages process 10 checksum groups; similarity pages process 20 pairs.
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - { name: kind, in: query, schema: { type: string, enum: [exact, perceptual, ai], default: exact } }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque cursor from this kind of results }
+      responses:
+        '200':
+          description: Groups and a cursor; skipped counts unverifiable entries on this page
+          content: { application/json: { schema: { $ref: '#/components/schemas/DuplicatePage' } } }
+        '400': { description: Invalid kind or cursor }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '503': { description: Duplicate query unavailable }
+
+  /api/v1/admin/duplicates/cleanup:
+    post:
+      tags: [admin]
+      summary: Move explicitly reviewed copies to trash while verifying the keeper
+      description: |
+        Administrators only. Requires a current group version, an explicit keeper and
+        1–500 unique other group members. The keeper and every selected original and
+        motion component are rechecked under the storage mutation lock before moving
+        any files. Stale groups return 409. Identical requests persist the reviewed
+        manifest so lost responses can be retried. Favorites, face annotations and
+        photo share links are not merged. Original and motion files remain in trash
+        until expiry or permanent deletion; space is not released immediately.
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CSRFHeader' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/DuplicateCleanupRequest' } } }
+      responses:
+        '200':
+          description: Completed IDs and per-item move failures
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted_ids, failed]
+                properties:
+                  deleted_ids: { type: array, items: { type: string } }
+                  failed: { type: array, items: { type: object, required: [id, code], properties: { id: { type: string }, code: { type: string } } } }
+        '400': { description: Invalid selection or missing confirmation }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: DUPLICATE_GROUP_CHANGED or MAINTENANCE_IN_PROGRESS }
+        '503': { description: Duplicate cleanup unavailable }
+
+  /api/v1/admin/duplicates/jobs:
+    get:
+      tags: [admin]
+      summary: List the ten latest similarity scans; administrators only
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: Jobs newest first
+          content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/DuplicateJob' } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+    post:
+      tags: [admin]
+      summary: Start a durable incremental similarity scan; administrators only
+      description: |
+        Reuses features for the same owner, checksum and processing pipeline.
+        Returns the existing running or paused scan when one already exists.
+        AI requires an independently configured whole-image model on the local GPU
+        worker. Exact duplicate grouping does not need a job. Results publish only
+        after candidate matching finishes. Restarted scans are paused until resumed.
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CSRFHeader' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [mode], properties: { mode: { type: string, enum: [perceptual, ai] } } } } }
+      responses:
+        '200':
+          description: Started or existing active job
+          content: { application/json: { schema: { $ref: '#/components/schemas/DuplicateJob' } } }
+        '400': { description: Invalid mode }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '409': { description: SIMILARITY_DISABLED or MAINTENANCE_IN_PROGRESS }
+        '503': { description: Worker unavailable or incompatible }
+
+  /api/v1/admin/duplicates/jobs/{id}:
+    get:
+      tags: [admin]
+      summary: Read a similarity scan; administrators only
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: Current scan status
+          content: { application/json: { schema: { $ref: '#/components/schemas/DuplicateJob' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/admin/duplicates/jobs/{id}/{action}:
+    post:
+      tags: [admin]
+      summary: Pause, resume or cancel a similarity scan; administrators only
+      description: Resume requires the original processing pipeline. Cancel and start a new scan after a model change.
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: action, in: path, required: true, schema: { type: string, enum: [pause, resume, cancel] } }
+        - { $ref: '#/components/parameters/CSRFHeader' }
+      responses:
+        '200':
+          description: Updated scan status
+          content: { application/json: { schema: { $ref: '#/components/schemas/DuplicateJob' } } }
+        '400': { description: Invalid action or job state }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WriteForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Changed pipeline or maintenance in progress }
+        '503': { description: Worker unavailable }
+
 components:
   securitySchemes:
     cookieAuth:
@@ -2067,6 +2207,76 @@ components:
               request_id: req_01JABC
               details: { kind: import, job_id: import_1758873600000000000 }
   schemas:
+
+    DuplicateKind:
+      type: string
+      enum: [exact, perceptual, ai]
+    DuplicateItem:
+      allOf:
+        - $ref: '#/components/schemas/Photo'
+        - type: object
+          required: [review, folder_path, is_live_photo, has_favorites, has_shares, has_face_annotations, sharpness, exposure]
+          properties:
+            review:
+              type: object
+              required: [id, revision, checksum, motion]
+              properties:
+                id: { type: string }
+                revision: { type: string }
+                checksum: { type: string }
+                motion: { type: string }
+            folder_path: { type: string, description: Display-only folder path; never accepted as a mutation target }
+            is_live_photo: { type: boolean }
+            has_favorites: { type: boolean, description: Any user has favorited this photo }
+            has_shares: { type: boolean }
+            has_face_annotations: { type: boolean }
+            sharpness: { type: number }
+            exposure: { type: number }
+    DuplicateGroup:
+      type: object
+      required: [id, kind, version, owner_id, owner_name, score, reason, items, recommended_id]
+      properties:
+        id: { type: string }
+        kind: { $ref: '#/components/schemas/DuplicateKind' }
+        owner_name: { type: string, description: Display name of the owner }
+        version: { type: string, description: Content and location snapshot bound to this group }
+        owner_id: { type: string }
+        score: { type: number, description: Similarity score, not a probability }
+        reason: { type: string, enum: [identical, visual_hash, visual_hash_ai, local_features, burst] }
+        items: { type: array, items: { $ref: '#/components/schemas/DuplicateItem' } }
+        recommended_id: { type: string, description: Editable suggestion; never an automatic deletion decision }
+    DuplicatePage:
+      type: object
+      required: [items, next_cursor, skipped]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/DuplicateGroup' } }
+        next_cursor: { type: string, description: Empty string when no further page }
+        skipped: { type: integer }
+    DuplicateCleanupRequest:
+      type: object
+      additionalProperties: false
+      required: [group_id, version, kind, keep_id, remove_ids, confirm]
+      properties:
+        group_id: { type: string }
+        version: { type: string }
+        kind: { $ref: '#/components/schemas/DuplicateKind' }
+        keep_id: { type: string }
+        remove_ids: { type: array, minItems: 1, maxItems: 500, uniqueItems: true, items: { type: string } }
+        confirm: { type: boolean, const: true }
+    DuplicateJob:
+      type: object
+      required: [id, mode, pipeline, status, total, processed, failed, error, created_at, updated_at]
+      properties:
+        id: { type: string }
+        mode: { type: string, enum: [perceptual, ai] }
+        pipeline: { type: string }
+        status: { type: string, enum: [running, paused, completed, cancelled, failed] }
+        total: { type: integer }
+        processed: { type: integer, description: Analysis items processed; matching may continue when this equals total }
+        failed: { type: integer }
+        error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     TrashItem:
       type: object
@@ -2749,6 +2959,9 @@ components:
         - CURSOR_EXPIRED
         - NAME_CONFLICT
         - DUPLICATE_PHOTO
+        - DUPLICATE_GROUP_CHANGED
+        - DUPLICATE_REQUEST_FAILED
+        - SIMILARITY_DISABLED
         - FOLDER_NOT_EMPTY
         - FOLDER_DESCENDANT
         - RESCAN_IN_PROGRESS
