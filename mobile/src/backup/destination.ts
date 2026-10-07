@@ -30,9 +30,11 @@ export function dateDestination(api: BrowseApi, root: Folder, signal: AbortSigna
     children.set(parent.id, folders);
     return folders;
   };
-  return async (media: MediaDates): Promise<Folder> => {
+  // Manual queues can pass a saved calendar path so a timezone change before
+  // retry does not alter the destination selected when the task was enqueued.
+  return async (media: MediaDates, parts: readonly string[] = backupDateParts(media)): Promise<Folder> => {
     let parent = root;
-    for (const name of backupDateParts(media)) {
+    for (const name of parts) {
       checkStopped();
       const folders = children.get(parent.id) ?? await list(parent);
       let child = folders.find(folder => folder.name === name);

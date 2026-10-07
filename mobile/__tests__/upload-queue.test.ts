@@ -1,6 +1,6 @@
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import type {BrowseApi} from '../src/browse/api';
-import {loadQueue, pairMedia, saveQueue, uploadError, uploadOne} from '../src/upload/queue';
+import {loadQueue, pairMedia, prepareUpload, saveQueue, uploadError, uploadOne} from '../src/upload/queue';
 import {ApiError} from '../src/auth/api';
 import {NativeModules} from 'react-native';
 
@@ -122,4 +122,52 @@ test('cancelling before folder lookup finishes never starts native transfer', as
   const item = pairMedia([{path: '/a', name: 'a.jpg', mime: 'image/jpeg', size: 20}], folder)[0];
   const result = uploadOne(api, item, jest.fn(), controller.signal); controller.abort(); finish();
   await expect(result).rejects.toThrow('取消'); expect(ReactNativeBlobUtil.config).not.toHaveBeenCalled();
+});
+
+test('dated queues preserve each selected root, date and Live Photo pairing across relaunch', async () => {
+  const capturedAt = new Date(2026, 9, 5, 0, 15).getTime();
+  const items = pairMedia([
+    {path: '/motion', name: 'IMG_1.MOV', mime: 'video/quicktime', size: 10, capturedAt: new Date(2026, 9, 6).getTime()},
+    {path: '/still', name: 'IMG_1.HEIC', mime: 'image/heic', size: 20, capturedAt},
+    {path: '/video', name: 'clip.mp4', mime: 'video/mp4', size: 30, addedAt: new Date(2025, 0, 2).getTime()},
+    {path: '/unknown', name: 'unknown.png', mime: 'image/png', size: 40},
+  ], folder, true);
+  expect(items).toHaveLength(3);
+  expect(items[0]).toMatchObject({folderName: '旅行/2026/10/05', dateArchive: {rootId: folder.id, parts: ['2026', '10', '05']}, motion: {path: '/motion'}});
+  expect(items[1].folderName).toBe('旅行/2025/01/02');
+  expect(items[2].folderName).toBe('旅行/日期未知');
+  const session = {server: 'http://192.168.1.9', username: 'alice', accessToken: 'a', accessExpiresAt: '', refreshToken: 'r', refreshExpiresAt: ''};
+  await saveQueue(session, items);
+  expect(await loadQueue(session)).toEqual(items);
+  expect(pairMedia([{path: '/direct', name: 'direct.jpg', mime: 'image/jpeg', size: 10}], folder, false)[0]).toMatchObject({folderId: folder.id, folderName: folder.name});
+});
+
+test('resolves date folders under the queued root, pins the leaf and retries the same folder', async () => {
+  const request = jest.fn(async (path: string) => path.includes('?') ? {items: []} : folder);
+  const createFolder = jest.fn(async (name: string, parentId: string) => ({...folder, id: `${parentId}/${name}`, parent_id: parentId, name}));
+  const api = {request, createFolder} as unknown as BrowseApi;
+  const item = pairMedia([{path: '/dated', name: 'dated.jpg', mime: 'image/jpeg', size: 20, capturedAt: new Date(2026, 9, 5).getTime()}], folder, true)[0];
+  // The calendar path is saved at selection, even if later date metadata changes.
+  const prepared = await prepareUpload(api, {...item, capturedAt: new Date(2026, 9, 6).getTime()}, new AbortController().signal);
+  expect(prepared).toMatchObject({folderId: 'folder-1/2026/10/05', dateArchive: {resolved: true}});
+  expect(createFolder.mock.calls).toEqual([['2026', 'folder-1'], ['10', 'folder-1/2026'], ['05', 'folder-1/2026/10']]);
+  request.mockClear();
+  expect(await prepareUpload(api, prepared, new AbortController().signal)).toBe(prepared);
+  expect(request).not.toHaveBeenCalled();
+  const response = Object.assign(Promise.resolve({info: () => ({status: 201})}), {uploadProgress: jest.fn()});
+  const send: jest.Mock = jest.fn(() => response);
+  (ReactNativeBlobUtil.config as jest.Mock).mockReturnValue({fetch: send});
+  const uploadApi = {...api, validSession: jest.fn().mockResolvedValue({server: 'http://192.168.1.9', accessToken: 'a'})} as unknown as BrowseApi;
+  await uploadOne(uploadApi, prepared, jest.fn());
+  expect(send.mock.calls[0][3]).toContainEqual({name: 'folder_id', data: prepared.folderId});
+});
+
+test('unresolved or forbidden date destinations never upload bytes into the root', async () => {
+  const item = pairMedia([{path: '/dated', name: 'dated.jpg', mime: 'image/jpeg', size: 20}], folder, true)[0];
+  const api = {request: jest.fn().mockResolvedValue({...folder, effective_permission: 'read'}), createFolder: jest.fn()} as unknown as BrowseApi;
+  (ReactNativeBlobUtil.config as jest.Mock).mockClear();
+  await expect(uploadOne(api, item, jest.fn())).rejects.toThrow('日期目录尚未准备');
+  await expect(prepareUpload(api, item, new AbortController().signal)).rejects.toMatchObject({status: 403});
+  expect(api.createFolder).not.toHaveBeenCalled();
+  expect(ReactNativeBlobUtil.config).not.toHaveBeenCalled();
 });

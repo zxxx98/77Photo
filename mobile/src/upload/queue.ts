@@ -4,11 +4,13 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import {ApiError} from '../auth/api';
 import type {MobileSession} from '../auth/session';
 import type {BrowseApi, Folder} from '../browse/api';
+import {backupDateParts, dateDestination, type MediaDates} from '../backup/destination';
 
-export type PickedFile = {path: string; name: string; mime: string; size: number; thumbnailPath?: string};
+export type PickedFile = MediaDates & {path: string; name: string; mime: string; size: number; thumbnailPath?: string};
 export type UploadItem = PickedFile & {
   id: string; folderId: string; folderName: string; status: 'waiting' | 'uploading' | 'success' | 'skipped' | 'failed' | 'cancelled';
   progress: number; message?: string; motion?: PickedFile;
+  dateArchive?: {rootId: string; parts: string[]; resolved?: boolean};
 };
 const picker = NativeModules.Photo77Picker as {
   pick(): Promise<PickedFile[]>; deleteFile(path: string): Promise<boolean>;
@@ -23,7 +25,7 @@ export async function deleteStagedFiles(items: UploadItem[]) {
   await Promise.all(items.flatMap(item => [item.path, item.thumbnailPath, item.motion?.path, item.motion?.thumbnailPath]
     .filter((path): path is string => !!path)).map(path => picker.deleteFile(path).catch(() => false)));
 }
-export function pairMedia(files: PickedFile[], folder: Folder): UploadItem[] {
+export function pairMedia(files: PickedFile[], folder: Folder, dateFolders = false): UploadItem[] {
   const stills = files.filter(file => ['image/jpeg', 'image/png', 'image/heic', 'image/heif'].includes(file.mime));
   const used = new Set<string>();
   const output: UploadItem[] = [];
@@ -34,8 +36,10 @@ export function pairMedia(files: PickedFile[], folder: Folder): UploadItem[] {
     if (motion) {used.add(motion.path);}
     if (file.mime === 'video/quicktime' && stills.some(still => baseName(still.name) === baseName(file.name))) {continue;}
     used.add(file.path);
+    const parts = dateFolders ? backupDateParts(file) : undefined;
     output.push({...file, id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, folderId: folder.id,
-      folderName: folder.name, status: 'waiting' as const, progress: 0, motion});
+      folderName: parts ? `${folder.name}/${parts.join('/')}` : folder.name, status: 'waiting' as const, progress: 0, motion,
+      ...(parts ? {dateArchive: {rootId: folder.id, parts}} : {})});
   }
   return output;
 }
@@ -71,6 +75,18 @@ export async function clearQueue(session: MobileSession) {
 }
 export function allowQueue(session: MobileSession) {blockedScopes.delete(keyFor(session));}
 
+// The caller persists the resolved folder before starting the upload. Retries
+// then use the same leaf folder, including after a lost upload response.
+export async function prepareUpload(api: BrowseApi, item: UploadItem, signal: AbortSignal): Promise<UploadItem> {
+  if (!item.dateArchive || item.dateArchive.resolved) {return item;}
+  if (signal.aborted) {throw new Error('上传已取消或暂停');}
+  const root = await api.request<Folder>(`/api/v1/folders/${encodeURIComponent(item.dateArchive.rootId)}`);
+  if (signal.aborted) {throw new Error('上传已取消或暂停');}
+  if (root.effective_permission === 'read') {throw new ApiError(403, 'WRITE_FORBIDDEN', '目标文件夹已无写入权限');}
+  const folder = await dateDestination(api, root, signal)(item, item.dateArchive.parts);
+  return {...item, folderId: folder.id, dateArchive: {...item.dateArchive, resolved: true}};
+}
+
 function decodeError(status: number, body: string): ApiError {
   let error: {code?: string; message?: string} = {};
   try {error = JSON.parse(body)?.error ?? {};} catch {}
@@ -81,6 +97,7 @@ export async function uploadOne(api: BrowseApi, item: UploadItem, progress: (val
   signal?: AbortSignal, timeoutMs = 120000): Promise<'success' | 'skipped'> {
   const checkCancelled = () => {if (signal?.aborted) {throw new Error('上传已取消或暂停');}};
   checkCancelled();
+  if (item.dateArchive && !item.dateArchive.resolved) {throw new Error('日期目录尚未准备完成，请重试');}
   // A deleted or newly unreadable target fails early. The upload endpoint is
   // authoritative for write permission, including inherited shared grants.
   await api.request<Folder>(`/api/v1/folders/${encodeURIComponent(item.folderId)}`);

@@ -10,7 +10,9 @@ import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.provider.DocumentsContract
 import androidx.core.content.FileProvider
+import androidx.exifinterface.media.ExifInterface
 import com.facebook.react.bridge.ActivityEventListener
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -103,6 +105,37 @@ class PhotoPickerModule(private val context: ReactApplicationContext) : ReactCon
   }
 
   override fun onNewIntent(intent: Intent) {}
+
+  private fun sourceDates(uri: Uri): Map<String, Double> {
+    val dates = mutableMapOf<String, Double>()
+    // Photo/document/cloud providers expose different columns. Missing date
+    // metadata must not make a readable selection fail or require all-photo access.
+    try {
+      context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) {
+          fun read(column: String): Double? {
+            val index = cursor.getColumnIndex(column)
+            return if (index < 0 || cursor.isNull(index)) null else cursor.getDouble(index).takeIf { it.isFinite() && it > 0 }
+          }
+          read("datetaken")?.let { dates["capturedAt"] = it }
+          read("date_added")?.let { dates["addedAt"] = it * 1000 }
+          (read("date_modified")?.times(1000) ?: read(DocumentsContract.Document.COLUMN_LAST_MODIFIED))
+            ?.let { dates["modifiedAt"] = it }
+        }
+      }
+    } catch (_: Exception) { /* Metadata is optional for selected URIs. */ }
+    return dates
+  }
+
+  private fun imageCaptureTime(file: File): Long? = try {
+    val exif = ExifInterface(file.absolutePath)
+    arrayOf(
+      ExifInterface.TAG_DATETIME_ORIGINAL to ExifInterface.TAG_OFFSET_TIME_ORIGINAL,
+      ExifInterface.TAG_DATETIME_DIGITIZED to ExifInterface.TAG_OFFSET_TIME_DIGITIZED,
+      ExifInterface.TAG_DATETIME to ExifInterface.TAG_OFFSET_TIME
+    ).firstNotNullOfOrNull { (date, offset) -> exifTimestamp(exif.getAttribute(date), exif.getAttribute(offset)) }
+  } catch (_: Exception) { null }
+
   override fun onActivityResult(activity: Activity, code: Int, result: Int, data: Intent?) {
     if (code != requestCode) return
     val promise = pending ?: return
@@ -120,6 +153,7 @@ class PhotoPickerModule(private val context: ReactApplicationContext) : ReactCon
         val output = Arguments.createArray()
         val directory = File(context.filesDir, "upload-staging").apply { mkdirs() }
         for (uri in uris) {
+          val dates = sourceDates(uri).toMutableMap()
           var name = "media"
           context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor: Cursor ->
             if (cursor.moveToFirst()) name = cursor.getString(0) ?: name
@@ -145,10 +179,15 @@ class PhotoPickerModule(private val context: ReactApplicationContext) : ReactCon
             item.putString("name", name)
             item.putString("mime", mime)
             item.putDouble("size", file.length().toDouble())
+            if (mime.startsWith("image/")) {
+              imageCaptureTime(file)?.let { dates["capturedAt"] = it.toDouble() }
+            }
             if (mime.startsWith("video/")) {
+              val retriever = MediaMetadataRetriever()
               try {
-                val retriever = MediaMetadataRetriever()
                 retriever.setDataSource(file.absolutePath)
+                videoTimestamp(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE))
+                  ?.let { dates["capturedAt"] = it.toDouble() }
                 val frame = retriever.getFrameAtTime(0)
                 if (frame != null) {
                   val thumbnail = File(directory, UUID.randomUUID().toString() + ".jpg")
@@ -157,9 +196,10 @@ class PhotoPickerModule(private val context: ReactApplicationContext) : ReactCon
                   item.putString("thumbnailPath", thumbnail.absolutePath)
                   frame.recycle()
                 }
-                retriever.release()
               } catch (_: Exception) { /* The media remains uploadable when thumbnail extraction fails. */ }
+              finally { runCatching { retriever.release() } }
             }
+            dates.forEach { (key, value) -> item.putDouble(key, value) }
             output.pushMap(item)
           } catch (error: Exception) { file.delete(); throw error }
         }

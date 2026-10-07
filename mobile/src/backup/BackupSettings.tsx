@@ -74,7 +74,7 @@ export default function BackupSettings({session, api, folder}: Props) {
         .finally(() => setStartingVisible(false));
     }}><Text style={styles.retry}>{pendingVideo ? '继续待处理视频' : '开始可见视频传输'}</Text></Pressable> : null}
     {settings.videoEnabled ? <Text style={styles.detail}>可见传输会显示系统通知，可从通知暂停或取消。</Text> : null}
-    <Text style={styles.detail}>备份根目录：{settings.folder?.name ?? '开启时使用下方所选文件夹'}。更改目录请先关闭照片和视频备份，再选择目录并开启。</Text>
+    <Text style={styles.detail}>备份根目录：{settings.folder?.name ?? '开启时使用所选根目录'}。更改目录请先关闭照片和视频备份，再选择目录并开启。</Text>
     <View style={styles.row}><Text style={styles.label}>按年月日归档</Text><Switch accessibilityLabel="按年月日归档" value={!!settings.dateFolders} disabled={busy || !ready || settings.enabled || !!settings.videoEnabled} onValueChange={dateFolders => change({...settings, dateFolders})} /></View>
     <Text style={styles.detail}>{settings.dateFolders ? '按系统相册中的拍摄日期自动创建年/月/日目录，例如 2026/10/05；无拍摄时间时使用加入相册时间或修改时间，均缺失时放入“日期未知”。' : '照片和视频直接上传到备份根目录。'}更改归档方式请先关闭照片和视频备份；重新开启后会上传到对应目录，原有文件保留。</Text>
     <View style={styles.row}><Text style={styles.label}>仅 Wi-Fi</Text><Switch accessibilityLabel="仅 Wi-Fi 自动备份" value={settings.wifiOnly} disabled={busy || !ready} onValueChange={wifiOnly => change({...settings, wifiOnly})} /></View>

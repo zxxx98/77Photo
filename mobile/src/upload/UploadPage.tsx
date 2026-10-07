@@ -1,9 +1,9 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {ActivityIndicator, AppState, BackHandler, Image, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, AppState, BackHandler, Image, Pressable, ScrollView, StyleSheet, Switch, Text, View} from 'react-native';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import type {MobileSession} from '../auth/session';
 import {BrowseApi, type Folder} from '../browse/api';
-import {allowQueue, deleteStagedFiles, isCompleted, loadQueue, pairMedia, pickMedia, saveQueue, uploadError, uploadOne, type UploadItem} from './queue';
+import {allowQueue, deleteStagedFiles, isCompleted, loadQueue, pairMedia, pickMedia, prepareUpload, saveQueue, uploadError, uploadOne, type UploadItem} from './queue';
 import Icon from '../browse/Icon';
 import BackupSettings from '../backup/BackupSettings';
 
@@ -25,6 +25,8 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const [folder, setFolder] = useState<Folder | null>(null);
+  const [pane, setPane] = useState<'manual' | 'backup'>('manual');
+  const [dateFolders, setDateFolders] = useState(true);
   const [choosing, setChoosing] = useState(false);
   const [folderStack, setFolderStack] = useState<Folder[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -48,6 +50,7 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
     mountedRef.current = true;
     allowQueue(sessionRef.current);
     ready.current = false;
+    setFolder(null); setDateFolders(true); setPane('manual'); setChoosing(false); setBusy(false); setNotice('');
     loadQueue(sessionRef.current).then(next => {if (mounted) {commit(next); ready.current = true;}})
       .catch(() => {if (mounted) {setNotice('无法读取上传队列');}});
     const sub = AppState.addEventListener('change', state => {
@@ -67,7 +70,7 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
     return () => {mounted = false; mountedRef.current = false; queueEpoch.current = epoch + 1; currentUpload.current?.controller.abort(); sub.remove();};
   }, [accountKey, commit]);
   useEffect(() => {
-    if (incomingFolder) {setFolder(incomingFolder); setChoosing(false); clearIncoming();}
+    if (incomingFolder) {setFolder(incomingFolder); setPane('manual'); setChoosing(false); clearIncoming();}
   }, [incomingFolder, clearIncoming]);
   useEffect(() => {
     if (!active || !choosing) {return;}
@@ -112,7 +115,15 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
             continue;
           }
           if (controller.signal.aborted) {continue;}
-          const result = await uploadOne(api, item, value => update({progress: value}), controller.signal);
+          const prepared = await prepareUpload(api, item, controller.signal);
+          if (controller.signal.aborted || epoch !== queueEpoch.current) {continue;}
+          if (prepared !== item) {
+            update({folderId: prepared.folderId, dateArchive: prepared.dateArchive});
+            // A crash or lost upload response must not forget the leaf folder.
+            await saving.current;
+          }
+          if (controller.signal.aborted || epoch !== queueEpoch.current) {continue;}
+          const result = await uploadOne(api, prepared, value => update({progress: value}), controller.signal);
           update({status: result, progress: 100, message: result === 'skipped' ? '服务器已有相同内容' : undefined});
         } catch (error) {
           if (!controller.signal.aborted) {update({status: 'failed', progress: 0, message: uploadError(error)});}
@@ -142,12 +153,17 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
   }
   async function selectMedia() {
     if (!folder || busy) {return;}
+    const epoch = queueEpoch.current;
     setBusy(true); setNotice('');
     try {
       const picked = await pickMedia();
-      if (picked.length) {commit([...itemsRef.current, ...pairMedia(picked, folder)]);}
-    } catch (error) {setNotice(error instanceof Error ? error.message : '无法读取所选媒体');}
-    finally {setBusy(false);}
+      if (picked.length) {
+        const selected = pairMedia(picked, folder, dateFolders);
+        if (!mountedRef.current || epoch !== queueEpoch.current) {await deleteStagedFiles(selected); return;}
+        commit([...itemsRef.current, ...selected]);
+      }
+    } catch (error) {if (mountedRef.current && epoch === queueEpoch.current) {setNotice(error instanceof Error ? error.message : '无法读取所选媒体');}}
+    finally {if (mountedRef.current && epoch === queueEpoch.current) {setBusy(false);}}
   }
   const summary = {
     waiting: items.filter(item => item.status === 'waiting').length,
@@ -155,11 +171,18 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
     failed: items.filter(item => item.status === 'failed').length,
     cancelled: items.filter(item => item.status === 'cancelled').length,
   };
+  const destination = <Pressable style={styles.destination} accessibilityRole="button" accessibilityLabel={`目标文件夹：${folder?.name ?? '未选择'}，点按更改`} onPress={() => {setFolderStack([]); setChoosing(true);}}><View style={styles.destinationCopy}><Text style={styles.meta}>{pane === 'backup' || dateFolders ? '服务器根目录' : '服务器目标文件夹'}</Text><Text style={styles.folderName}>{folder?.name ?? '请选择有写入权限的文件夹'}</Text></View><Icon name="next" tone="muted" size={20} /></Pressable>;
   return <View style={[styles.root, !active && styles.hidden]} accessibilityElementsHidden={!active} importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}>
-    <Text style={styles.title}>备份</Text>
-    <Text style={styles.subtitle}>自动备份系统相册照片，或手动选择照片与视频上传。</Text>
-    <BackupSettings session={session} api={api} folder={folder} />
-    <View style={styles.summary}><Text style={styles.summaryText}>等待 {summary.waiting}</Text><Text style={styles.summaryText}>上传中 {summary.uploading}</Text><Text style={styles.summaryText}>失败 {summary.failed}</Text><Text style={styles.summaryText}>已取消 {summary.cancelled}</Text></View>
+    <Text style={styles.title}>备份与上传</Text>
+    <View style={styles.tabs} accessibilityRole="tablist">
+      {(['manual', 'backup'] as const).map(tab => <Pressable key={tab} style={[styles.tab, pane === tab && styles.selectedTab]} accessibilityRole="tab" accessibilityLabel={tab === 'manual' ? '手动上传' : '自动备份设置'} accessibilityState={{selected: pane === tab}} onPress={() => {setPane(tab); setChoosing(false);}}><Text style={[styles.tabText, pane === tab && styles.selectedTabText]}>{tab === 'manual' ? '手动上传' : '自动备份'}</Text></Pressable>)}
+    </View>
+    <View style={[styles.body, (pane !== 'backup' || choosing) && styles.hidden]} accessibilityElementsHidden={pane !== 'backup' || choosing} importantForAccessibility={pane === 'backup' && !choosing ? 'auto' : 'no-hide-descendants'}>
+      <ScrollView contentContainerStyle={styles.content}>
+        {pane === 'backup' && !choosing ? destination : null}
+        <BackupSettings session={session} api={api} folder={folder} />
+      </ScrollView>
+    </View>
     {choosing ? <View style={styles.chooser}>
       <View style={styles.row}><Text style={styles.section}>选择服务器目标文件夹</Text><Pressable style={styles.action} accessibilityRole="button" accessibilityLabel="关闭文件夹选择" onPress={() => setChoosing(false)}><Text style={styles.actionText}>关闭</Text></Pressable></View>
       <Text style={styles.chooserPath} numberOfLines={2}>{folderStack.length ? folderStack.map(entry => entry.name).join(' / ') : '服务器文件夹'}</Text>
@@ -174,12 +197,14 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
         {folderError ? <Text accessibilityRole="alert" style={styles.notice}>{folderError}</Text> : null}
         {!loadingFolders && !folderError && !folders.length ? <Text style={styles.chooserEmpty}>这里没有子文件夹</Text> : null}
       </ScrollView>
-    </View> : <>
-      <Pressable style={styles.destination} accessibilityRole="button" accessibilityLabel={`目标文件夹：${folder?.name ?? '未选择'}，点按更改`} onPress={() => {setFolderStack([]); setChoosing(true);}}><View style={styles.destinationCopy}><Text style={styles.meta}>服务器目标文件夹</Text><Text style={styles.folderName}>{folder?.name ?? '请选择有写入权限的文件夹'}</Text></View><Icon name="next" tone="muted" size={20} /></Pressable>
+    </View> : pane === 'manual' ? <ScrollView testID="manual-upload-content" style={styles.body} contentContainerStyle={styles.content}>
+      {destination}
+      <View style={styles.archiveOption}><View style={styles.archiveCopy}><Text style={styles.optionTitle}>按年月日归档</Text><Text style={styles.meta}>{dateFolders ? '按拍摄日期上传到根目录/年/月/日' : '直接上传到所选目录'}</Text></View><Switch accessibilityLabel="手动上传按年月日归档" value={dateFolders} disabled={busy} onValueChange={setDateFolders} /></View>
       <Pressable style={[styles.primary, (!folder || busy) && styles.disabled]} accessibilityRole="button" accessibilityLabel="选择照片与视频并加入手选上传队列" disabled={!folder || busy} onPress={selectMedia}><Text style={styles.primaryText}>{busy ? '正在保存所选文件…' : '选择照片与视频'}</Text></Pressable>
       {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
-      <Text style={styles.section}>上传队列</Text>
-      <ScrollView contentContainerStyle={styles.queue}>
+      <View style={styles.queueHeading}><Text style={styles.queueTitle}>上传队列</Text><Text style={styles.meta}>共 {items.length} 项</Text></View>
+      <View style={styles.summary}><Text style={styles.summaryText}>等待 {summary.waiting}</Text><Text style={styles.summaryText}>上传中 {summary.uploading}</Text><Text style={styles.summaryText}>失败 {summary.failed}</Text><Text style={styles.summaryText}>已取消 {summary.cancelled}</Text></View>
+      <View>
         {items.length === 0 ? <View style={styles.queueEmpty}><Text style={styles.emptyTitle}>队列还是空的</Text><Text style={styles.meta}>选择目标文件夹后，从系统相册手动选择照片和视频。</Text></View> : [...items].reverse().map(item => <View key={item.id} style={styles.item}>
           {item.mime.startsWith('image/') || item.thumbnailPath ? <Image source={{uri: `file://${item.thumbnailPath ?? item.path}`}} style={styles.thumb} /> : <View style={styles.thumbPlaceholder}><Icon name="video" size={26} /></View>}
           <View style={styles.itemBody}><Text style={styles.fileName} numberOfLines={1}>{item.name}{item.motion ? ' · 动态照片' : ''}</Text>
@@ -193,21 +218,23 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
             {item.status === 'cancelled' ? <Pressable style={styles.retry} accessibilityRole="button" accessibilityLabel={`移除已取消的 ${item.name}`} disabled={currentUpload.current?.id === item.id} onPress={() => removeCancelled(item)}><Text style={styles.actionText}>移除</Text></Pressable> : null}
           </View>
         </View>)}
-      </ScrollView>
-    </>}
+      </View>
+    </ScrollView> : null}
   </View>;
 }
 
 const styles = StyleSheet.create({
   root: {flex: 1, paddingTop: 18, backgroundColor: '#FAF9F7'}, hidden: {display: 'none'},
   title: {fontSize: 26, fontWeight: '700', color: ink, marginHorizontal: 20},
-  subtitle: {fontSize: 14, lineHeight: 21, color: muted, marginHorizontal: 20, marginTop: 8, marginBottom: 16},
-  summary: {flexDirection: 'row', justifyContent: 'space-around', marginHorizontal: 16, paddingVertical: 16, backgroundColor: '#F0EEEA', borderRadius: 18},
+  tabs: {flexDirection: 'row', marginHorizontal: 16, marginTop: 14, marginBottom: 4, padding: 4, backgroundColor: '#F0EEEA', borderRadius: 16}, tab: {flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 12}, selectedTab: {backgroundColor: '#FFF'}, tabText: {color: muted, fontSize: 15}, selectedTabText: {color: ink, fontWeight: '600'},
+  body: {flex: 1, minHeight: 0}, content: {paddingBottom: 28}, archiveOption: {flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, marginBottom: 12, minHeight: 48}, archiveCopy: {flex: 1, marginRight: 12}, optionTitle: {color: ink, fontSize: 15, fontWeight: '600'},
+  queueHeading: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: 20, marginTop: 18, marginBottom: 10}, queueTitle: {fontSize: 18, color: ink, fontWeight: '600'},
+  summary: {flexDirection: 'row', justifyContent: 'space-around', marginHorizontal: 16, marginBottom: 12, paddingVertical: 12, backgroundColor: '#F0EEEA', borderRadius: 14},
   summaryText: {color: ink, fontSize: 14}, destination: {minHeight: 68, flexDirection: 'row', alignItems: 'center', margin: 16, paddingHorizontal: 16, borderWidth: 1, borderColor: '#E8E5E1', backgroundColor: '#FFF', borderRadius: 16}, destinationCopy: {flex: 1, justifyContent: 'center'},
   folderName: {color: ink, fontSize: 16, fontWeight: '600'}, meta: {color: muted, fontSize: 12, marginTop: 4},
   primary: {minHeight: 52, backgroundColor: ink, marginHorizontal: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center'}, disabled: {opacity: 0.5}, primaryText: {color: '#FFF', fontSize: 16, fontWeight: '600'},
   notice: {color: '#A65757', marginHorizontal: 20, marginTop: 10}, section: {fontSize: 18, color: ink, fontWeight: '600', marginHorizontal: 20, marginTop: 18, marginBottom: 10},
-  queue: {paddingBottom: 28}, queueEmpty: {marginHorizontal: 16, padding: 22, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E8E5E1', borderRadius: 18}, emptyTitle: {color: ink, fontSize: 15, fontWeight: '600'}, item: {minHeight: 92, flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 16, borderWidth: 1, borderColor: '#E8E5E1', marginHorizontal: 16, marginBottom: 8, padding: 10},
+  queueEmpty: {marginHorizontal: 16, padding: 22, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E8E5E1', borderRadius: 18}, emptyTitle: {color: ink, fontSize: 15, fontWeight: '600'}, item: {minHeight: 92, flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 16, borderWidth: 1, borderColor: '#E8E5E1', marginHorizontal: 16, marginBottom: 8, padding: 10},
   thumb: {width: 60, height: 60, borderRadius: 10}, thumbPlaceholder: {width: 60, height: 60, borderRadius: 10, backgroundColor: '#E8D4B8', alignItems: 'center', justifyContent: 'center'},
   itemBody: {flex: 1, marginLeft: 10}, fileName: {fontSize: 14, color: ink, fontWeight: '600'}, track: {height: 4, backgroundColor: '#E8E5E1', borderRadius: 2, marginTop: 8}, fill: {height: 4, backgroundColor: '#A8C5B8', borderRadius: 2},
   retry: {minWidth: 48, minHeight: 48, justifyContent: 'center', alignItems: 'center'}, actionText: {color: ink, fontSize: 15}, action: {minWidth: 48, minHeight: 48, justifyContent: 'center', paddingHorizontal: 12}, inline: {flexDirection: 'row', alignItems: 'center', gap: 6},
