@@ -1,5 +1,6 @@
 import NetInfo from '@react-native-community/netinfo';
 import ServerAddresses from '../auth/ServerAddresses';
+import UpdateSettings from '../update/UpdateSettings';
 import React, {useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore} from 'react';
 import {ActivityIndicator, AppState, BackHandler, FlatList, Image, NativeModules, Pressable, ScrollView, StatusBar, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
 import Video from 'react-native-video';
@@ -397,6 +398,7 @@ export default function BrowseApp({session, onSession, onSignOut, error}: {sessi
         <View style={styles.settingsHeader}><Text style={styles.settingsTitle}>设置</Text><Pressable accessibilityRole="button" accessibilityLabel="返回" style={styles.settingsBack} onPress={() => setSettings(false)}><Icon name="back" size={22} /><Text style={styles.backLabel}>返回</Text></Pressable></View>
         <Text style={styles.settingsUsername}>{session.username}</Text>
         <ServerAddresses api={api} session={session} />
+        <UpdateSettings />
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         <Pressable accessibilityRole="button" style={styles.retry} onPress={onSignOut}><Text style={styles.retryText}>退出当前设备</Text></Pressable></ScrollView> : null}
     <View style={[styles.content, (settings || !!viewer || trash) && styles.hidden]} accessibilityElementsHidden={settings || !!viewer || trash} importantForAccessibility={settings || viewer || trash ? 'no-hide-descendants' : 'auto'}>
