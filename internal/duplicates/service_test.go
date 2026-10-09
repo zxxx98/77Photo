@@ -414,3 +414,39 @@ func TestHashAndQualityOnRecompressedImage(t *testing.T) {
 		t.Fatal("flat image sharper than detail")
 	}
 }
+
+func TestAIScanReusesFeaturesAndAnalyzesNewOrChangedPhotos(t *testing.T) {
+	f := newFixture(t)
+	f.add(t, "p1", "a", "a0", f.raw)
+	f.add(t, "p2", "a", "a1", testJPEG(7, 90))
+	w := &fakeWorker{}
+	f.s.worker = w
+	f.s.ai = true
+	scan := func(total int, calls int32) {
+		t.Helper()
+		j, err := f.s.Start(context.Background(), "ai")
+		if err != nil {
+			t.Fatal(err)
+		}
+		j = waitJob(t, f.s, j.ID)
+		if j.Status != "completed" || j.Total != total || j.Processed != total || j.Failed != 0 {
+			t.Fatalf("job=%+v", j)
+		}
+		if got := w.calls.Load(); got != calls {
+			t.Fatalf("AI analysis calls=%d, want %d", got, calls)
+		}
+	}
+	scan(2, 2)
+	scan(2, 2)
+	f.add(t, "new", "a", "a0", testJPEG(1, 90))
+	scan(3, 3)
+	if _, err := f.db.Exec("UPDATE photos SET checksum=?,source_revision='changed' WHERE id='p1'", strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	scan(3, 4)
+	// Missing current-pipeline features (including earlier failed analyses) are retried.
+	if _, err := f.db.Exec("DELETE FROM duplicate_features WHERE photo_id='p2'"); err != nil {
+		t.Fatal(err)
+	}
+	scan(3, 5)
+}

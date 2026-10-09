@@ -44,10 +44,10 @@ describe('duplicate cleanup review', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('刷新后重新检查'); expect(api.cleanup).toHaveBeenCalledTimes(1);
   });
   it('does not expose the tools or call APIs to ordinary users', async () => { const api = await render({}, 'user'); expect(container.textContent).toBe(''); expect(api.groups).not.toHaveBeenCalled(); expect(api.config).not.toHaveBeenCalled(); });
-  it('requires manual selection for AI suggestions and labels similarity correctly', async () => {
+  it('supports explicit bulk selection for AI suggestions and labels similarity correctly', async () => {
     const aiGroup = { ...group, kind: 'ai' as const, reason: 'local_features' as const, score: .96 };
     await render({ groups: vi.fn(async kind => page(kind === 'ai' ? [aiGroup] : [group])) }); await click('AI 相似');
-    expect(container.textContent).toContain('局部细节匹配'); expect(container.textContent).toContain('相似度不是重复概率'); expect(container.textContent).not.toContain('选择其他副本');
+    expect(container.textContent).toContain('局部细节匹配'); expect(container.textContent).toContain('相似度不是重复概率'); expect(container.textContent).toContain('选择其他副本');
     expect([...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].every(x => !x.checked)).toBe(true);
   });
   it('uses the preferred folder as an editable keeper suggestion', async () => {
@@ -55,4 +55,50 @@ describe('duplicate cleanup review', () => {
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'users/u1/f1'); input.dispatchEvent(new Event('input', { bubbles: true })); });
     expect(container.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1].checked).toBe(true);
   });
+  function aiGroup(id: string, ids: string[]): DuplicateGroup {
+    return { ...group, id, kind: 'ai', reason: 'local_features', recommended_id: ids[0], items: ids.map((id, i) => ({ ...group.items[i % 2], id, filename: `${id}.jpg` })) };
+  }
+  it('reviews and cleans multiple AI groups with one confirmation', async () => {
+    const groups = [aiGroup('a', ['a1', 'a2']), aiGroup('b', ['b1', 'b2'])];
+    const api = await render({ groups: vi.fn().mockResolvedValue(page(groups)) });
+    await click('AI 相似'); await click('每组保留一张，选择其余照片'); await click('检查批量清理');
+    const review = container.querySelector('[aria-label="检查批量清理"]')!;
+    expect(review.textContent).toContain('a1.jpg'); expect(review.textContent).toContain('b2.jpg');
+    expect(api.cleanup).not.toHaveBeenCalled(); await click('确认批量移入回收站');
+    expect(api.cleanup).toHaveBeenCalledTimes(2);
+    expect(api.cleanup).toHaveBeenNthCalledWith(1, { group_id: 'a', kind: 'ai', version: 'v', keep_id: 'a1', remove_ids: ['a2'], confirm: true });
+    expect(api.cleanup).toHaveBeenNthCalledWith(2, { group_id: 'b', kind: 'ai', version: 'v', keep_id: 'b1', remove_ids: ['b2'], confirm: true });
+  });
+  it('skips overlapping groups instead of deleting a selected keeper', async () => {
+    const api = await render({ groups: vi.fn().mockResolvedValue(page([aiGroup('a', ['a1', 'a2']), aiGroup('b', ['a2', 'b2'])])) });
+    await click('每组保留一张，选择其余照片');
+    expect(container.textContent).toContain('已跳过选择冲突');
+    await click('检查批量清理'); await click('确认批量移入回收站');
+    expect(api.cleanup).toHaveBeenCalledTimes(1);
+  });
+  it('blocks manually conflicting selections and invalidates review on edits', async () => {
+    const api = await render({ groups: vi.fn().mockResolvedValue(page([aiGroup('a', ['a1', 'a2']), aiGroup('b', ['a2', 'b2'])])) });
+    await click('每组保留一张，选择其余照片'); await click('检查批量清理');
+    await act(async () => container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[3].click());
+    expect(container.querySelector('[aria-label="检查批量清理"]')).toBeNull();
+    expect(container.textContent).toContain('同时被选为保留和清理');
+    expect([...container.querySelectorAll('button')].find(b => b.textContent === '检查批量清理')?.disabled).toBe(true);
+    expect(api.cleanup).not.toHaveBeenCalled();
+  });
+  it('stops after a partial failure and reports completed deletions', async () => {
+    const cleanup = vi.fn().mockResolvedValueOnce({ deleted_ids: ['a2'], failed: [] }).mockRejectedValueOnce(new ApiError(409, 'DUPLICATE_GROUP_CHANGED', 'changed'));
+    await render({ cleanup, groups: vi.fn().mockResolvedValue(page([aiGroup('a', ['a1', 'a2']), aiGroup('b', ['b1', 'b2']), aiGroup('c', ['c1', 'c2'])])) });
+    await click('每组保留一张，选择其余照片'); await click('检查批量清理'); await click('确认批量移入回收站');
+    expect(cleanup).toHaveBeenCalledTimes(2); expect(container.textContent).toContain('已移入回收站: 1');
+    expect(container.textContent).toContain('批量清理已停止'); expect(container.textContent).toContain('刷新后重新检查');
+    expect([...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].every(x => !x.checked)).toBe(true);
+  });
+  it('only selects loaded groups and requires another selection after loading more', async () => {
+    const groups = vi.fn().mockResolvedValueOnce({ ...page([aiGroup('a', ['a1', 'a2'])]), next_cursor: 'next' }).mockResolvedValue(page([aiGroup('b', ['b1', 'b2'])]));
+    const api = await render({ groups }); await click('每组保留一张，选择其余照片'); await click('检查批量清理'); await click('加载更多');
+    expect(container.querySelector('[aria-label="检查批量清理"]')).toBeNull();
+    expect(container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[3].checked).toBe(false);
+    await click('检查批量清理'); await click('确认批量移入回收站'); expect(api.cleanup).toHaveBeenCalledTimes(1);
+  });
+
 });
