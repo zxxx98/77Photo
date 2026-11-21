@@ -4,6 +4,7 @@ import {IdentityError, profileFor, verifyAddress, type ServerProfile} from './co
 import {normalizeServer} from './server';
 import type {BrowseApi} from '../browse/api';
 import type {MobileSession} from './session';
+import {colors, hairline, radius} from '../ui/theme';
 
 export default function ServerAddresses({api, session}: {api: BrowseApi; session: MobileSession}) {
   const profile = profileFor(session);
@@ -45,61 +46,114 @@ export default function ServerAddresses({api, session}: {api: BrowseApi; session
     if (editing === session.server && address !== editing) {await api.reconnect(true);}
   }
   return <View style={styles.section}>
-    <Text style={styles.title}>服务器地址</Text>
-    <Text style={styles.hint}>当前连接：{session.server}</Text>
-    <Text style={styles.hint}>{profile.manual ? '手动模式：仅使用指定地址' : '自动模式：优先上次成功地址，失败后按列表顺序切换'}</Text>
-    {profile.addresses.map((address, index) => <View key={address.url} style={styles.card}>
-      <Text style={styles.label}>{address.name}{address.url === session.server ? ' · 当前' : ''}{address.url === profile.manual ? ' · 手动指定' : ''}</Text>
-      <Text selectable style={styles.hint}>{address.url}</Text>
-      <Text style={styles.hint}>{api.connection.statuses.get(address.url) ?? (address.verified ? '已验证' : '待验证')}</Text>
-      <View style={styles.actions}>
-        <Action title="检测" disabled={busy} onPress={() => run(async () => {
-          const bound = await bind();
-          try {
-            await verifyAddress(address.url, bound.publicKey);
-            api.connection.statuses.set(address.url, '可连接');
-            await api.updateProfile({...bound, addresses: bound.addresses.map(a => a.url === address.url ? {...a, verified: true} : a)});
-            setNotice('地址验证成功');
-          } catch (error) {api.connection.statuses.set(address.url, error instanceof IdentityError ? '身份不匹配' : '不可连接'); throw error;}
-        })} />
-        <Action title="使用" disabled={busy || !address.verified} onPress={() => run(async () => {
-          await verifyAddress(address.url, profile.publicKey);
-          await api.updateProfile({...profile, manual: address.url}); await api.reconnect(true);
-        })} />
-        <Action title="编辑" disabled={busy} onPress={() => {setEditing(address.url); setUrl(address.url); setName(address.name);}} />
-        <Action title="上移" disabled={busy || index === 0} onPress={() => run(async () => {
-          const addresses = [...profile.addresses];
-          [addresses[index - 1], addresses[index]] = [addresses[index], addresses[index - 1]];
-          await api.updateProfile({...profile, addresses});
-        })} />
-        <Action title="删除" disabled={busy || profile.addresses.length === 1} onPress={() => run(async () => {
-          if (address.url === session.server && !profile.addresses.some(a => a.url !== address.url && a.verified)) {throw new Error('请先验证另一个地址');}
-          await api.updateProfile({...profile, manual: profile.manual === address.url ? undefined : profile.manual, addresses: profile.addresses.filter(a => a.url !== address.url)});
-          if (address.url === session.server) {await api.reconnect(true);}
-        })} />
+    <Text style={styles.sectionCaption}>服务器地址</Text>
+    <View style={styles.group}>
+      <View style={styles.modeBox}>
+        <Text style={styles.modeTitle}>连接策略：{profile.manual ? '手动指定' : '自动切换'}</Text>
+        <Text style={styles.hint}>{profile.manual ? '仅使用手动指定的服务器地址' : '优先使用上次成功地址，不可达时按列表顺序切换'}</Text>
+        <View style={styles.modeActions}>
+          <Action title="自动选择地址" disabled={busy} onPress={() => run(async () => {await api.updateProfile({...profile, manual: undefined}); await api.reconnect(true);})} />
+          <Action title="重新连接" disabled={busy} onPress={() => run(async () => {await api.reconnect(true); setNotice('连接成功');})} />
+        </View>
       </View>
-    </View>)}
-    <View style={styles.actions}>
-      <Action title="自动选择地址" disabled={busy} onPress={() => run(async () => {await api.updateProfile({...profile, manual: undefined}); await api.reconnect(true);})} />
-      <Action title="重新连接" disabled={busy} onPress={() => run(async () => {await api.reconnect(true); setNotice('连接成功');})} />
+      {profile.addresses.map((address, index) => {
+        const statusText = api.connection.statuses.get(address.url) ?? (address.verified ? '已验证' : '待验证');
+        const isCurrent = address.url === session.server;
+        const isManual = address.url === profile.manual;
+        return <View key={address.url} style={[styles.addressRow, styles.rowDivider]}>
+          <View style={styles.addressHeader}>
+            <Text style={styles.label}>{address.name}</Text>
+            <View style={styles.badges}>
+              {isCurrent ? <Text style={[styles.badge, styles.badgeActive]}>当前</Text> : null}
+              {isManual ? <Text style={styles.badge}>手动</Text> : null}
+              <Text style={[styles.badge, (statusText === '可连接' || statusText === '已验证') && styles.badgeGood]}>{statusText}</Text>
+            </View>
+          </View>
+          <Text selectable style={styles.urlText}>{address.url}</Text>
+          <View style={styles.actions}>
+            <Action title="检测" disabled={busy} onPress={() => run(async () => {
+              const bound = await bind();
+              try {
+                await verifyAddress(address.url, bound.publicKey);
+                api.connection.statuses.set(address.url, '可连接');
+                await api.updateProfile({...bound, addresses: bound.addresses.map(a => a.url === address.url ? {...a, verified: true} : a)});
+                setNotice('地址验证成功');
+              } catch (error) {api.connection.statuses.set(address.url, error instanceof IdentityError ? '身份不匹配' : '不可连接'); throw error;}
+            })} />
+            <Action title="使用" disabled={busy || !address.verified} onPress={() => run(async () => {
+              await verifyAddress(address.url, profile.publicKey);
+              await api.updateProfile({...profile, manual: address.url}); await api.reconnect(true);
+            })} />
+            <Action title="编辑" disabled={busy} onPress={() => {setEditing(address.url); setUrl(address.url); setName(address.name);}} />
+            <Action title="上移" disabled={busy || index === 0} onPress={() => run(async () => {
+              const addresses = [...profile.addresses];
+              [addresses[index - 1], addresses[index]] = [addresses[index], addresses[index - 1]];
+              await api.updateProfile({...profile, addresses});
+            })} />
+            <Action title="删除" danger disabled={busy || profile.addresses.length === 1} onPress={() => run(async () => {
+              if (address.url === session.server && !profile.addresses.some(a => a.url !== address.url && a.verified)) {throw new Error('请先验证另一个地址');}
+              await api.updateProfile({...profile, manual: profile.manual === address.url ? undefined : profile.manual, addresses: profile.addresses.filter(a => a.url !== address.url)});
+              if (address.url === session.server) {await api.reconnect(true);}
+            })} />
+          </View>
+        </View>;
+      })}
     </View>
-    <Text style={styles.label}>{editing ? '编辑地址' : '添加备用地址'}</Text>
-    <TextInput accessibilityLabel="地址名称" style={styles.input} value={name} onChangeText={setName} placeholder="名称，例如：组网访问" editable={!busy} />
-    <TextInput accessibilityLabel="备用服务器地址" style={styles.input} value={url} onChangeText={setUrl} placeholder="http://100.90.1.10:8080" autoCapitalize="none" autoCorrect={false} keyboardType="url" editable={!busy} />
-    {url.trim().toLowerCase().startsWith('http://') ? <Text style={styles.warning}>HTTP 连接未加密，请仅在可信内网或加密组网中使用。</Text> : null}
-    <Action title={busy ? '正在处理…' : '保存并验证'} disabled={busy || !url.trim()} onPress={() => run(save)} />
-    {editing ? <Action title="取消编辑" disabled={busy} onPress={() => {setEditing(undefined); setUrl(''); setName('');}} /> : null}
-    {notice ? <Text accessibilityRole="alert" style={styles.warning}>{notice}</Text> : null}
+
+    <Text style={[styles.sectionCaption, styles.formCaption]}>{editing ? '编辑地址' : '添加备用地址'}</Text>
+    <View style={styles.formGroup}>
+      <TextInput accessibilityLabel="地址名称" style={styles.input} value={name} onChangeText={setName}
+        placeholder="名称，例如：组网访问" placeholderTextColor={colors.subtle} editable={!busy} />
+      <TextInput accessibilityLabel="备用服务器地址" style={styles.input} value={url} onChangeText={setUrl}
+        placeholder="http://100.90.1.10:8080" placeholderTextColor={colors.subtle} autoCapitalize="none" autoCorrect={false} keyboardType="url" editable={!busy} />
+      {url.trim().toLowerCase().startsWith('http://') ? <Text style={styles.warning}>HTTP 连接未加密，请仅在可信内网或加密组网中使用。</Text> : null}
+      <View style={styles.actions}>
+        <Pressable accessibilityRole="button" accessibilityState={{disabled: busy || !url.trim()}} disabled={busy || !url.trim()}
+          onPress={() => run(save)} style={({pressed}) => [styles.saveButton, (busy || !url.trim()) && styles.disabled, pressed && styles.pressed]}>
+          <Text style={styles.saveButtonText}>{busy ? '正在处理…' : '保存并验证'}</Text>
+        </Pressable>
+        {editing ? <Action title="取消编辑" disabled={busy} onPress={() => {setEditing(undefined); setUrl(''); setName('');}} /> : null}
+      </View>
+      {notice ? <Text accessibilityRole="alert" style={styles.warning}>{notice}</Text> : null}
+    </View>
   </View>;
 }
-function Action({title, disabled, onPress}: {title: string; disabled: boolean; onPress: () => void}) {
-  return <Pressable accessibilityRole="button" accessibilityState={{disabled}} disabled={disabled} onPress={onPress} style={[styles.button, disabled && styles.disabled]}><Text style={styles.label}>{title}</Text></Pressable>;
+
+function Action({title, disabled, danger = false, onPress}: {title: string; disabled: boolean; danger?: boolean; onPress: () => void}) {
+  return <Pressable accessibilityRole="button" accessibilityState={{disabled}} hitSlop={4} disabled={disabled} onPress={onPress}
+    style={({pressed}) => [styles.button, danger && styles.buttonDanger, disabled && styles.disabled, pressed && !disabled && styles.pressed]}>
+    <Text style={[styles.buttonText, danger && styles.buttonDangerText]}>{title}</Text>
+  </Pressable>;
 }
+
 const styles = StyleSheet.create({
-  section: {padding: 20, gap: 10}, title: {fontSize: 20, fontWeight: '600', color: '#3D4A5C'},
-  label: {color: '#3D4A5C', fontSize: 14}, hint: {color: '#75808A', fontSize: 13, lineHeight: 20},
-  card: {padding: 12, borderRadius: 14, backgroundColor: '#FFFFFF', gap: 5}, actions: {flexDirection: 'row', flexWrap: 'wrap', gap: 6},
-  button: {minHeight: 48, justifyContent: 'center', paddingHorizontal: 12, backgroundColor: '#EEE9E1', borderRadius: 12},
-  disabled: {opacity: 0.4}, input: {borderWidth: 1, borderColor: '#DCD7D0', borderRadius: 12, padding: 12, color: '#3D4A5C'},
-  warning: {color: '#A65757', lineHeight: 20},
+  section: {marginHorizontal: 16, marginBottom: 18},
+  sectionCaption: {color: colors.muted, fontSize: 12, fontWeight: '600', marginBottom: 8, marginLeft: 4},
+  formCaption: {marginTop: 18},
+  group: {backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, overflow: 'hidden'},
+  modeBox: {padding: 14, gap: 6},
+  modeTitle: {color: colors.ink, fontSize: 14, fontWeight: '600'},
+  modeActions: {flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4},
+  rowDivider: {borderTopWidth: hairline, borderTopColor: colors.hairline},
+  addressRow: {padding: 14, gap: 6},
+  addressHeader: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8},
+  label: {color: colors.ink, fontSize: 15, fontWeight: '600'},
+  badges: {flexDirection: 'row', flexWrap: 'wrap', gap: 4},
+  badge: {fontSize: 11, fontWeight: '600', color: colors.muted, backgroundColor: colors.recessed, paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill, overflow: 'hidden'},
+  badgeActive: {color: colors.ink, backgroundColor: colors.blushSoft},
+  badgeGood: {color: colors.sage, backgroundColor: colors.sageSoft},
+  urlText: {color: colors.muted, fontSize: 13},
+  hint: {color: colors.muted, fontSize: 12, lineHeight: 18},
+  actions: {flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4},
+  button: {minHeight: 34, justifyContent: 'center', paddingHorizontal: 12, backgroundColor: colors.recessed, borderWidth: 1, borderColor: colors.border, borderRadius: radius.pill},
+  buttonDanger: {backgroundColor: colors.dangerSoft, borderColor: '#EBC9C5'},
+  buttonText: {color: colors.ink, fontSize: 12, fontWeight: '600'},
+  buttonDangerText: {color: colors.danger},
+  pressed: {opacity: 0.72},
+  disabled: {opacity: 0.42},
+  formGroup: {backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: 14, gap: 10},
+  input: {minHeight: 46, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 12, color: colors.ink, fontSize: 14, backgroundColor: colors.paper},
+  saveButton: {minHeight: 42, paddingHorizontal: 16, borderRadius: radius.md, backgroundColor: colors.ink, justifyContent: 'center', alignItems: 'center'},
+  saveButtonText: {color: colors.paper, fontSize: 13, fontWeight: '600'},
+  warning: {color: colors.danger, fontSize: 12, lineHeight: 18},
 });

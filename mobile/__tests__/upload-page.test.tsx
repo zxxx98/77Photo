@@ -1,7 +1,7 @@
 import React from 'react';
 import {act, create, type ReactTestRenderer} from 'react-test-renderer';
 import ReactNativeBlobUtil from 'react-native-blob-util';
-import {ScrollView, StyleSheet} from 'react-native';
+import {PanResponder, ScrollView, StyleSheet} from 'react-native';
 import type {BrowseApi, Folder} from '../src/browse/api';
 import BackupSettings from '../src/backup/BackupSettings';
 import UploadPage from '../src/upload/UploadPage';
@@ -166,4 +166,43 @@ test('a picker result arriving after an account change is cleaned up without ent
   expect(deleteStagedFiles).toHaveBeenCalledWith([expect.objectContaining({path: '/late'})]);
   expect((saveQueue as jest.Mock).mock.calls.every(call => call[1].length === 0)).toBe(true);
   expect(uploadOne).not.toHaveBeenCalled();
+});
+
+test('failed items support delete action and swipe-left-to-delete, while active items cannot be swiped away', async () => {
+  const spy = jest.spyOn(PanResponder, 'create');
+  (uploadOne as jest.Mock).mockReturnValue(new Promise(() => {}));
+  (loadQueue as jest.Mock).mockResolvedValue([
+    {...item('failed-one'), status: 'failed', message: '网络超时'},
+    item('active-one'),
+  ]);
+  await render();
+  expect(button('删除失败的 failed-one.jpg')).toBeDefined();
+  expect(button('删除失败的 active-one.jpg')).toBeUndefined();
+  expect(button('移除已取消的 active-one.jpg')).toBeUndefined();
+
+  // Only the failed row installs pan handlers; vertical scroll gestures are ignored.
+  const pan = spy.mock.calls.at(-1)?.[0];
+  expect(pan?.onMoveShouldSetPanResponder?.({} as never, {dx: -4, dy: 30} as never)).toBe(false);
+  expect(pan?.onMoveShouldSetPanResponder?.({} as never, {dx: -24, dy: 2} as never)).toBe(true);
+
+  await press('删除失败的 failed-one.jpg');
+  expect((saveQueue as jest.Mock).mock.calls.at(-1)[1].map((entry: UploadItem) => entry.id)).toEqual(['active-one']);
+  expect(deleteStagedFiles).toHaveBeenCalledWith([expect.objectContaining({id: 'failed-one', status: 'failed'})]);
+  spy.mockRestore();
+});
+
+test('full swipe-left gesture deletes a failed queue item after animation', async () => {
+  const spy = jest.spyOn(PanResponder, 'create');
+  (loadQueue as jest.Mock).mockResolvedValue([{...item('swipe-del'), status: 'failed'}]);
+  await render();
+  const pan = spy.mock.calls.at(-1)?.[0];
+  expect(pan?.onMoveShouldSetPanResponder?.({} as never, {dx: -20, dy: 0} as never)).toBe(true);
+  await act(async () => {
+    pan?.onPanResponderMove?.({} as never, {dx: -150, dy: 0} as never);
+    pan?.onPanResponderRelease?.({} as never, {dx: -150, dy: 0, vx: -0.9} as never);
+    await new Promise<void>(resolve => setTimeout(resolve, 220));
+  });
+  expect((saveQueue as jest.Mock).mock.calls.at(-1)[1]).toEqual([]);
+  expect(deleteStagedFiles).toHaveBeenCalledWith([expect.objectContaining({id: 'swipe-del', status: 'failed'})]);
+  spy.mockRestore();
 });

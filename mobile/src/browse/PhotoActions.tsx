@@ -1,8 +1,9 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {ActivityIndicator, BackHandler, ScrollView, Text, View} from 'react-native';
+import {ActivityIndicator, BackHandler, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {BrowseApi, type BatchFailure, type Folder, type Photo} from './api';
 import {Action, FolderPicker, Sheet, ui} from './ManagementUI';
 import {moveSelected, operationError, runBatches} from './management';
+import {colors} from '../ui/theme';
 
 export function usePhotoSelection() {
   const [selecting, setSelecting] = useState(false);
@@ -81,26 +82,39 @@ export function PhotoActions({api, photos, completed, close, retain}: {
     if (!result.failed.length) {close();}
   }
   return <View>
-    <View style={ui.row}>
-      <Text style={ui.copy}>已选 {photos.length} 项</Text>
-      <Action label="移动" disabled={busy || checking || !canWrite || !photos.length || owners.size !== 1} onPress={() => {setMode('move'); setTarget(null); setRename(false);}} />
-      <Action label="删除" danger disabled={busy || checking || !canWrite || !photos.length} onPress={() => setMode('delete')} />
-      <Action label="取消选择" disabled={busy} onPress={close} />
+    <View style={styles.bar}>
+      <Text style={styles.count}>已选 {photos.length} 项</Text>
+      <View style={ui.row}>
+        <Action label="移动" disabled={busy || checking || !canWrite || !photos.length || owners.size !== 1} onPress={() => {setMode('move'); setTarget(null); setRename(false);}} />
+        <Action label="删除" danger disabled={busy || checking || !canWrite || !photos.length} onPress={() => setMode('delete')} />
+        <Action label="取消选择" variant="ghost" disabled={busy} onPress={close} />
+      </View>
     </View>
-    {checking ? <ActivityIndicator /> : permissionError ? <Text accessibilityRole="alert" style={ui.error}>{permissionError}</Text> : photos.length && !canWrite ? <Text style={ui.copy}>所选照片只读，无法移动或删除。</Text> : null}
+    {checking ? <ActivityIndicator color={colors.ink} /> : permissionError ? <Text accessibilityRole="alert" style={ui.error}>{permissionError}</Text> : photos.length && !canWrite ? <Text style={ui.copy}>所选照片只读，无法移动或删除。</Text> : null}
     {owners.size > 1 ? <Text style={ui.copy}>移动时请选择同一所有者的照片。</Text> : null}
-    {busy ? <ActivityIndicator /> : null}
+    {busy ? <ActivityIndicator color={colors.ink} /> : null}
     {failures.length ? <ScrollView style={ui.failures}><Text accessibilityRole="alert" style={ui.error}>{failures.length} 项未完成，已保留供重试。只读照片无法移动或删除。</Text>
       {failures.map(failure => <Text key={failure.id} style={ui.error}>{photos.find(photo => photo.id === failure.id)?.filename ?? failure.id}：{operationError(failure.code)}</Text>)}</ScrollView> : null}
     {mode ? <Sheet title={mode === 'delete' ? '移入回收站？' : '移动照片'} close={() => setMode(null)} busy={busy}>
-      {mode === 'delete' ? <Text style={ui.copy}>将 {photos.length} 项移入回收站，可在到期前恢复。</Text> : <>
+      {mode === 'delete' ? <Text style={ui.copy}>将 {photos.length} 项移入回收站，可在到期前恢复。</Text> : <View style={styles.sheetGap}>
         <Text style={ui.copy}>只能移动到照片所有者的可写目录。</Text>
-        <Action label={target ? `目标：${target.name}` : '选择目标目录'} onPress={() => setChoosing(true)} disabled={busy} />
-        <Action label={rename ? '同名时自动改名：开' : '同名时自动改名：关'} selected={rename} onPress={() => setRename(value => !value)} disabled={busy} />
-      </>}
+        <View style={ui.row}>
+          <Action label={target ? `目标：${target.name}` : '选择目标目录'} selected={!!target} onPress={() => setChoosing(true)} disabled={busy} />
+          <Action label={rename ? '同名时自动改名：开' : '同名时自动改名：关'} selected={rename} onPress={() => setRename(value => !value)} disabled={busy} />
+        </View>
+      </View>}
       <Text style={ui.copy}>操作受服务端权限校验；失败项目会保留。</Text>
-      <Action label={mode === 'delete' ? '确认移入回收站' : '确认移动'} danger={mode === 'delete'} disabled={busy || (mode === 'move' && !target)} onPress={perform} />
+      <View style={styles.sheetFooter}>
+        <Action label={mode === 'delete' ? '确认移入回收站' : '确认移动'} variant="primary" danger={mode === 'delete'} disabled={busy || (mode === 'move' && !target)} onPress={perform} />
+      </View>
     </Sheet> : null}
     {choosing ? <FolderPicker api={api} ownerId={owner} close={() => setChoosing(false)} choose={folder => {setTarget(folder); setChoosing(false);}} /> : null}
   </View>;
 }
+
+const styles = StyleSheet.create({
+  bar: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8},
+  count: {color: colors.ink, fontSize: 14, fontWeight: '600'},
+  sheetGap: {gap: 8},
+  sheetFooter: {marginTop: 12},
+});

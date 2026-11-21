@@ -9,9 +9,7 @@ import {clearSession, loadLastServer, loadLastProfile, loadSession, saveSession,
 import BrowseApp from './src/browse/BrowseApp';
 import {clearQueue} from './src/upload/queue';
 import {disableBackup, enterBackupUI, leaveBackupUI} from './src/backup/service';
-
-const ink = '#3D4A5C';
-const muted = '#75808A';
+import {colors, hairline, radius} from './src/ui/theme';
 
 function message(error: unknown): string {
   if (error instanceof ApiError) {
@@ -190,49 +188,82 @@ function Main() {
   return <View style={[styles.root, {paddingTop: insets.top, paddingBottom: insets.bottom}]}>
     <StatusBar barStyle="dark-content" />
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <View style={styles.brand}><Text style={styles.brandText}>77</Text></View>
-      <Text style={styles.title}>77Photo</Text>
-      <Text style={styles.subtitle}>随时连接家里的照片</Text>
-      {booting ? <ActivityIndicator color={ink} /> : <View style={styles.card}>
-        <Text style={styles.heading}>连接服务器</Text>
-        <Text style={styles.label}>服务器地址</Text>
-        <TextInput style={styles.input} value={server} onChangeText={setServer}
-          placeholder="https://photos.example.com" autoCapitalize="none" autoCorrect={false}
-          keyboardType="url" accessibilityLabel="服务器地址" editable={!pending} />
-        {server.trim().toLowerCase().startsWith('http://') ?
-          <Text style={styles.warning}>HTTP 连接未加密，账号和照片可能被同一网络中的设备读取。请仅在可信内网使用。</Text> : null}
-        {backups.map((value, index) => <View key={index}>
-          <TextInput style={styles.input} value={value} onChangeText={text => setBackups(old => old.map((item, i) => i === index ? text : item))}
-            placeholder="备用地址，例如 http://100.90.1.10:8080" autoCapitalize="none" autoCorrect={false}
-            keyboardType="url" accessibilityLabel={`备用地址 ${index + 1}`} editable={!pending} />
-          <Pressable disabled={pending} accessibilityRole="button" style={styles.secondary} onPress={() => setBackups(old => old.filter((_, i) => i !== index))}><Text style={styles.secondaryText}>删除备用地址</Text></Pressable>
-          {value.trim().toLowerCase().startsWith('http://') ? <Text style={styles.warning}>HTTP 连接未加密，请仅在可信内网或加密组网中使用。</Text> : null}
-        </View>)}
-        {backups.length < 7 ? <Pressable disabled={pending} accessibilityRole="button" style={styles.secondary} onPress={() => setBackups(old => [...old, ''])}><Text style={styles.secondaryText}>添加备用地址</Text></Pressable> : null}
-        {backups.length ? <Text style={styles.hint}>备用地址验证通过后自动启用；离线地址可登录后在设置中验证。</Text> : null}
-        <Text style={styles.label}>账号</Text>
-        <TextInput style={styles.input} value={username} onChangeText={setUsername}
-          placeholder="用户名" autoCapitalize="none" autoCorrect={false}
-          textContentType="username" accessibilityLabel="账号" editable={!pending} />
-        <Text style={styles.label}>密码</Text>
-        <View style={styles.passwordRow}>
-          <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword}
-            placeholder="密码" secureTextEntry={!showPassword} textContentType="password"
-            accessibilityLabel="密码" editable={!pending} />
-          <Pressable style={styles.reveal} accessibilityRole="button" accessibilityLabel={showPassword ? '隐藏密码' : '显示密码'} onPress={() => setShowPassword(!showPassword)}>
-            <Text style={styles.secondaryText}>{showPassword ? '隐藏' : '显示'}</Text>
-          </Pressable>
+      <View style={styles.container}>
+        <View style={styles.brandRow}>
+          <View style={styles.brand}>
+            <Text style={styles.brandText}>77</Text>
+            <View style={styles.brandDot} />
+          </View>
+          <Text style={styles.brandName}>77Photo</Text>
         </View>
-        {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-        <Button title={pending ? '正在登录…' : '登录'} disabled={pending} onPress={submitLogin} />
-        <Text style={styles.hint}>请使用服务器中的 77Photo 账号登录。</Text>
-      </View>}
+        <Text style={styles.heading}>连接服务器</Text>
+        <Text style={styles.subtitle}>使用你的私人相册服务账号登录</Text>
+
+        {booting ? <ActivityIndicator style={styles.bootSpinner} color={colors.ink} /> : <View style={styles.form}>
+          <View style={styles.field}>
+            <Text style={styles.label}>服务器地址</Text>
+            <TextInput style={styles.input} value={server} onChangeText={setServer}
+              placeholder="https://photos.example.com" placeholderTextColor={colors.subtle}
+              autoCapitalize="none" autoCorrect={false} keyboardType="url" accessibilityLabel="服务器地址" editable={!pending} />
+            {server.trim().toLowerCase().startsWith('http://') ?
+              <Text style={styles.warning}>HTTP 连接未加密，账号和照片可能被同一网络中的设备读取，请仅在可信内网使用。</Text> : null}
+          </View>
+
+          {backups.map((value, index) => <View key={index} style={styles.field}>
+            <View style={styles.backupHeader}>
+              <Text style={styles.label}>备用地址 {index + 1}</Text>
+              <Pressable disabled={pending} accessibilityRole="button" hitSlop={8}
+                onPress={() => setBackups(old => old.filter((_, i) => i !== index))}>
+                <Text style={styles.removeLink}>删除</Text>
+              </Pressable>
+            </View>
+            <TextInput style={styles.input} value={value}
+              onChangeText={text => setBackups(old => old.map((item, i) => i === index ? text : item))}
+              placeholder="http://100.90.1.10:8080" placeholderTextColor={colors.subtle}
+              autoCapitalize="none" autoCorrect={false} keyboardType="url" accessibilityLabel={`备用地址 ${index + 1}`} editable={!pending} />
+            {value.trim().toLowerCase().startsWith('http://') ?
+              <Text style={styles.warning}>HTTP 连接未加密，请仅在可信内网或加密组网中使用。</Text> : null}
+          </View>)}
+
+          {backups.length < 7 ? <Pressable disabled={pending} accessibilityRole="button" style={styles.addBackup}
+            onPress={() => setBackups(old => [...old, ''])}>
+            <Text style={styles.addBackupText}>+ 添加备用地址</Text>
+          </Pressable> : null}
+          {backups.length ? <Text style={styles.hint}>备用地址验证通过后自动启用；离线地址可登录后在设置中验证。</Text> : null}
+
+          <View style={styles.divider} />
+
+          <View style={styles.field}>
+            <Text style={styles.label}>账号</Text>
+            <TextInput style={styles.input} value={username} onChangeText={setUsername}
+              placeholder="用户名" placeholderTextColor={colors.subtle} autoCapitalize="none" autoCorrect={false}
+              textContentType="username" accessibilityLabel="账号" editable={!pending} />
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>密码</Text>
+            <View style={styles.passwordRow}>
+              <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword}
+                placeholder="输入密码" placeholderTextColor={colors.subtle} secureTextEntry={!showPassword}
+                textContentType="password" accessibilityLabel="密码" editable={!pending} />
+              <Pressable style={styles.reveal} accessibilityRole="button"
+                accessibilityLabel={showPassword ? '隐藏密码' : '显示密码'} onPress={() => setShowPassword(!showPassword)}>
+                <Text style={styles.revealText}>{showPassword ? '隐藏' : '显示'}</Text>
+              </Pressable>
+            </View>
+          </View>
+
+          {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+          <Button title={pending ? '正在登录…' : '登录'} disabled={pending} onPress={submitLogin} />
+        </View>}
+      </View>
     </ScrollView>
   </View>;
 }
 
 function Button({title, disabled, onPress}: {title: string; disabled: boolean; onPress: () => void}) {
-  return <Pressable style={[styles.button, disabled && styles.disabled]} disabled={disabled} onPress={onPress} accessibilityRole="button">
+  return <Pressable style={({pressed}) => [styles.button, disabled && styles.disabled, pressed && !disabled && styles.pressed]}
+    disabled={disabled} onPress={onPress} accessibilityRole="button">
     <Text style={styles.buttonText}>{title}</Text>
   </Pressable>;
 }
@@ -242,27 +273,35 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: '#FAF9F7'},
-  content: {flexGrow: 1, paddingHorizontal: 24, paddingTop: 44, paddingBottom: 32, alignItems: 'center'},
-  brand: {width: 64, height: 64, borderRadius: 20, backgroundColor: ink, alignItems: 'center', justifyContent: 'center'},
-  brandText: {color: '#FFFFFF', fontSize: 28, fontWeight: '700'},
-  title: {color: ink, fontSize: 30, fontWeight: '700', marginTop: 20},
-  subtitle: {color: muted, fontSize: 15, marginTop: 6, marginBottom: 36},
-  card: {width: '100%', maxWidth: 440, backgroundColor: '#FFFFFF', borderRadius: 22, padding: 24, borderWidth: 1, borderColor: '#E9E5E1'},
-  heading: {fontSize: 21, fontWeight: '600', color: ink, marginBottom: 20},
-  label: {fontSize: 14, fontWeight: '600', color: ink, marginBottom: 8},
-  input: {height: 52, borderWidth: 1, borderColor: '#E9E5E1', borderRadius: 14, paddingHorizontal: 15, fontSize: 16, color: ink, marginBottom: 18},
-  passwordRow: {height: 52, borderWidth: 1, borderColor: '#E9E5E1', borderRadius: 14, flexDirection: 'row', alignItems: 'center'},
-  passwordInput: {flex: 1, height: 50, paddingHorizontal: 15, fontSize: 16, color: ink},
-  reveal: {minWidth: 52, minHeight: 48, justifyContent: 'center', alignItems: 'center'},
-  button: {minHeight: 52, borderRadius: 16, backgroundColor: ink, alignItems: 'center', justifyContent: 'center', marginTop: 20},
-  disabled: {opacity: 0.55},
-  buttonText: {color: '#FFFFFF', fontSize: 16, fontWeight: '600'},
-  secondary: {minHeight: 48, alignItems: 'center', justifyContent: 'center', marginTop: 8},
-  secondaryText: {color: ink, fontSize: 14},
-  error: {color: '#A65757', fontSize: 14, marginTop: 12, lineHeight: 20},
-  warning: {color: '#A65757', fontSize: 13, marginTop: -8, marginBottom: 16},
-  name: {color: ink, fontSize: 18, marginBottom: 5},
-  muted: {color: muted, fontSize: 14},
-  hint: {color: muted, fontSize: 13, lineHeight: 20, marginTop: 18},
+  root: {flex: 1, backgroundColor: colors.paper},
+  content: {flexGrow: 1, paddingHorizontal: 22, paddingTop: 42, paddingBottom: 36, alignItems: 'center'},
+  container: {width: '100%', maxWidth: 420},
+  brandRow: {flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 28},
+  brand: {width: 34, height: 34, borderRadius: 10, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center', position: 'relative'},
+  brandText: {color: colors.paper, fontSize: 15, fontWeight: '700', letterSpacing: -0.5},
+  brandDot: {position: 'absolute', right: 4, bottom: 4, width: 5, height: 5, borderRadius: 2.5, backgroundColor: colors.sageBar},
+  brandName: {color: colors.ink, fontSize: 16, fontWeight: '700', letterSpacing: -0.3},
+  heading: {fontSize: 28, fontWeight: '700', color: colors.ink, letterSpacing: -0.6},
+  subtitle: {color: colors.muted, fontSize: 14, marginTop: 6, marginBottom: 28},
+  bootSpinner: {marginTop: 32, alignSelf: 'flex-start'},
+  form: {gap: 14},
+  field: {gap: 6},
+  label: {fontSize: 13, fontWeight: '600', color: colors.ink},
+  input: {height: 48, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 14, fontSize: 15, color: colors.ink, backgroundColor: colors.surface},
+  passwordRow: {height: 48, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface},
+  passwordInput: {flex: 1, height: 46, paddingHorizontal: 14, fontSize: 15, color: colors.ink},
+  reveal: {minWidth: 52, height: 46, justifyContent: 'center', alignItems: 'center'},
+  revealText: {color: colors.muted, fontSize: 13, fontWeight: '600'},
+  backupHeader: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
+  removeLink: {color: colors.danger, fontSize: 13, fontWeight: '500'},
+  addBackup: {alignSelf: 'flex-start', paddingVertical: 6},
+  addBackupText: {color: colors.ink, fontSize: 13, fontWeight: '600'},
+  divider: {height: hairline, backgroundColor: colors.hairline, marginVertical: 4},
+  button: {minHeight: 50, borderRadius: radius.md, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center', marginTop: 8},
+  pressed: {opacity: 0.82},
+  disabled: {opacity: 0.5},
+  buttonText: {color: colors.paper, fontSize: 15, fontWeight: '600'},
+  error: {color: colors.danger, fontSize: 13, lineHeight: 19},
+  warning: {color: colors.danger, fontSize: 12, lineHeight: 17},
+  hint: {color: colors.muted, fontSize: 12, lineHeight: 18},
 });

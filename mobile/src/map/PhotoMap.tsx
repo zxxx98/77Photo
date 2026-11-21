@@ -5,12 +5,13 @@ import MediaThumbnail from '../browse/MediaThumbnail';
 import {Action, ui} from '../browse/ManagementUI';
 import {PhotoClusters, type LocatedPhoto, type MarkerSpec} from './clusters';
 import {project, tileURL, unproject, viewBounds, zoomLimits, type MapView, type Size} from './geometry';
+import {colors, radius} from '../ui/theme';
 
 type Props = {api: BrowseApi; config: MapConfig; photos: LocatedPhoto[]; view: MapView; change?: (view: MapView) => void;
   marker?: (spec: MarkerSpec, clusters: PhotoClusters) => void; layout?: (size: Size) => void; mini?: boolean};
 
 export default function PhotoMap({api, config, photos, view, change, marker, layout, mini = false}: Props) {
-  const [size, setSize] = useState<Size>({width: 320, height: mini ? 180 : 300});
+  const [size, setSize] = useState<Size>({width: 320, height: mini ? 180 : 280});
   const [retry, setRetry] = useState(0);
   const [tilesFailed, setTilesFailed] = useState(false);
   const [attributionError, setAttributionError] = useState('');
@@ -72,12 +73,12 @@ export default function PhotoMap({api, config, photos, view, change, marker, lay
         return mini ? <View key={spec.key} style={[styles.pin, {left: left - 8, top: top - 8}]} /> :
           <Pressable key={spec.key} accessibilityRole="button" accessibilityLabel={spec.count > 1 ? `查看此地点 ${spec.count} 张照片` : '查看此地点照片'}
             onPress={() => marker?.(spec, clusters)} style={[styles.marker, {left: left - 24, top: top - 24}]}>
-            {spec.thumbnail ? <MediaThumbnail api={api} id={spec.coverId} size={48} /> : null}
+            {spec.thumbnail ? <MediaThumbnail api={api} id={spec.coverId} size={46} /> : null}
             <Text style={styles.count}>{spec.count > 1 ? spec.count : '●'}</Text>
           </Pressable>;
       })}
     </View>
-    {!mini && change ? <View style={styles.controls}><Action label="放大地图" disabled={view.zoom >= limits.max} onPress={() => zoom(1)} /><Action label="缩小地图" disabled={view.zoom <= limits.min} onPress={() => zoom(-1)} /></View> : null}
+    {!mini && change ? <View style={styles.controls}><Action label="放大地图" variant="ghost" disabled={view.zoom >= limits.max} onPress={() => zoom(1)} /><Action label="缩小地图" variant="ghost" disabled={view.zoom <= limits.min} onPress={() => zoom(-1)} /></View> : null}
     {tilesFailed ? <View style={styles.failure}><Text style={ui.error}>底图加载失败</Text><Action label="重试底图" onPress={() => {setRetry(value => value + 1); setTilesFailed(false);}} /></View> : null}
     {config.attribution ? <Pressable style={styles.attribution} accessibilityRole="link" accessibilityLabel={config.attribution} onPress={() => {
       if (config.attribution_url?.startsWith('https://')) {Linking.openURL(config.attribution_url).catch(() => setAttributionError('无法打开地图来源链接'));}
@@ -86,12 +87,15 @@ export default function PhotoMap({api, config, photos, view, change, marker, lay
   </View>;
 }
 const styles = StyleSheet.create({
-  map: {height: 300, overflow: 'hidden', backgroundColor: '#E7EBE7', borderRadius: 16}, mini: {height: 180},
-  tile: {position: 'absolute', width: 256, height: 256}, marker: {position: 'absolute', width: 48, height: 48, backgroundColor: '#3D4A5C', borderRadius: 9, justifyContent: 'center', alignItems: 'center'},
-  count: {position: 'absolute', right: 0, bottom: 0, backgroundColor: '#3D4A5C', color: '#FFF', fontSize: 12, paddingHorizontal: 4, borderRadius: 4},
-  pin: {position: 'absolute', width: 16, height: 16, borderRadius: 8, backgroundColor: '#A3372C', borderWidth: 2, borderColor: '#FFF'},
-  controls: {position: 'absolute', right: 8, top: 8, backgroundColor: '#FFFE', borderRadius: 12},
-  attribution: {position: 'absolute', bottom: 0, right: 0, backgroundColor: '#FFFD', minHeight: 32, paddingHorizontal: 8, justifyContent: 'center'}, attributionText: {fontSize: 11, color: '#3D4A5C'},
-  attributionError: {position: 'absolute', bottom: 34, right: 8, color: '#A3372C', backgroundColor: '#FFF'},
-  failure: {position: 'absolute', bottom: 34, left: 8, backgroundColor: '#FFFE', borderRadius: 10, paddingHorizontal: 8},
+  map: {height: 280, overflow: 'hidden', backgroundColor: '#E7EBE7', borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border},
+  mini: {height: 180},
+  tile: {position: 'absolute', width: 256, height: 256},
+  marker: {position: 'absolute', width: 48, height: 48, backgroundColor: colors.surface, borderRadius: 10, borderWidth: 2, borderColor: colors.surface, justifyContent: 'center', alignItems: 'center', overflow: 'hidden'},
+  count: {position: 'absolute', right: 1, bottom: 1, backgroundColor: colors.ink, color: '#FFF', fontSize: 10, fontWeight: '700', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6, overflow: 'hidden'},
+  pin: {position: 'absolute', width: 16, height: 16, borderRadius: 8, backgroundColor: colors.danger, borderWidth: 2, borderColor: '#FFF'},
+  controls: {position: 'absolute', right: 8, top: 8, backgroundColor: 'rgba(250, 249, 247, 0.94)', borderRadius: radius.md, borderWidth: 1, borderColor: colors.border},
+  attribution: {position: 'absolute', bottom: 0, right: 0, backgroundColor: 'rgba(250, 249, 247, 0.88)', minHeight: 28, paddingHorizontal: 8, justifyContent: 'center'},
+  attributionText: {fontSize: 10, color: colors.ink},
+  attributionError: {position: 'absolute', bottom: 32, right: 8, color: colors.danger, backgroundColor: colors.surface, paddingHorizontal: 6, paddingVertical: 2},
+  failure: {position: 'absolute', bottom: 32, left: 8, backgroundColor: 'rgba(250, 249, 247, 0.96)', borderRadius: radius.md, padding: 8, borderWidth: 1, borderColor: colors.border},
 });

@@ -12,7 +12,7 @@ import {BrowseApi, errorState, groupPhotos, type Folder, type LoadState, type Me
 import {usePhotos} from './usePhotos';
 import UploadPage from '../upload/UploadPage';
 import Icon from './Icon';
-import {Action, CreateFolder, Sheet, ui} from './ManagementUI';
+import {Action, CreateFolder, Sheet} from './ManagementUI';
 import PhotoFilters, {emptyFilters, hasFilters, queryFilters, type GalleryFilters} from './PhotoFilters';
 import {PhotoActions, usePhotoSelection} from './PhotoActions';
 import TrashPage from './TrashPage';
@@ -20,11 +20,7 @@ import PhotoDetails from './PhotoDetails';
 import PeoplePage from './PeoplePage';
 import MapPage from '../map/MapPage';
 import type {MapFocus} from '../map/geometry';
-
-const ink = '#3D4A5C';
-const muted = '#75808A';
-const paper = '#FAF9F7';
-const border = '#E8E5E1';
+import {colors, hairline, radius} from '../ui/theme';
 
 function StateView({state, retry}: {state: LoadState; retry: () => void}) {
   const copy: Record<LoadState, string> = {
@@ -34,7 +30,7 @@ function StateView({state, retry}: {state: LoadState; retry: () => void}) {
   };
   if (state === 'ready') {return null;}
   return <View style={styles.state}>
-    {state === 'loading' ? <ActivityIndicator color={ink} /> : null}
+    {state === 'loading' ? <ActivityIndicator color={colors.ink} /> : null}
     <Text style={styles.stateText}>{copy[state]}</Text>
     {['offline', 'failed'].includes(state) ? <Pressable accessibilityRole="button" style={styles.retry} onPress={retry}><Text style={styles.retryText}>重试</Text></Pressable> : null}
   </View>;
@@ -71,17 +67,19 @@ const MediaTile = memo(function Tile({api, photo, size, press, longPress, select
   return <Pressable style={[styles.tile, {width: size, height: size}]} accessibilityRole="button"
     accessibilityLabel={`${photo.is_live_photo ? '动态照片' : photo.mime_type.startsWith('video/') ? '视频' : '照片'}，${photo.filename}`}
     onPress={() => press(photo)} onLongPress={() => longPress(photo)} accessibilityState={selected === undefined ? undefined : {selected}}>
-    {source && !failed ? <Image source={source} style={styles.tileImage} onError={imageError} resizeMode="cover" /> :
+    {source && !failed ? <Image source={source} style={[styles.tileImage, selected && styles.tileSelected]} onError={imageError} resizeMode="cover" /> :
       <Text style={styles.tileFallback}>{failed ? '预览失败' : ''}</Text>}
-    {selected !== undefined ? <Text style={[styles.selectionBadge, selected && styles.selectionChecked]}>{selected ? '✓' : '○'}</Text> : null}
-    {photo.is_live_photo ? <Text style={styles.badge}>LIVE</Text> : photo.mime_type.startsWith('video/') ? <View style={styles.badgeRow}><Icon name="video" tone="light" size={15} /><Text style={styles.badgeLabel}>视频</Text></View> : null}
+    {selected !== undefined ? <View style={[styles.selectionBadge, selected && styles.selectionChecked]}>
+      {selected ? <Text style={styles.selectionCheck}>✓</Text> : null}
+    </View> : null}
+    {photo.is_live_photo ? <Text style={styles.badge}>LIVE</Text> : photo.mime_type.startsWith('video/') ? <View style={styles.badgeRow}><Icon name="video" tone="light" size={13} /><Text style={styles.badgeLabel}>视频</Text></View> : null}
   </Pressable>;
 });
 
 // One grid row. `press` and `longPress` must be stable (see useEvent).
 const MediaRow = memo(function Row({api, photos, press, longPress, selected}: {api: BrowseApi; photos: Photo[]; press: (photo: Photo) => void; longPress: (photo: Photo) => void; selected?: Set<string>}) {
   const {width} = useWindowDimensions();
-  const size = Math.floor((width - 36) / 3);
+  const size = Math.floor((width - 4) / 3);
   return <View style={styles.grid}>{photos.map(photo => <MediaTile key={photo.id} api={api} photo={photo} size={size} selected={selected?.has(photo.id)} press={press} longPress={longPress} />)}</View>;
 });
 function photoRows(photos: Photo[]): Photo[][] {
@@ -99,7 +97,7 @@ function FolderCover({api, folder}: {api: BrowseApi; folder: Folder}) {
       .then(value => {if (active) {setSource(value);}}).catch(() => {});
     return () => {active = false;};
   }, [api, folder.id, revision]);
-  return <View style={styles.folderIcon}>{source ? <Image source={source} style={styles.folderImage} /> : <Icon name="folders" size={24} />}</View>;
+  return <View style={styles.folderIcon}>{source ? <Image source={source} style={styles.folderImage} /> : <Icon name="folders" size={22} />}</View>;
 }
 
 function Photos({api, active, open, settings, trash, map, people}: {api: BrowseApi; active: boolean; open: (photo: Photo, all: Photo[]) => void; settings: () => void; trash: () => void; map: () => void; people?: () => void}) {
@@ -131,24 +129,34 @@ function Photos({api, active, open, settings, trash, map, people}: {api: BrowseA
   const press = useEvent((photo: Photo) => {if (selection.selecting) {selection.toggle(photo.id);} else {open(photo, page.items);}});
   const longPress = useEvent((photo: Photo) => selection.start(photo.id));
   return <View style={styles.page}>
-    <View style={styles.topRow}><Text style={styles.title}>77Photo</Text><Pressable style={styles.settingsButton} accessibilityRole="button" accessibilityLabel="设置" onPress={settings}><Icon name="settings" size={22} /></Pressable></View>
-    <View style={ui.row}>
-      <Action label={hasFilters(filters) ? '搜索与筛选 · 已应用' : '搜索与筛选'} selected={hasFilters(filters)} onPress={() => setFiltering(true)} />
+    <View style={styles.topRow}>
+      <Text style={styles.title}>77Photo</Text>
+      <View style={styles.topActions}>
+        {!selection.selecting ? <Action label="选择" disabled={!page.items.length} onPress={() => selection.start()} /> : null}
+        <Pressable style={styles.settingsButton} accessibilityRole="button" accessibilityLabel="设置" onPress={settings}><Icon name="settings" size={21} /></Pressable>
+      </View>
+    </View>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipBar} contentContainerStyle={styles.chipBarContent}>
+      <Action label={hasFilters(filters) ? '筛选 · 已应用' : '搜索与筛选'} selected={hasFilters(filters)} onPress={() => setFiltering(true)} />
       {page.favoritesSupported ? <Action label="♥ 收藏" selected={favorite} onPress={() => {selection.reset(); setFavorite(value => !value);}} /> : null}
       <Action label="地图" onPress={map} />
       {people ? <Action label="人物" onPress={people} /> : null}
       <Action label="回收站" onPress={trash} />
-      {!selection.selecting ? <Action label="选择" disabled={!page.items.length} onPress={() => selection.start()} /> : null}
-    </View>
-    {hasFilters(filters) ? <View style={ui.row}><Text style={styles.path}>{[filters.q && `名称：${filters.q}`, filters.folder?.name, filters.fromDate && `从 ${filters.fromDate}`, filters.toDate && `至 ${filters.toDate}`, filters.mediaType === 'photo' ? '照片' : filters.mediaType === 'video' ? '视频' : ''].filter(Boolean).join(' · ')}</Text><Action label="清除筛选" onPress={() => {selection.reset(); setFilters(emptyFilters);}} /></View> : null}
+    </ScrollView>
+    {hasFilters(filters) ? <View style={styles.filterBanner}>
+      <Text style={styles.filterSummary} numberOfLines={1}>{[filters.q && `名称：${filters.q}`, filters.folder?.name, filters.fromDate && `从 ${filters.fromDate}`, filters.toDate && `至 ${filters.toDate}`, filters.mediaType === 'photo' ? '照片' : filters.mediaType === 'video' ? '视频' : ''].filter(Boolean).join(' · ')}</Text>
+      <Action label="清除筛选" variant="ghost" onPress={() => {selection.reset(); setFilters(emptyFilters);}} />
+    </View> : null}
     {page.state === 'empty' ? <View style={styles.state}><Text style={styles.stateText}>{(hasFilters(filters) || favorite) && libraryEmpty !== true ? '没有匹配的照片，试试清除筛选或收藏条件' : '图库还没有照片'}</Text></View> : page.state !== 'ready' ? <StateView state={page.state} retry={page.refresh} /> :
       <FlatList data={timeline} extraData={selection.ids} keyExtractor={item => item.key} onEndReached={() => {if (page.cursor && page.moreState === 'ready') {page.loadMore();}}}
         onEndReachedThreshold={0.4} windowSize={7} initialNumToRender={8} refreshing={page.refreshing} onRefresh={() => {selection.reset(); page.refresh();}}
-        renderItem={({item}) => item.type === 'date' ? <View style={ui.row}><Text style={styles.date}>{item.date.replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_, y, m, d) => `${y}年${Number(m)}月${Number(d)}日`)}</Text>{selection.selecting ? <Action label={item.photos.every(photo => selection.ids.has(photo.id)) ? '取消当天' : '选择当天'} onPress={() => selection.toggleDay(item.photos)} /> : null}</View> :
-          <MediaRow api={api} photos={item.photos} selected={selection.selecting ? selection.ids : undefined} press={press} longPress={longPress} />}
-        ListFooterComponent={page.moreState === 'loading' ? <ActivityIndicator color={ink} /> : page.moreState !== 'ready' ? <StateView state={page.moreState} retry={page.loadMore} /> : undefined}
+        renderItem={({item}) => item.type === 'date' ? <View style={styles.dateRow}>
+          <Text style={styles.date}>{item.date.replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_, y, m, d) => `${y}年${Number(m)}月${Number(d)}日`)}</Text>
+          {selection.selecting ? <Action label={item.photos.every(photo => selection.ids.has(photo.id)) ? '取消当天' : '选择当天'} variant="ghost" onPress={() => selection.toggleDay(item.photos)} /> : null}
+        </View> : <MediaRow api={api} photos={item.photos} selected={selection.selecting ? selection.ids : undefined} press={press} longPress={longPress} />}
+        ListFooterComponent={page.moreState === 'loading' ? <ActivityIndicator style={styles.moreSpinner} color={colors.ink} /> : page.moreState !== 'ready' ? <StateView state={page.moreState} retry={page.loadMore} /> : undefined}
         contentContainerStyle={styles.list} />}
-    {selection.selecting ? <PhotoActions api={api} photos={page.items.filter(photo => selection.ids.has(photo.id))} completed={page.remove} retain={ids => selection.setIds(new Set(ids))} close={selection.reset} /> : null}
+    {selection.selecting ? <View style={styles.selectionTray}><PhotoActions api={api} photos={page.items.filter(photo => selection.ids.has(photo.id))} completed={page.remove} retain={ids => selection.setIds(new Set(ids))} close={selection.reset} /></View> : null}
     {filtering ? <PhotoFilters api={api} value={filters} close={() => setFiltering(false)} apply={value => {selection.reset(); setFilters(value);}} /> : null}
   </View>;
 }
@@ -179,9 +187,15 @@ function Folders({api, active, stack, setStack, open, settings, upload}: {api: B
   const press = useEvent((photo: Photo) => {if (selection.selecting) {selection.toggle(photo.id);} else {open(photo, page.items);}});
   const longPress = useEvent((photo: Photo) => selection.start(photo.id));
   return <View style={styles.page}>
-    <View style={styles.headingRow}>{current ? <Pressable accessibilityRole="button" accessibilityLabel="返回上级文件夹" style={styles.back} onPress={() => setStack(stack.slice(0, -1))}><Icon name="back" size={24} /></Pressable> : null}
-      <Text style={styles.folderHeading} numberOfLines={1}>{current?.name ?? '文件夹'}</Text><View style={styles.headingActions}>{current?.effective_permission === 'write' ? <Pressable style={styles.headerAction} accessibilityRole="button" accessibilityLabel={`上传到 ${current.name}`} onPress={() => upload(current)}><Icon name="plus" size={22} /></Pressable> : null}<Pressable style={styles.headerAction} accessibilityRole="button" accessibilityLabel="设置" onPress={settings}><Icon name="settings" size={22} /></Pressable></View></View>
-    <View style={ui.row}>
+    <View style={styles.headingRow}>
+      {current ? <Pressable accessibilityRole="button" accessibilityLabel="返回上级文件夹" style={styles.back} onPress={() => setStack(stack.slice(0, -1))}><Icon name="back" size={22} /></Pressable> : null}
+      <Text style={[styles.folderHeading, current && styles.folderHeadingNested]} numberOfLines={1}>{current?.name ?? '文件夹'}</Text>
+      <View style={styles.headingActions}>
+        {current?.effective_permission === 'write' ? <Pressable style={styles.headerAction} accessibilityRole="button" accessibilityLabel={`上传到 ${current.name}`} onPress={() => upload(current)}><Icon name="plus" size={21} /></Pressable> : null}
+        <Pressable style={styles.headerAction} accessibilityRole="button" accessibilityLabel="设置" onPress={settings}><Icon name="settings" size={21} /></Pressable>
+      </View>
+    </View>
+    <View style={styles.folderToolbar}>
       {!current || current.effective_permission === 'write' ? <Action label="新建文件夹" disabled={state === 'loading' || ['offline', 'failed', 'forbidden', 'expired'].includes(state)} onPress={() => setCreating(true)} /> : null}
       {current && !selection.selecting ? <Action label="选择照片" disabled={!page.items.length} onPress={() => selection.start()} /> : null}
     </View>
@@ -191,18 +205,24 @@ function Folders({api, active, stack, setStack, open, settings, upload}: {api: B
       renderItem={({item}) => <MediaRow api={api} photos={item} selected={selection.selecting ? selection.ids : undefined} press={press} longPress={longPress} />}
       ListHeaderComponent={<>
         {stack.length ? <Text style={styles.path}>{stack[0].is_shared ? '共享文件夹' : '我的文件夹'} / {stack.map(f => f.name).join(' / ')}</Text> : null}
-        {state === 'ready' ? folders.map(folder => <Pressable key={folder.id} accessibilityRole="button" accessibilityLabel={`进入文件夹 ${folder.name}`} style={styles.folder} onPress={() => setStack([...stack, folder])}>
-          <FolderCover api={api} folder={folder} /><View style={styles.folderCopy}>
-            <Text style={styles.folderName}>{folder.name}</Text><Text style={styles.meta}>{folder.photo_count ?? 0} 个媒体 · {folder.child_folder_count ?? 0} 个子文件夹{folder.is_shared ? ' · 共享' : ''}</Text>
-            <Text style={styles.meta}>{folder.effective_permission === 'write' ? '可编辑' : '只读'}</Text></View><Icon name="next" tone="muted" size={20} />
-          </Pressable>) : state !== 'empty' ? <StateView state={state} retry={load} /> : null}
+        {state === 'ready' ? <View style={styles.folderGroup}>
+          {folders.map((folder, index) => <Pressable key={folder.id} accessibilityRole="button" accessibilityLabel={`进入文件夹 ${folder.name}`}
+            style={({pressed}) => [styles.folder, index > 0 && styles.folderDivider, pressed && styles.pressed]} onPress={() => setStack([...stack, folder])}>
+            <FolderCover api={api} folder={folder} />
+            <View style={styles.folderCopy}>
+              <Text style={styles.folderName} numberOfLines={1}>{folder.name}</Text>
+              <Text style={styles.meta}>{folder.photo_count ?? 0} 个媒体 · {folder.child_folder_count ?? 0} 个子文件夹{folder.is_shared ? ' · 共享' : ''}{folder.effective_permission === 'read' ? ' · 只读' : ''}</Text>
+            </View>
+            <Icon name="next" tone="muted" size={18} />
+          </Pressable>)}
+        </View> : state !== 'empty' ? <StateView state={state} retry={load} /> : null}
         {current ? <>
           <Text style={styles.section}>此目录及子目录媒体</Text>
           {page.state !== 'ready' ? <StateView state={page.state} retry={page.refresh} /> : null}
         </> : state === 'empty' ? <StateView state="empty" retry={load} /> : null}
       </>}
-      ListFooterComponent={!current || page.state !== 'ready' ? undefined : page.moreState === 'loading' ? <ActivityIndicator style={styles.moreSpinner} color={ink} /> : page.moreState !== 'ready' ? <StateView state={page.moreState} retry={page.loadMore} /> : undefined} />
-    {selection.selecting ? <PhotoActions api={api} photos={page.items.filter(photo => selection.ids.has(photo.id))} completed={ids => {page.remove(ids); load();}} retain={ids => selection.setIds(new Set(ids))} close={selection.reset} /> : null}
+      ListFooterComponent={!current || page.state !== 'ready' ? undefined : page.moreState === 'loading' ? <ActivityIndicator style={styles.moreSpinner} color={colors.ink} /> : page.moreState !== 'ready' ? <StateView state={page.moreState} retry={page.loadMore} /> : undefined} />
+    {selection.selecting ? <View style={styles.selectionTray}><PhotoActions api={api} photos={page.items.filter(photo => selection.ids.has(photo.id))} completed={ids => {page.remove(ids); load();}} retain={ids => selection.setIds(new Set(ids))} close={selection.reset} /></View> : null}
     {creating ? <CreateFolder api={api} parent={current} close={() => setCreating(false)} created={() => {load();}} /> : null}
   </View>;
 }
@@ -340,12 +360,12 @@ function Viewer({api, initial, photos, close, onMap}: {api: BrowseApi; initial: 
   return <View style={styles.viewer}>
     <StatusBar barStyle="light-content" />
     <View style={styles.viewerTop}>
-      <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel="返回浏览" onPress={close}><Icon name="back" tone="light" size={24} /></Pressable>
+      <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel="返回浏览" onPress={close}><Icon name="back" tone="light" size={22} /></Pressable>
       <Text style={styles.viewerCount}>{index + 1} / {photos.length}</Text>
       <View style={styles.viewerActions}>
-        {typeof photo.is_favorite === 'boolean' ? <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel={photo.is_favorite ? '取消收藏' : '加入收藏'} accessibilityState={{selected: photo.is_favorite, busy: favoritePendingIDs.has(photo.id)}} disabled={favoritePendingIDs.has(photo.id)} onPress={toggleFavorite}>{favoritePendingIDs.has(photo.id) ? <ActivityIndicator color="#FFF" /> : <Text style={styles.favoriteIcon}>{photo.is_favorite ? '♥' : '♡'}</Text>}</Pressable> : null}
-        <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel="分享原文件" disabled={sharing} onPress={share}>{sharing ? <ActivityIndicator color="#FFF" /> : <Icon name="share" tone="light" size={23} />}</Pressable>
-        <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel="下载原文件" disabled={downloading} onPress={download}>{downloading ? <ActivityIndicator color="#FFF" /> : <Icon name="download" tone="light" size={23} />}</Pressable>
+        {typeof photo.is_favorite === 'boolean' ? <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel={photo.is_favorite ? '取消收藏' : '加入收藏'} accessibilityState={{selected: photo.is_favorite, busy: favoritePendingIDs.has(photo.id)}} disabled={favoritePendingIDs.has(photo.id)} onPress={toggleFavorite}>{favoritePendingIDs.has(photo.id) ? <ActivityIndicator color="#FFF" /> : <Text style={[styles.favoriteIcon, photo.is_favorite && styles.favoriteActive]}>{photo.is_favorite ? '♥' : '♡'}</Text>}</Pressable> : null}
+        <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel="分享原文件" disabled={sharing} onPress={share}>{sharing ? <ActivityIndicator color="#FFF" /> : <Icon name="share" tone="light" size={21} />}</Pressable>
+        <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel="下载原文件" disabled={downloading} onPress={download}>{downloading ? <ActivityIndicator color="#FFF" /> : <Icon name="download" tone="light" size={21} />}</Pressable>
       </View>
     </View>
     <View style={styles.viewerMedia} onTouchStart={event => beginTouch(event.nativeEvent.touches)}
@@ -362,11 +382,22 @@ function Viewer({api, initial, photos, close, onMap}: {api: BrowseApi; initial: 
       {motionState === 'failed' ? <Pressable accessibilityRole="button" accessibilityLabel="重试播放动态片段" style={styles.motionRetry} onPress={() => setMotionRetry(value => value + 1)}><Text style={styles.motionRetryText}>重试动态片段</Text></Pressable> : null}
     </View>
     <View style={[styles.viewerSheet, {paddingBottom: Math.max(insets.bottom, 12)}]}>
-      <View style={ui.row}><Action label="照片详情" disabled={state !== 'ready' || !detailReady} onPress={() => setDetails(true)} />{canManage ? <Action label="管理照片 · 移动 / 删除" onPress={() => setManaging(true)} /> : null}</View>
       <View style={styles.viewerNav}>
-        <Pressable disabled={index === 0} accessibilityRole="button" accessibilityLabel="上一项" accessibilityState={{disabled: index === 0}} style={styles.navButton} onPress={() => setIndex(index - 1)}><Icon name="back" tone={index === 0 ? 'muted' : 'ink'} size={22} /></Pressable>
-        <View style={styles.viewerIdentity}><Text style={styles.viewerName} numberOfLines={1}>{photo.filename}</Text><Text style={styles.viewerMeta} numberOfLines={1}>{photo.captured_at.replace('T', ' ').slice(0, 16)}{folderName ? ` · ${folderName}` : ''} · {(photo.size / 1024 / 1024).toFixed(1)} MB</Text></View>
-        <Pressable disabled={index >= photos.length - 1} accessibilityRole="button" accessibilityLabel="下一项" accessibilityState={{disabled: index >= photos.length - 1}} style={styles.navButton} onPress={() => setIndex(index + 1)}><Icon name="next" tone={index >= photos.length - 1 ? 'muted' : 'ink'} size={22} /></Pressable>
+        <Pressable disabled={index === 0} accessibilityRole="button" accessibilityLabel="上一项" accessibilityState={{disabled: index === 0}} style={styles.navButton} onPress={() => setIndex(index - 1)}><Icon name="back" tone={index === 0 ? 'muted' : 'light'} size={20} /></Pressable>
+        <View style={styles.viewerIdentity}>
+          <Text style={styles.viewerName} numberOfLines={1}>{photo.filename}</Text>
+          <Text style={styles.viewerMeta} numberOfLines={1}>{photo.captured_at.replace('T', ' ').slice(0, 16)}{folderName ? ` · ${folderName}` : ''} · {(photo.size / 1024 / 1024).toFixed(1)} MB</Text>
+        </View>
+        <Pressable disabled={index >= photos.length - 1} accessibilityRole="button" accessibilityLabel="下一项" accessibilityState={{disabled: index >= photos.length - 1}} style={styles.navButton} onPress={() => setIndex(index + 1)}><Icon name="next" tone={index >= photos.length - 1 ? 'muted' : 'light'} size={20} /></Pressable>
+      </View>
+      <View style={styles.viewerTools}>
+        <Pressable accessibilityRole="button" accessibilityLabel="照片详情" disabled={state !== 'ready' || !detailReady}
+          style={[styles.viewerPill, (state !== 'ready' || !detailReady) && styles.disabled]} onPress={() => setDetails(true)}>
+          <Text style={styles.viewerPillText}>照片详情</Text>
+        </Pressable>
+        {canManage ? <Pressable accessibilityRole="button" accessibilityLabel="管理照片 · 移动 / 删除" style={styles.viewerPill} onPress={() => setManaging(true)}>
+          <Text style={styles.viewerPillText}>移动 / 删除</Text>
+        </Pressable> : null}
       </View>
       {notice ? <Text accessibilityRole="alert" style={styles.viewerNotice}>{notice}</Text> : null}
     </View>
@@ -445,15 +476,30 @@ export default function BrowseApp({session, onSession, onSignOut, onExpired, err
   const open = (photo: Photo, photos: Photo[]) => setViewer({photo, photos});
   return <SafeAreaView style={[styles.root, viewer && styles.viewerRoot]} edges={viewer ? ['top'] : ['top', 'bottom']}>
     <StatusBar barStyle="dark-content" />
-    {connectionNotice ? <Text accessibilityRole="alert" style={styles.error}>{connectionNotice}</Text> : null}
+    {connectionNotice ? <View style={styles.connectionBanner}><Text accessibilityRole="alert" style={styles.error}>{connectionNotice}</Text></View> : null}
     {trash ? <TrashPage api={api} close={() => setTrash(false)} /> : viewer ? <Viewer api={api} initial={viewer.photo} photos={viewer.photos} close={() => setViewer(null)} onMap={focus => {setMapFocus(focus); setWorkspace('map'); setViewer(null);}} /> : settings ?
       <ScrollView style={styles.content} contentContainerStyle={styles.settingsContent} keyboardShouldPersistTaps="handled">
-        <View style={styles.settingsHeader}><Text style={styles.settingsTitle}>设置</Text><Pressable accessibilityRole="button" accessibilityLabel="返回" style={styles.settingsBack} onPress={() => setSettings(false)}><Icon name="back" size={22} /><Text style={styles.backLabel}>返回</Text></Pressable></View>
-        <Text style={styles.settingsUsername}>{session.username}</Text>
+        <View style={styles.settingsHeader}>
+          <Pressable accessibilityRole="button" accessibilityLabel="返回" style={styles.settingsBack} onPress={() => setSettings(false)}>
+            <Icon name="back" size={21} /><Text style={styles.backLabel}>返回</Text>
+          </Pressable>
+          <Text style={styles.settingsTitle}>设置</Text>
+          <View style={styles.settingsSpacer} />
+        </View>
+        <View style={styles.accountCard}>
+          <View style={styles.avatar}><Text style={styles.avatarText}>{session.username.slice(0, 1).toUpperCase()}</Text></View>
+          <View style={styles.accountCopy}>
+            <Text style={styles.accountName}>{session.username}</Text>
+            <Text style={styles.accountServer} numberOfLines={1}>{session.server}</Text>
+          </View>
+        </View>
         <ServerAddresses api={api} session={session} />
         <UpdateSettings />
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-        <Pressable accessibilityRole="button" style={styles.retry} onPress={onSignOut}><Text style={styles.retryText}>退出当前设备</Text></Pressable></ScrollView> : null}
+        <Pressable accessibilityRole="button" style={({pressed}) => [styles.signOutButton, pressed && styles.pressed]} onPress={onSignOut}>
+          <Text style={styles.signOutText}>退出当前设备</Text>
+        </Pressable>
+      </ScrollView> : null}
     <View style={[styles.content, (settings || !!viewer || trash) && styles.hidden]} accessibilityElementsHidden={settings || !!viewer || trash} importantForAccessibility={settings || viewer || trash ? 'no-hide-descendants' : 'auto'}>
       <View style={styles.content}>{workspace === 'map' ? <MapPage api={api} close={() => setWorkspace(null)} open={open} focus={mapFocus} /> : workspace === 'people' ? <PeoplePage api={api} close={() => setWorkspace(null)} open={open} /> : null}
         <Pane active={!workspace && tab === 'photos'}><Photos api={api} active={!workspace && tab === 'photos'} open={open} settings={() => setSettings(true)} trash={() => setTrash(true)} map={() => {setMapFocus(undefined); setWorkspace('map');}} people={admin ? () => setWorkspace('people') : undefined} /></Pane>
@@ -462,8 +508,10 @@ export default function BrowseApp({session, onSession, onSignOut, onExpired, err
       {!workspace ? <View style={styles.tabs}>{(['photos', 'folders', 'backup'] as const).map(item => {
         const label = {photos: '照片', folders: '文件夹', backup: '备份'}[item];
         const active = tab === item;
-        return <Pressable key={item} accessibilityRole="tab" accessibilityLabel={label} accessibilityState={{selected: active}} style={[styles.tab, active && styles.tabSelected]} onPress={() => setTab(item)}>
-          <Icon name={item} tone={active ? 'ink' : 'muted'} size={23} /><Text style={[styles.tabText, active && styles.tabActive]}>{label}</Text>
+        return <Pressable key={item} accessibilityRole="tab" accessibilityLabel={label} accessibilityState={{selected: active}} style={styles.tab} onPress={() => setTab(item)}>
+          <View style={[styles.tabIndicator, active && styles.tabIndicatorActive]} />
+          <Icon name={item} tone={active ? 'ink' : 'muted'} size={22} />
+          <Text style={[styles.tabText, active && styles.tabActive]}>{label}</Text>
         </Pressable>;
       })}</View> : null}
     </View>
@@ -471,26 +519,100 @@ export default function BrowseApp({session, onSession, onSignOut, onExpired, err
 }
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: paper}, viewerRoot: {backgroundColor: '#161B22'}, content: {flex: 1}, hidden: {display: 'none'}, page: {flex: 1, paddingTop: 14},
-  title: {fontSize: 26, color: ink, fontWeight: '700', marginHorizontal: 20, marginBottom: 14},
-  settingsContent: {paddingTop: 14, paddingBottom: 32}, settingsHeader: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14},
-  settingsTitle: {fontSize: 26, color: ink, fontWeight: '700', marginLeft: 20}, settingsBack: {minHeight: 48, flexDirection: 'row', alignItems: 'center', marginRight: 12}, settingsUsername: {color: muted, fontSize: 13, marginHorizontal: 20, marginTop: 5},
-  headingRow: {flexDirection: 'row', alignItems: 'center'}, back: {minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center'}, backText: {color: ink, fontSize: 30}, backLabel: {color: ink, fontSize: 15, marginRight: 12},
-  folderHeading: {flex: 1, minWidth: 0, fontSize: 26, color: ink, fontWeight: '700', marginLeft: 20, marginRight: 8}, headingActions: {flexDirection: 'row', alignItems: 'center', marginRight: 12}, headerAction: {width: 48, height: 48, alignItems: 'center', justifyContent: 'center'}, moreSpinner: {marginVertical: 20},
-  topRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}, settingsButton: {minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center', marginRight: 12}, settingsText: {fontSize: 23, color: ink},
-  list: {paddingBottom: 28}, date: {fontSize: 18, fontWeight: '600', color: ink, marginHorizontal: 16, marginTop: 20, marginBottom: 12},
-  selectionBadge: {position: 'absolute', left: 5, top: 5, backgroundColor: '#FFF', color: '#3D4A5C', fontWeight: '700', fontSize: 18, borderRadius: 14, width: 28, height: 28, textAlign: 'center', lineHeight: 28}, selectionChecked: {backgroundColor: '#3D4A5C', color: '#FFF'},
-  grid: {flexDirection: 'row', flexWrap: 'wrap', gap: 2, marginHorizontal: 16}, tile: {backgroundColor: '#ECE9E5', alignItems: 'center', justifyContent: 'center'}, tileImage: {width: '100%', height: '100%'}, tileFallback: {color: muted, fontSize: 12},
-  badge: {position: 'absolute', right: 5, bottom: 5, backgroundColor: '#263543CC', color: '#FFF', fontSize: 11, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 5, overflow: 'hidden'}, badgeRow: {position: 'absolute', right: 5, bottom: 5, backgroundColor: '#263543CC', borderRadius: 6, paddingHorizontal: 5, paddingVertical: 3, flexDirection: 'row', alignItems: 'center'}, badgeLabel: {color: '#FFF', fontSize: 11, marginLeft: 2},
-  state: {minHeight: 130, alignItems: 'center', justifyContent: 'center', padding: 20}, stateText: {fontSize: 15, color: muted, textAlign: 'center', marginTop: 10},
-  retry: {minHeight: 48, alignSelf: 'center', justifyContent: 'center', paddingHorizontal: 22, backgroundColor: '#E8D4B8', borderRadius: 16, marginTop: 12}, retryText: {color: ink, fontWeight: '600'},
-  path: {color: muted, fontSize: 13, marginHorizontal: 20, marginBottom: 12}, folder: {minHeight: 76, flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 8, paddingHorizontal: 12, backgroundColor: '#FFF', borderColor: border, borderWidth: 1, borderRadius: 18},
-  folderIcon: {width: 46, height: 46, backgroundColor: '#E7F0EB', borderRadius: 14, alignItems: 'center', justifyContent: 'center'}, folderIconText: {color: '#779B88', fontSize: 23}, folderCopy: {flex: 1, marginLeft: 12}, folderName: {color: ink, fontSize: 16, fontWeight: '600'}, meta: {color: muted, fontSize: 13, marginTop: 5}, chevron: {color: muted, fontSize: 25}, section: {fontSize: 18, color: ink, fontWeight: '600', marginHorizontal: 20, marginTop: 24, marginBottom: 12},
-  folderImage: {width: 46, height: 46, borderRadius: 14},
-  tabs: {height: 66, flexDirection: 'row', borderTopWidth: 1, borderColor: border, backgroundColor: '#FFF', paddingHorizontal: 8, paddingTop: 4}, tab: {flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', gap: 3, borderRadius: 14}, tabSelected: {backgroundColor: '#F2F3F2'}, tabText: {fontSize: 12, color: muted}, tabActive: {color: ink, fontWeight: '700'},
-  error: {color: '#A65757', fontSize: 14, margin: 16},
-  viewer: {flex: 1, backgroundColor: '#161B22'}, viewerTop: {height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8}, viewerActions: {flexDirection: 'row'}, viewerButton: {width: 52, height: 52, justifyContent: 'center', alignItems: 'center'}, viewerCount: {color: '#FFFFFF', fontSize: 13, fontWeight: '600'}, viewerMedia: {flex: 1, justifyContent: 'center', overflow: 'hidden'}, fullMedia: {width: '100%', height: '100%'}, motionMedia: {position: 'absolute', width: '100%', height: '100%', top: 0, left: 0}, previewSpinner: {position: 'absolute', right: 16, bottom: 16},
-  favoriteIcon: {color: '#FFFFFF', fontSize: 26},
-  liveBadge: {position: 'absolute', top: 12, left: 16, backgroundColor: '#161B22BB', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5}, liveBadgeText: {color: '#FFFFFF', fontSize: 11, fontWeight: '600'}, motionRetry: {position: 'absolute', bottom: 18, alignSelf: 'center', minHeight: 48, justifyContent: 'center', paddingHorizontal: 18, borderRadius: 16, backgroundColor: '#FFFFFFE8'}, motionRetryText: {color: ink, fontSize: 13, fontWeight: '600'},
-  viewerSheet: {backgroundColor: paper, borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingTop: 8, paddingHorizontal: 10}, viewerNav: {flexDirection: 'row', alignItems: 'center', minHeight: 64}, navButton: {minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center'}, viewerIdentity: {flex: 1, alignItems: 'center', paddingHorizontal: 4}, viewerName: {fontSize: 15, fontWeight: '600', color: ink, textAlign: 'center'}, viewerMeta: {fontSize: 12, color: muted, marginTop: 4}, viewerNotice: {fontSize: 13, color: ink, textAlign: 'center', marginBottom: 8},
+  root: {flex: 1, backgroundColor: colors.paper}, viewerRoot: {backgroundColor: colors.viewerBg}, content: {flex: 1}, hidden: {display: 'none'},
+  page: {flex: 1, paddingTop: 12},
+  title: {fontSize: 24, color: colors.ink, fontWeight: '700', letterSpacing: -0.4},
+  topRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 8},
+  topActions: {flexDirection: 'row', alignItems: 'center', gap: 4},
+  settingsButton: {minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center'},
+  chipBar: {flexGrow: 0, maxHeight: 46, marginBottom: 4},
+  chipBarContent: {paddingHorizontal: 16, gap: 8, alignItems: 'center'},
+  filterBanner: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 6, backgroundColor: colors.recessed, borderTopWidth: hairline, borderBottomWidth: hairline, borderColor: colors.hairline},
+  filterSummary: {flex: 1, color: colors.muted, fontSize: 12, marginRight: 8},
+  list: {paddingBottom: 24},
+  dateRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 18, paddingBottom: 8},
+  date: {fontSize: 16, fontWeight: '600', color: colors.ink},
+  selectionBadge: {position: 'absolute', left: 6, top: 6, width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: '#FFFFFF', backgroundColor: 'rgba(17, 21, 26, 0.28)', alignItems: 'center', justifyContent: 'center'},
+  selectionChecked: {backgroundColor: colors.ink, borderColor: colors.ink},
+  selectionCheck: {color: '#FFFFFF', fontSize: 12, fontWeight: '700'},
+  grid: {flexDirection: 'row', flexWrap: 'wrap', gap: 2},
+  tile: {backgroundColor: colors.recessed, alignItems: 'center', justifyContent: 'center', overflow: 'hidden'},
+  tileImage: {width: '100%', height: '100%'},
+  tileSelected: {opacity: 0.78},
+  tileFallback: {color: colors.muted, fontSize: 12},
+  badge: {position: 'absolute', right: 5, bottom: 5, backgroundColor: 'rgba(17, 21, 26, 0.68)', color: '#FFF', fontSize: 10, fontWeight: '600', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: 'hidden'},
+  badgeRow: {position: 'absolute', right: 5, bottom: 5, backgroundColor: 'rgba(17, 21, 26, 0.68)', borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, flexDirection: 'row', alignItems: 'center', gap: 3},
+  badgeLabel: {color: '#FFF', fontSize: 10, fontWeight: '600'},
+  state: {minHeight: 160, alignItems: 'center', justifyContent: 'center', padding: 24},
+  stateText: {fontSize: 14, color: colors.muted, textAlign: 'center', marginTop: 10},
+  retry: {minHeight: 42, alignSelf: 'center', justifyContent: 'center', paddingHorizontal: 20, backgroundColor: colors.recessed, borderWidth: 1, borderColor: colors.border, borderRadius: radius.pill, marginTop: 12},
+  retryText: {color: colors.ink, fontSize: 14, fontWeight: '600'},
+  selectionTray: {paddingHorizontal: 14, paddingVertical: 10, backgroundColor: colors.surface, borderTopWidth: hairline, borderTopColor: colors.hairline},
+  headingRow: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, marginBottom: 8},
+  back: {minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center'},
+  folderHeading: {flex: 1, minWidth: 0, fontSize: 24, color: colors.ink, fontWeight: '700', marginLeft: 4, marginRight: 8},
+  folderHeadingNested: {fontSize: 19, marginLeft: 0},
+  headingActions: {flexDirection: 'row', alignItems: 'center'},
+  headerAction: {width: 44, height: 44, alignItems: 'center', justifyContent: 'center'},
+  folderToolbar: {flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, marginBottom: 10},
+  moreSpinner: {marginVertical: 20},
+  path: {color: colors.muted, fontSize: 12, marginHorizontal: 16, marginBottom: 10},
+  folderGroup: {marginHorizontal: 16, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, overflow: 'hidden'},
+  folder: {minHeight: 68, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10},
+  folderDivider: {borderTopWidth: hairline, borderTopColor: colors.hairline},
+  folderIcon: {width: 44, height: 44, backgroundColor: colors.sageSoft, borderRadius: 10, alignItems: 'center', justifyContent: 'center', overflow: 'hidden'},
+  folderImage: {width: 44, height: 44},
+  folderCopy: {flex: 1, marginLeft: 12, marginRight: 8},
+  folderName: {color: colors.ink, fontSize: 15, fontWeight: '600'},
+  meta: {color: colors.muted, fontSize: 12, marginTop: 3},
+  section: {fontSize: 14, color: colors.muted, fontWeight: '600', marginHorizontal: 16, marginTop: 20, marginBottom: 10},
+  pressed: {opacity: 0.72},
+  tabs: {height: 58, flexDirection: 'row', borderTopWidth: hairline, borderColor: colors.hairline, backgroundColor: colors.paper, paddingHorizontal: 8},
+  tab: {flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2},
+  tabIndicator: {position: 'absolute', top: 0, width: 28, height: 2.5, borderRadius: 2, backgroundColor: 'transparent'},
+  tabIndicatorActive: {backgroundColor: colors.ink},
+  tabText: {fontSize: 11, color: colors.muted, fontWeight: '500'},
+  tabActive: {color: colors.ink, fontWeight: '700'},
+  connectionBanner: {backgroundColor: colors.dangerSoft, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: hairline, borderBottomColor: '#EBC9C5'},
+  error: {color: colors.danger, fontSize: 13},
+  settingsContent: {paddingTop: 8, paddingBottom: 36},
+  settingsHeader: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, height: 48, marginBottom: 8},
+  settingsBack: {minWidth: 72, minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 2},
+  backLabel: {color: colors.ink, fontSize: 15, fontWeight: '500'},
+  settingsTitle: {fontSize: 17, color: colors.ink, fontWeight: '600'},
+  settingsSpacer: {minWidth: 72},
+  accountCard: {flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 18, padding: 14, borderRadius: radius.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, gap: 12},
+  avatar: {width: 42, height: 42, borderRadius: 21, backgroundColor: colors.sand, alignItems: 'center', justifyContent: 'center'},
+  avatarText: {color: colors.ink, fontSize: 17, fontWeight: '700'},
+  accountCopy: {flex: 1},
+  accountName: {color: colors.ink, fontSize: 16, fontWeight: '600'},
+  accountServer: {color: colors.muted, fontSize: 12, marginTop: 2},
+  signOutButton: {marginHorizontal: 16, marginTop: 8, minHeight: 48, borderRadius: radius.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center'},
+  signOutText: {color: colors.danger, fontSize: 15, fontWeight: '600'},
+  viewer: {flex: 1, backgroundColor: colors.viewerBg},
+  viewerTop: {height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8},
+  viewerActions: {flexDirection: 'row'},
+  viewerButton: {width: 46, height: 46, justifyContent: 'center', alignItems: 'center'},
+  viewerCount: {color: '#F3F5F7', fontSize: 13, fontWeight: '600'},
+  viewerMedia: {flex: 1, justifyContent: 'center', overflow: 'hidden'},
+  fullMedia: {width: '100%', height: '100%'},
+  motionMedia: {position: 'absolute', width: '100%', height: '100%', top: 0, left: 0},
+  previewSpinner: {position: 'absolute', right: 16, bottom: 16},
+  favoriteIcon: {color: '#F3F5F7', fontSize: 24},
+  favoriteActive: {color: colors.blush},
+  liveBadge: {position: 'absolute', top: 12, left: 14, backgroundColor: 'rgba(17, 21, 26, 0.72)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4},
+  liveBadgeText: {color: '#F3F5F7', fontSize: 11, fontWeight: '600'},
+  motionRetry: {position: 'absolute', bottom: 18, alignSelf: 'center', minHeight: 40, justifyContent: 'center', paddingHorizontal: 16, borderRadius: radius.pill, backgroundColor: 'rgba(255,255,255,0.92)'},
+  motionRetryText: {color: colors.ink, fontSize: 13, fontWeight: '600'},
+  viewerSheet: {backgroundColor: colors.viewerSheet, borderTopWidth: hairline, borderTopColor: 'rgba(255,255,255,0.08)', paddingTop: 6, paddingHorizontal: 12},
+  viewerNav: {flexDirection: 'row', alignItems: 'center', minHeight: 52},
+  navButton: {minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center'},
+  viewerIdentity: {flex: 1, alignItems: 'center', paddingHorizontal: 6},
+  viewerName: {fontSize: 14, fontWeight: '600', color: '#F3F5F7', textAlign: 'center'},
+  viewerMeta: {fontSize: 12, color: '#9BA4B0', marginTop: 2},
+  viewerTools: {flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: 4, marginBottom: 4},
+  viewerPill: {minHeight: 34, paddingHorizontal: 14, borderRadius: radius.pill, backgroundColor: 'rgba(255,255,255,0.12)', justifyContent: 'center', alignItems: 'center'},
+  viewerPillText: {color: '#F3F5F7', fontSize: 12, fontWeight: '600'},
+  disabled: {opacity: 0.42},
+  viewerNotice: {fontSize: 12, color: '#E2E6EC', textAlign: 'center', marginTop: 4, marginBottom: 4},
 });

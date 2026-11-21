@@ -1,6 +1,7 @@
 import React, {useEffect, useState, useSyncExternalStore} from 'react';
 import {Image, StyleSheet, Text, View} from 'react-native';
 import type {BrowseApi} from './api';
+import {colors, radius} from '../ui/theme';
 
 export default function MediaThumbnail({api, id, face = false, size = 80}: {api: BrowseApi; id: string; face?: boolean; size?: number}) {
   const revision = useSyncExternalStore(api.subscribe, api.getRevision);
@@ -20,4 +21,8 @@ export default function MediaThumbnail({api, id, face = false, size = 80}: {api:
   return <View style={[styles.frame, {width: size, height: size}]}>{source && !failed ? <Image source={source} style={styles.image} resizeMode="cover"
     onError={() => {if (attempt < 2) {setAttempt(value => value + 1);} else {setFailed(true);}}} /> : <Text style={styles.placeholder}>{failed ? '无预览' : ''}</Text>}</View>;
 }
-const styles = StyleSheet.create({frame: {backgroundColor: '#ECE9E5', borderRadius: 8, overflow: 'hidden', alignItems: 'center', justifyContent: 'center'}, image: {width: '100%', height: '100%'}, placeholder: {fontSize: 11, color: '#75808A'}});
+const styles = StyleSheet.create({
+  frame: {backgroundColor: colors.recessed, borderRadius: radius.sm, overflow: 'hidden', alignItems: 'center', justifyContent: 'center'},
+  image: {width: '100%', height: '100%'},
+  placeholder: {fontSize: 11, color: colors.muted},
+});

@@ -1,13 +1,14 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore} from 'react';
 import {ActivityIndicator, BackHandler, FlatList, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {BrowseApi, type BBox, type MapConfig, type Photo} from '../browse/api';
-import {Action, ui} from '../browse/ManagementUI';
+import {Action} from '../browse/ManagementUI';
 import MediaThumbnail from '../browse/MediaThumbnail';
 import {operationError} from '../browse/management';
 import {usePhotos} from '../browse/usePhotos';
 import PhotoMap from './PhotoMap';
 import {countInBBox, filterByYear, placeBBox, toLocatedPhotos, yearRange, yearsOf, type LocatedPhoto, type MarkerSpec, type PhotoClusters} from './clusters';
 import {fitPhotos, viewBounds, zoomLimits, type MapFocus, type MapView, type Size} from './geometry';
+import {colors} from '../ui/theme';
 
 type Scope = {kind: 'area' | 'place'; bbox: BBox; count?: number};
 export default function MapPage({api, close, open, focus}: {api: BrowseApi; close: () => void; open: (photo: Photo, all: Photo[]) => void; focus?: MapFocus}) {
@@ -83,21 +84,56 @@ export default function MapPage({api, close, open, focus}: {api: BrowseApi; clos
     setScope({kind: 'area', bbox: viewBounds(view, size)});
   }
   return <View style={styles.page}>
-    <View style={ui.row}><Action label="返回图库" onPress={close} /><Text style={ui.heading}>地图相册</Text><Action label="刷新地图" disabled={status === 'loading'} onPress={load} /></View>
-    {status === 'loading' ? <ActivityIndicator /> : null}
-    {error ? <Text accessibilityRole="alert" style={ui.error}>{error}</Text> : null}
-    {status === 'failed' ? <Action label="重试地图" onPress={load} /> : status === 'ready' && !config.enabled ? <Text style={ui.copy}>服务器尚未启用地图，请由管理员在 Web 设置中配置地图。</Text> : status === 'ready' ? <>
-      <Text style={ui.copy}>{located.length} / {total} 项媒体带有位置{located.length === 0 ? '，目前没有可显示的照片' : ''}</Text>
-      <ScrollView horizontal style={styles.years} contentContainerStyle={ui.row}><Action label="全部年份" selected={year === null} onPress={() => chooseYear(null)} />{years.map(value => <Action key={value} label={`${value} 年`} selected={year === value} onPress={() => chooseYear(value)} />)}</ScrollView>
-      <PhotoMap api={api} config={config} photos={filtered} view={view} change={setView} marker={marker} layout={setSize} />
-      <View style={ui.row}><Text style={ui.copy}>{scope?.kind === 'place' ? `此地点 · ${scope.count} 张照片` : '当前区域照片'}</Text>{scope?.kind === 'place' ? <Action label="返回当前区域" onPress={() => setScope({kind: 'area', bbox: viewBounds(view, size)})} /> : null}</View>
-      {opening ? <ActivityIndicator /> : null}
-      {page.state === 'loading' ? <ActivityIndicator /> : page.state === 'empty' ? <Text style={ui.copy}>此区域没有匹配的照片</Text> : page.state !== 'ready' ? <><Text style={ui.error}>{page.state === 'forbidden' ? '没有查看权限' : page.state === 'expired' ? '登录已失效' : '区域照片加载失败'}</Text><Action label="重试区域照片" onPress={page.refresh} /></> : null}
-      <FlatList data={page.items} keyExtractor={photo => photo.id} numColumns={3}
+    <View style={styles.header}>
+      <Action label="返回图库" variant="ghost" onPress={close} />
+      <Text style={styles.headerTitle}>地图相册</Text>
+      <Action label="刷新地图" variant="ghost" disabled={status === 'loading'} onPress={load} />
+    </View>
+    {status === 'loading' ? <ActivityIndicator style={styles.spinner} color={colors.ink} /> : null}
+    {error ? <Text accessibilityRole="alert" style={styles.bannerError}>{error}</Text> : null}
+    {status === 'failed' ? <View style={styles.centerAction}><Action label="重试地图" onPress={load} /></View> :
+      status === 'ready' && !config.enabled ? <Text style={styles.empty}>服务器尚未启用地图，请由管理员在 Web 设置中配置地图。</Text> : status === 'ready' ? <>
+      <Text style={styles.caption}>{located.length} / {total} 项媒体带有位置{located.length === 0 ? '，目前没有可显示的照片' : ''}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.years} contentContainerStyle={styles.yearsContent}>
+        <Action label="全部年份" selected={year === null} onPress={() => chooseYear(null)} />
+        {years.map(value => <Action key={value} label={`${value} 年`} selected={year === value} onPress={() => chooseYear(value)} />)}
+      </ScrollView>
+      <View style={styles.mapFrame}>
+        <PhotoMap api={api} config={config} photos={filtered} view={view} change={setView} marker={marker} layout={setSize} />
+      </View>
+      <View style={styles.scopeRow}>
+        <Text style={styles.scopeLabel}>{scope?.kind === 'place' ? `此地点 · ${scope.count} 张照片` : '当前区域照片'}</Text>
+        {scope?.kind === 'place' ? <Action label="返回当前区域" variant="ghost" onPress={() => setScope({kind: 'area', bbox: viewBounds(view, size)})} /> : null}
+      </View>
+      {opening ? <ActivityIndicator style={styles.spinner} color={colors.ink} /> : null}
+      {page.state === 'loading' ? <ActivityIndicator style={styles.spinner} color={colors.ink} /> :
+        page.state === 'empty' ? <Text style={styles.empty}>此区域没有匹配的照片</Text> :
+        page.state !== 'ready' ? <View style={styles.centerAction}><Text style={styles.bannerError}>{page.state === 'forbidden' ? '没有查看权限' : page.state === 'expired' ? '登录已失效' : '区域照片加载失败'}</Text><Action label="重试区域照片" onPress={page.refresh} /></View> : null}
+      <FlatList data={page.items} keyExtractor={photo => photo.id} numColumns={3} contentContainerStyle={styles.gridContent}
         onEndReached={() => {if (page.cursor && page.moreState === 'ready') {page.loadMore();}}} onEndReachedThreshold={0.4}
-        ListFooterComponent={page.moreState === 'loading' ? <ActivityIndicator /> : page.moreState !== 'ready' ? <Action label="重试更多区域照片" onPress={page.loadMore} /> : undefined}
-        renderItem={({item}) => <Pressable style={styles.photo} accessibilityRole="button" accessibilityLabel={`查看 ${item.filename}`} onPress={() => open(item, page.items)}><MediaThumbnail api={api} id={item.id} size={88} /><Text numberOfLines={1} style={styles.name}>{item.filename}</Text></Pressable>} />
+        ListFooterComponent={page.moreState === 'loading' ? <ActivityIndicator style={styles.spinner} color={colors.ink} /> : page.moreState !== 'ready' ? <View style={styles.centerAction}><Action label="重试更多区域照片" onPress={page.loadMore} /></View> : undefined}
+        renderItem={({item}) => <Pressable style={styles.photo} accessibilityRole="button" accessibilityLabel={`查看 ${item.filename}`} onPress={() => open(item, page.items)}>
+          <MediaThumbnail api={api} id={item.id} size={102} />
+          <Text numberOfLines={1} style={styles.name}>{item.filename}</Text>
+        </Pressable>} />
     </> : null}
   </View>;
 }
-const styles = StyleSheet.create({page: {flex: 1, padding: 12, backgroundColor: '#FAF9F7'}, years: {maxHeight: 48, flexGrow: 0, marginBottom: 8}, photo: {flex: 1, alignItems: 'center', marginVertical: 5, minWidth: 0}, name: {fontSize: 11, color: '#75808A', maxWidth: 90, marginTop: 4}});
+const styles = StyleSheet.create({
+  page: {flex: 1, backgroundColor: colors.paper},
+  header: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, height: 48},
+  headerTitle: {fontSize: 17, fontWeight: '600', color: colors.ink},
+  caption: {color: colors.muted, fontSize: 12, paddingHorizontal: 16, marginBottom: 8},
+  years: {maxHeight: 44, flexGrow: 0, marginBottom: 10},
+  yearsContent: {paddingHorizontal: 16, gap: 8, alignItems: 'center'},
+  mapFrame: {marginHorizontal: 16},
+  scopeRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginTop: 10, marginBottom: 4},
+  scopeLabel: {color: colors.ink, fontSize: 13, fontWeight: '600'},
+  bannerError: {color: colors.danger, fontSize: 13, paddingHorizontal: 16, marginBottom: 6},
+  spinner: {marginVertical: 14},
+  centerAction: {alignItems: 'center', marginVertical: 10},
+  empty: {color: colors.muted, fontSize: 14, textAlign: 'center', marginTop: 20, paddingHorizontal: 20},
+  gridContent: {paddingHorizontal: 8, paddingBottom: 24},
+  photo: {flex: 1, alignItems: 'center', marginVertical: 5, minWidth: 0},
+  name: {fontSize: 11, color: colors.muted, maxWidth: 96, marginTop: 4},
+});
