@@ -5,7 +5,7 @@ import React, {memo, useCallback, useEffect, useMemo, useRef, useState, useSyncE
 import {ActivityIndicator, AppState, BackHandler, FlatList, Image, NativeModules, Pressable, ScrollView, StatusBar, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
 import Video from 'react-native-video';
 import ReactNativeBlobUtil from 'react-native-blob-util';
-import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {ApiError} from '../auth/api';
 import type {MobileSession} from '../auth/session';
 import {BrowseApi, errorState, groupPhotos, type Folder, type LoadState, type MediaSource, type Photo} from './api';
@@ -231,21 +231,26 @@ function Viewer({api, initial, photos, close, onMap}: {api: BrowseApi; initial: 
   const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(Math.max(0, photos.findIndex(p => p.id === initial.id)));
   const selected = photos[index] ?? initial;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   const selectedID = useRef(selected.id);
   selectedID.current = selected.id;
+  const peekThumb = (item: Photo) => item.mime_type.startsWith('video/') ? undefined : api.peekMediaSource?.(item.id, 'thumbnail');
+  const peekPreview = (item: Photo) => item.mime_type.startsWith('video/') ? undefined : api.peekMediaSource?.(item.id, 'preview');
+  const [prevPhotoId, setPrevPhotoId] = useState(selected.id);
   const [photo, setPhoto] = useState(selected);
   const [folderName, setFolderName] = useState('');
   const [canManage, setCanManage] = useState(false);
   const [managing, setManaging] = useState(false);
   const [details, setDetails] = useState(false);
   const revision = useSyncExternalStore(api.subscribe, api.getRevision);
-  const [source, setSource] = useState<{uri: string; headers: {Authorization: string}}>();
-  const [motionSource, setMotionSource] = useState<{uri: string; headers: {Authorization: string}}>();
+  const [source, setSource] = useState<MediaSource | undefined>(() => peekPreview(selected));
+  const [motionSource, setMotionSource] = useState<MediaSource | undefined>();
   const [motionState, setMotionState] = useState<'none' | 'loading' | 'playing' | 'failed'>('none');
   const [foreground, setForeground] = useState(AppState.currentState === 'active');
-  const [state, setState] = useState<LoadState>('loading');
+  const [state, setState] = useState<LoadState>(() => peekPreview(selected) ? 'ready' : 'loading');
   // The grid already fetched this thumbnail; it stands in until the preview decodes.
-  const [placeholder, setPlaceholder] = useState<MediaSource>();
+  const [placeholder, setPlaceholder] = useState<MediaSource | undefined>(() => peekThumb(selected));
   const [previewShown, setPreviewShown] = useState(false);
   const [detailReady, setDetailReady] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -259,33 +264,46 @@ function Viewer({api, initial, photos, close, onMap}: {api: BrowseApi; initial: 
   const [zoom, setZoom] = useState(1);
   const touch = useRef({x: 0, time: 0, distance: 0, zoom: 1});
   const lastTap = useRef(0);
+  if (prevPhotoId !== selected.id) {
+    const nextPreview = peekPreview(selected);
+    setPrevPhotoId(selected.id);
+    setDetails(false);
+    setPhoto({...selected, is_favorite: favoriteOverrides.current.get(selected.id) ?? selected.is_favorite});
+    setFolderName(''); setCanManage(false); setZoom(1);
+    setPlaceholder(peekThumb(selected));
+    setSource(nextPreview);
+    setState(nextPreview ? 'ready' : 'loading');
+    setMotionSource(undefined); setMotionState('none'); setNotice(''); setDetailReady(false); setPreviewShown(false);
+  }
   useEffect(() => {
     const subscription = AppState.addEventListener('change', next => setForeground(next === 'active'));
     return () => subscription.remove();
   }, []);
   useEffect(() => {
     let active = true;
-    setDetails(false);
-    setPhoto({...selected, is_favorite: favoriteOverrides.current.get(selected.id) ?? selected.is_favorite}); setFolderName(''); setCanManage(false); setZoom(1); setState('loading'); setSource(undefined);
-    setMotionSource(undefined); setMotionState('none'); setNotice(''); setDetailReady(false); setPreviewShown(false);
-    setPlaceholder(selected.mime_type.startsWith('video/') ? undefined : api.peekMediaSource(selected.id, 'thumbnail'));
+    const current = selectedRef.current;
+    if (mediaRetry > 0) {setState('loading');}
     let failed = false;
     const fail = (error: unknown) => {if (active && !failed) {failed = true; setState(errorState(error));}};
     // The preview starts loading at once; metadata follows without holding it back.
-    api.mediaSource(selected.id, 'preview').then(preview => {if (active && !failed) {setSource(preview); setState('ready');}}).catch(fail);
-    Promise.all([api.photo(selected.id), api.liveStatus([selected.id]).catch(() => selected.is_live_photo ? [selected.id] : [])]).then(([detail, liveIds]) => {
+    api.mediaSource(current.id, 'preview').then(preview => {
       if (!active || failed) {return;}
-      const isLive = liveIds.includes(selected.id);
-      setPhoto({...detail, is_favorite: favoriteOverrides.current.get(selected.id) ?? detail.is_favorite, is_live_photo: isLive}); setDetailReady(true);
+      setSource(old => mediaRetry === 0 && sameSource(old, preview) ? old : preview);
+      setState('ready');
+    }).catch(fail);
+    Promise.all([api.photo(current.id), api.liveStatus([current.id]).catch(() => current.is_live_photo ? [current.id] : [])]).then(([detail, liveIds]) => {
+      if (!active || failed) {return;}
+      const isLive = liveIds.includes(current.id);
+      setPhoto({...detail, is_favorite: favoriteOverrides.current.get(current.id) ?? detail.is_favorite, is_live_photo: isLive}); setDetailReady(true);
       api.writableFolder(detail.folder_id).then(folder => {if (active) {setFolderName(folder.name); setCanManage(folder.effective_permission === 'write');}}).catch(() => {});
       if (isLive) {
         setMotionState('loading');
-        api.mediaSource(selected.id, 'motion').then(value => {if (active) {setMotionSource(value);}})
+        api.mediaSource(current.id, 'motion').then(value => {if (active) {setMotionSource(value);}})
           .catch(() => {if (active) {setMotionState('failed');}});
       }
     }).catch(fail);
     return () => {active = false;};
-  }, [api, selected, mediaRetry, motionRetry, revision]);
+  }, [api, selected.id, mediaRetry, motionRetry, revision]);
   async function mediaFailed() {
     if (mediaRetry < 1) {
       try {await api.retryMedia(); setMediaRetry(value => value + 1); return;} catch (error) {setState(errorState(error));}
@@ -358,7 +376,6 @@ function Viewer({api, initial, photos, close, onMap}: {api: BrowseApi; initial: 
     lastTap.current = now;
   }
   return <View style={styles.viewer}>
-    <StatusBar barStyle="light-content" />
     <View style={styles.viewerTop}>
       <Pressable style={styles.viewerButton} accessibilityRole="button" accessibilityLabel="返回浏览" onPress={close}><Icon name="back" tone="light" size={22} /></Pressable>
       <Text style={styles.viewerCount}>{index + 1} / {photos.length}</Text>
@@ -370,9 +387,9 @@ function Viewer({api, initial, photos, close, onMap}: {api: BrowseApi; initial: 
     </View>
     <View style={styles.viewerMedia} onTouchStart={event => beginTouch(event.nativeEvent.touches)}
       onTouchMove={event => moveTouch(event.nativeEvent.touches)} onTouchEnd={event => endTouch(event.nativeEvent.changedTouches[0]?.pageX ?? touch.current.x)}>
-      {placeholder && !previewShown && (state === 'loading' || state === 'ready') ? <Image source={placeholder} style={styles.motionMedia} resizeMode="contain" onError={() => setPlaceholder(undefined)} /> : null}
+      {placeholder && !previewShown && (state === 'loading' || state === 'ready') ? <Image source={placeholder} fadeDuration={0} style={styles.motionMedia} resizeMode="contain" onError={() => setPlaceholder(undefined)} /> : null}
       {state === 'ready' && source ? video ? <Video source={source} style={styles.fullMedia} controls paused={!foreground} resizeMode="contain" onError={mediaFailed} /> :
-        <Image source={source} style={[styles.fullMedia, {transform: [{scale: zoom}]}]} resizeMode="contain" onLoad={() => setPreviewShown(true)} onError={mediaFailed} /> :
+        <Image source={source} fadeDuration={0} style={[styles.fullMedia, {transform: [{scale: zoom}]}]} resizeMode="contain" onLoad={() => setPreviewShown(true)} onError={mediaFailed} /> :
         state === 'loading' && placeholder ? null : <StateView state={state} retry={() => setMediaRetry(value => value + 1)} />}
       {placeholder && !previewShown && (state === 'loading' || state === 'ready') ? <ActivityIndicator style={styles.previewSpinner} color="#FFF" /> : null}
       {state === 'ready' && !video && motionSource && foreground && motionState !== 'failed' ?
@@ -473,9 +490,11 @@ export default function BrowseApp({session, onSession, onSignOut, onExpired, err
     });
     return () => subscription.remove();
   }, [api, viewer, settings, trash, workspace, tab, stack]);
+  const insets = useSafeAreaInsets();
+  const rootInsets = {paddingTop: insets.top, paddingBottom: viewer ? 0 : insets.bottom};
   const open = (photo: Photo, photos: Photo[]) => setViewer({photo, photos});
-  return <SafeAreaView style={[styles.root, viewer && styles.viewerRoot]} edges={viewer ? ['top'] : ['top', 'bottom']}>
-    <StatusBar barStyle="dark-content" />
+  return <View style={[styles.root, viewer && styles.viewerRoot, rootInsets]}>
+    <StatusBar barStyle={viewer ? 'light-content' : 'dark-content'} />
     {connectionNotice ? <View style={styles.connectionBanner}><Text accessibilityRole="alert" style={styles.error}>{connectionNotice}</Text></View> : null}
     {trash ? <TrashPage api={api} close={() => setTrash(false)} /> : viewer ? <Viewer api={api} initial={viewer.photo} photos={viewer.photos} close={() => setViewer(null)} onMap={focus => {setMapFocus(focus); setWorkspace('map'); setViewer(null);}} /> : settings ?
       <ScrollView style={styles.content} contentContainerStyle={styles.settingsContent} keyboardShouldPersistTaps="handled">
@@ -515,7 +534,7 @@ export default function BrowseApp({session, onSession, onSignOut, onExpired, err
         </Pressable>;
       })}</View> : null}
     </View>
-  </SafeAreaView>;
+  </View>;
 }
 
 const styles = StyleSheet.create({

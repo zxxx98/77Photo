@@ -1,6 +1,6 @@
 import React from 'react';
 import {act, create, type ReactTestRenderer} from 'react-test-renderer';
-import {FlatList, Image} from 'react-native';
+import {FlatList, Image, StatusBar, Text} from 'react-native';
 import {ApiError} from '../src/auth/api';
 import {BrowseApi, type Folder, type Photo} from '../src/browse/api';
 import BrowseApp from '../src/browse/BrowseApp';
@@ -135,4 +135,20 @@ test('reports a rejected device, but not a network failure', async () => {
   (BrowseApi.prototype.me as jest.Mock).mockRejectedValueOnce(new ApiError(401, 'AUTH_REQUIRED', 'expired'));
   await render();
   expect(onExpired).toHaveBeenCalledTimes(1);
+});
+
+test('opening the viewer seeds thumbnail and preview immediately without a loading flash or dual status bars', async () => {
+  await render();
+  // Hold mediaSource so we inspect the synchronous first frame of Viewer before async resolution.
+  jest.spyOn(BrowseApi.prototype, 'mediaSource').mockImplementation(() => new Promise(() => {}));
+  await act(async () => {pressable('照片，b.jpg').props.onPress();});
+  const images = renderer.root.findAllByType(Image).map(image => ({
+    uri: image.props.source?.uri,
+    fadeDuration: image.props.fadeDuration,
+  }));
+  expect(images).toContainEqual({uri: 'https://photos.test/api/v1/photos/b/thumbnail?size=256', fadeDuration: 0});
+  expect(images).toContainEqual({uri: 'https://photos.test/api/v1/photos/b/preview', fadeDuration: 0});
+  expect(renderer.root.findAllByType(StatusBar)).toHaveLength(1);
+  expect(renderer.root.findByType(StatusBar).props.barStyle).toBe('light-content');
+  expect(renderer.root.findAllByType(Text).some(node => node.props.children === '正在加载…')).toBe(false);
 });
