@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {memo, useCallback, useEffect, useRef, useState} from 'react';
 import {ActivityIndicator, AppState, BackHandler, Image, Pressable, ScrollView, StyleSheet, Switch, Text, View} from 'react-native';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import type {MobileSession} from '../auth/session';
@@ -36,10 +36,13 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
   const [notice, setNotice] = useState('');
   const [resumeSignal, setResumeSignal] = useState(0);
 
-  const commit = useCallback((next: UploadItem[]) => {
+  // Progress is display-only and restarts from zero after a relaunch, so it is
+  // not written to storage: `persist` is false for those ticks.
+  const commit = useCallback((next: UploadItem[], persist = true) => {
     if (!mountedRef.current) {return;}
     itemsRef.current = next;
     setItems(next);
+    if (!persist) {return;}
     const scopedSession = sessionRef.current;
     saving.current = saving.current.catch(() => {}).then(() => saveQueue(scopedSession, next));
     saving.current.catch(() => setNotice('无法保存上传队列，请检查设备存储空间'));
@@ -104,9 +107,9 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
         if (!item) {break;}
         const controller = new AbortController();
         currentUpload.current = {id: item.id, controller};
-        const update = (patch: Partial<UploadItem>) => {
+        const update = (patch: Partial<UploadItem>, persist = true) => {
           if (controller.signal.aborted || epoch !== queueEpoch.current) {return;}
-          commit(itemsRef.current.map(entry => entry.id === item.id && entry.status !== 'cancelled' ? {...entry, ...patch} : entry));
+          commit(itemsRef.current.map(entry => entry.id === item.id && entry.status !== 'cancelled' ? {...entry, ...patch} : entry), persist);
         };
         update({status: 'uploading', progress: 0, message: undefined});
         try {
@@ -123,7 +126,7 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
             await saving.current;
           }
           if (controller.signal.aborted || epoch !== queueEpoch.current) {continue;}
-          const result = await uploadOne(api, prepared, value => update({progress: value}), controller.signal);
+          const result = await uploadOne(api, prepared, value => update({progress: value}, false), controller.signal);
           update({status: result, progress: 100, message: result === 'skipped' ? '服务器已有相同内容' : undefined});
         } catch (error) {
           if (!controller.signal.aborted) {update({status: 'failed', progress: 0, message: uploadError(error)});}
@@ -135,22 +138,22 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
     } finally {running.current = false; if (mountedRef.current && epoch !== queueEpoch.current) {setResumeSignal(value => value + 1);}}
   }, [api, commit]);
   useEffect(() => {process();}, [items, process, resumeSignal]);
-  function cancelUpload(id: string) {
+  const cancelUpload = useLatest((id: string) => {
     const item = itemsRef.current.find(entry => entry.id === id);
     if (!item || !['waiting', 'uploading'].includes(item.status)) {return;}
     commit(itemsRef.current.map(entry => entry.id === id ? {...entry, status: 'cancelled', message: item.status === 'waiting' ? '已取消，保留本机文件供重试' : '已取消，保留文件供重试；服务器可能已接收，请刷新核对'} : entry));
     if (currentUpload.current?.id === id) {currentUpload.current.controller.abort();}
-  }
-  function retryUpload(id: string) {
+  });
+  const retryUpload = useLatest((id: string) => {
     if (currentUpload.current?.id === id) {return;}
     commit(itemsRef.current.map(entry => entry.id === id ? {...entry, status: 'waiting', progress: 0, message: undefined} : entry));
-  }
-  async function removeCancelled(item: UploadItem) {
+  });
+  const removeCancelled = useLatest(async (item: UploadItem) => {
     if (currentUpload.current?.id === item.id) {return;}
     commit(itemsRef.current.filter(entry => entry.id !== item.id));
     try {await saving.current; await deleteStagedFiles([item]);}
     catch {setNotice('无法移除暂存文件，请检查设备存储空间');}
-  }
+  });
   async function selectMedia() {
     if (!folder || busy) {return;}
     const epoch = queueEpoch.current;
@@ -205,23 +208,35 @@ export default function UploadPage({api, session, active, incomingFolder, clearI
       <View style={styles.queueHeading}><Text style={styles.queueTitle}>上传队列</Text><Text style={styles.meta}>共 {items.length} 项</Text></View>
       <View style={styles.summary}><Text style={styles.summaryText}>等待 {summary.waiting}</Text><Text style={styles.summaryText}>上传中 {summary.uploading}</Text><Text style={styles.summaryText}>失败 {summary.failed}</Text><Text style={styles.summaryText}>已取消 {summary.cancelled}</Text></View>
       <View>
-        {items.length === 0 ? <View style={styles.queueEmpty}><Text style={styles.emptyTitle}>队列还是空的</Text><Text style={styles.meta}>选择目标文件夹后，从系统相册手动选择照片和视频。</Text></View> : [...items].reverse().map(item => <View key={item.id} style={styles.item}>
-          {item.mime.startsWith('image/') || item.thumbnailPath ? <Image source={{uri: `file://${item.thumbnailPath ?? item.path}`}} style={styles.thumb} /> : <View style={styles.thumbPlaceholder}><Icon name="video" size={26} /></View>}
-          <View style={styles.itemBody}><Text style={styles.fileName} numberOfLines={1}>{item.name}{item.motion ? ' · 动态照片' : ''}</Text>
-            <Text style={styles.meta} numberOfLines={1}>目标：{item.folderName}</Text>
-            <Text style={styles.meta}>{({waiting: '等待', uploading: '上传中', success: '成功', skipped: '跳过', failed: '失败', cancelled: '已取消'} as const)[item.status]} · {item.progress}%{item.message ? ` · ${item.message}` : ''}</Text>
-            <View style={styles.track}><View style={[styles.fill, {width: `${item.progress}%`}]} /></View>
-          </View>
-          <View>
-            {item.status === 'waiting' || item.status === 'uploading' ? <Pressable style={styles.retry} accessibilityRole="button" accessibilityLabel={`取消上传 ${item.name}`} onPress={() => cancelUpload(item.id)}><Text style={styles.actionText}>取消</Text></Pressable> : null}
-            {item.status === 'failed' || item.status === 'cancelled' ? <Pressable style={styles.retry} accessibilityRole="button" accessibilityLabel={`重试上传 ${item.name}`} disabled={currentUpload.current?.id === item.id} onPress={() => retryUpload(item.id)}><Text style={styles.actionText}>{currentUpload.current?.id === item.id ? '取消中…' : '重试'}</Text></Pressable> : null}
-            {item.status === 'cancelled' ? <Pressable style={styles.retry} accessibilityRole="button" accessibilityLabel={`移除已取消的 ${item.name}`} disabled={currentUpload.current?.id === item.id} onPress={() => removeCancelled(item)}><Text style={styles.actionText}>移除</Text></Pressable> : null}
-          </View>
-        </View>)}
+        {items.length === 0 ? <View style={styles.queueEmpty}><Text style={styles.emptyTitle}>队列还是空的</Text><Text style={styles.meta}>选择目标文件夹后，从系统相册手动选择照片和视频。</Text></View> : [...items].reverse().map(item => <QueueRow key={item.id} item={item} settling={currentUpload.current?.id === item.id} cancel={cancelUpload} retry={retryUpload} remove={removeCancelled} />)}
       </View>
     </ScrollView> : null}
   </View>;
 }
+
+// Stable wrapper around the latest closure, so queue rows can stay memoized.
+function useLatest<Args extends unknown[], Result>(handler: (...args: Args) => Result): (...args: Args) => Result {
+  const latest = useRef(handler);
+  latest.current = handler;
+  return useCallback((...args: Args) => latest.current(...args), []);
+}
+
+// A progress tick replaces one item object; memoization re-renders only its row.
+const QueueRow = memo(function Row({item, settling, cancel, retry, remove}: {item: UploadItem; settling: boolean; cancel: (id: string) => void; retry: (id: string) => void; remove: (item: UploadItem) => void}) {
+  return <View style={styles.item}>
+    {item.mime.startsWith('image/') || item.thumbnailPath ? <Image source={{uri: `file://${item.thumbnailPath ?? item.path}`}} style={styles.thumb} resizeMethod="resize" /> : <View style={styles.thumbPlaceholder}><Icon name="video" size={26} /></View>}
+    <View style={styles.itemBody}><Text style={styles.fileName} numberOfLines={1}>{item.name}{item.motion ? ' · 动态照片' : ''}</Text>
+      <Text style={styles.meta} numberOfLines={1}>目标：{item.folderName}</Text>
+      <Text style={styles.meta}>{({waiting: '等待', uploading: '上传中', success: '成功', skipped: '跳过', failed: '失败', cancelled: '已取消'} as const)[item.status]} · {item.progress}%{item.message ? ` · ${item.message}` : ''}</Text>
+      <View style={styles.track}><View style={[styles.fill, {width: `${item.progress}%`}]} /></View>
+    </View>
+    <View>
+      {item.status === 'waiting' || item.status === 'uploading' ? <Pressable style={styles.retry} accessibilityRole="button" accessibilityLabel={`取消上传 ${item.name}`} onPress={() => cancel(item.id)}><Text style={styles.actionText}>取消</Text></Pressable> : null}
+      {item.status === 'failed' || item.status === 'cancelled' ? <Pressable style={styles.retry} accessibilityRole="button" accessibilityLabel={`重试上传 ${item.name}`} disabled={settling} onPress={() => retry(item.id)}><Text style={styles.actionText}>{settling ? '取消中…' : '重试'}</Text></Pressable> : null}
+      {item.status === 'cancelled' ? <Pressable style={styles.retry} accessibilityRole="button" accessibilityLabel={`移除已取消的 ${item.name}`} disabled={settling} onPress={() => remove(item)}><Text style={styles.actionText}>移除</Text></Pressable> : null}
+    </View>
+  </View>;
+});
 
 const styles = StyleSheet.create({
   root: {flex: 1, paddingTop: 18, backgroundColor: '#FAF9F7'}, hidden: {display: 'none'},

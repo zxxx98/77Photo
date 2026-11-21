@@ -35,6 +35,11 @@ export type TrashItem = {
 export type TrashPage = {items: TrashItem[]; next_cursor: string | null; retention_days: number};
 export type PhotoPage = {items: Photo[]; next_cursor: string | null; favorites_supported?: boolean};
 
+export type MediaSource = {uri: string; headers: {Authorization: string}};
+// Local library edits. Lists apply them in place instead of reloading, so the
+// scroll position survives. `reset` precedes a refresh that must reload fully.
+export type PhotoChange = {type: 'removed'; ids: string[]} | {type: 'favorite'; id: string; value: boolean} | {type: 'reset'};
+
 export type LoadState = 'loading' | 'ready' | 'empty' | 'offline' | 'forbidden' | 'expired' | 'failed';
 
 export function errorState(error: unknown): LoadState {
@@ -50,7 +55,8 @@ export function groupPhotos(items: Photo[]): {date: string; items: Photo[]}[] {
   const groups = new Map<string, Photo[]>();
   for (const photo of items) {
     const date = photo.captured_at.slice(0, 10);
-    groups.set(date, [...(groups.get(date) ?? []), photo]);
+    const group = groups.get(date);
+    if (group) {group.push(photo);} else {groups.set(date, [photo]);}
   }
   return [...groups].sort(([a], [b]) => b.localeCompare(a)).map(([date, photos]) => ({date, items: photos}));
 }
@@ -63,7 +69,14 @@ export class BrowseApi {
   private revision = 0;
   subscribe = (listener: () => void) => {this.listeners.add(listener); return () => {this.listeners.delete(listener);};};
   getRevision = () => this.revision;
-  refreshBrowsing() {this.notifyConnection();}
+  private changeListeners = new Set<(change: PhotoChange) => void>();
+  onPhotoChange = (listener: (change: PhotoChange) => void) => {this.changeListeners.add(listener); return () => {this.changeListeners.delete(listener);};};
+  private emit(change: PhotoChange) {this.changeListeners.forEach(listener => listener(change));}
+  photosRemoved(ids: string[]) {if (ids.length) {this.emit({type: 'removed', ids});}}
+  photoFavorited(id: string, value: boolean) {this.emit({type: 'favorite', id, value});}
+  // The default refresh revalidates lists in place. Pass `reset` after an edit
+  // that can reorder or relocate loaded photos (move, restore from trash).
+  refreshBrowsing(reset = false) {if (reset) {this.emit({type: 'reset'});} this.notifyConnection();}
   private notifyConnection() {this.revision++; this.listeners.forEach(listener => listener());}
   private reconnecting: Promise<MobileSession> | null = null;
   private reconnectedAt = 0;
@@ -321,11 +334,21 @@ export class BrowseApi {
     return this.request<{live_photo_ids: string[]}>(`/api/v1/live-photos/status?ids=${encodeURIComponent(ids.join(','))}`)
       .then(data => data.live_photo_ids);
   }
-  async mediaSource(id: string, kind: 'thumbnail' | 'preview' | 'motion' | 'original') {
-    const session = await this.validSession();
-    const route = kind === 'motion' ? `/api/v1/live-photos/${encodeURIComponent(id)}` :
+  private mediaRoute(id: string, kind: 'thumbnail' | 'preview' | 'motion' | 'original') {
+    return kind === 'motion' ? `/api/v1/live-photos/${encodeURIComponent(id)}` :
       `/api/v1/photos/${encodeURIComponent(id)}/${kind}${kind === 'thumbnail' ? '?size=256' : ''}`;
-    return {uri: session.server + route, headers: {Authorization: `Bearer ${session.accessToken}`}};
+  }
+  async mediaSource(id: string, kind: 'thumbnail' | 'preview' | 'motion' | 'original'): Promise<MediaSource> {
+    const session = await this.validSession();
+    return {uri: session.server + this.mediaRoute(id, kind), headers: {Authorization: `Bearer ${session.accessToken}`}};
+  }
+  // Synchronous first guess for list tiles, so a scrolled-in thumbnail starts
+  // loading on its first render. It skips the address probe and token rotation;
+  // callers still await mediaSource() and switch if the answer differs.
+  peekMediaSource(id: string, kind: 'thumbnail' | 'preview' | 'motion' | 'original'): MediaSource | undefined {
+    const expiry = Date.parse(this.session.accessExpiresAt);
+    if (!Number.isFinite(expiry) || expiry <= Date.now() + 60_000) {return undefined;}
+    return {uri: this.session.server + this.mediaRoute(id, kind), headers: {Authorization: `Bearer ${this.session.accessToken}`}};
   }
   async retryMedia() {
     const previous = this.session.server;

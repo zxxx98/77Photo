@@ -59,6 +59,10 @@ export function PhotoActions({api, photos, completed, close, retain}: {
       .finally(() => {if (active) {setChecking(false);}});
     return () => {active = false;};
   }, [api, folderKey]);
+  // A move changes where photos belong, which lists cannot patch in place.
+  // Reload them once, after this panel and its failure report are dismissed.
+  const moved = useRef(false);
+  useEffect(() => () => {if (moved.current) {api.refreshBrowsing(true);}}, [api]);
   const owners = new Set(photos.map(photo => photo.owner_id));
   const owner = owners.size === 1 ? photos[0]?.owner_id : undefined;
   async function perform() {
@@ -69,6 +73,8 @@ export function PhotoActions({api, photos, completed, close, retain}: {
       const batch = await api.deletePhotos(chunk);
       return {completed_ids: batch.deleted_ids, failed: batch.failed};
     }) : await moveSelected(ids, id => api.movePhoto(id, target!.id, rename ? 'rename' : 'reject'));
+    if (mode === 'delete') {api.photosRemoved(result.completed_ids);}
+    else if (result.completed_ids.length) {moved.current = true;}
     completed(result.completed_ids);
     retain?.(result.failed.map(failure => failure.id));
     setFailures(result.failed); setMode(null); setBusy(false); lock.current = false;

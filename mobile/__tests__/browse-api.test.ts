@@ -219,3 +219,21 @@ test('map and people reads are authenticated and naming preserves the revision',
   expect(new URL(calls[6][0]).searchParams.get('bbox')).toBe('170,-20,-170,10');
   expect(await api.faceSource('face/1')).toEqual({uri: session.server + '/api/v1/admin/faces/face%2F1/thumbnail', headers: {Authorization: 'Bearer old'}});
 });
+
+test('peeks a thumbnail source from the current session and declines near expiry', () => {
+  const fresh = new BrowseApi({...session, accessExpiresAt: new Date(Date.now() + 3600_000).toISOString()}, jest.fn());
+  expect(fresh.peekMediaSource('p 1', 'thumbnail')).toEqual({uri: `${session.server}/api/v1/photos/p%201/thumbnail?size=256`, headers: {Authorization: `Bearer ${session.accessToken}`}});
+  const stale = new BrowseApi({...session, accessExpiresAt: new Date(Date.now() + 30_000).toISOString()}, jest.fn());
+  expect(stale.peekMediaSource('p', 'thumbnail')).toBeUndefined();
+});
+
+test('change events reach subscribers; only a refresh advances the revision', () => {
+  const api = new BrowseApi(session, jest.fn());
+  const changes = jest.fn(); const stop = api.onPhotoChange(changes);
+  api.photosRemoved([]); api.photosRemoved(['a']); api.photoFavorited('b', true);
+  expect(changes.mock.calls).toEqual([[{type: 'removed', ids: ['a']}], [{type: 'favorite', id: 'b', value: true}]]);
+  expect(api.getRevision()).toBe(0);
+  api.refreshBrowsing(); expect(api.getRevision()).toBe(1); expect(changes).toHaveBeenCalledTimes(2);
+  api.refreshBrowsing(true); expect(changes).toHaveBeenLastCalledWith({type: 'reset'}); expect(api.getRevision()).toBe(2);
+  stop(); api.photosRemoved(['c']); expect(changes).toHaveBeenCalledTimes(3);
+});

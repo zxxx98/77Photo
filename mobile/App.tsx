@@ -62,7 +62,13 @@ function Main() {
         const [lastServer, saved] = await Promise.all([loadLastServer(), loadSession()]);
         if (!active) {return;}
         setServer(saved?.server ?? lastServer);
-        if (saved) {await resume(saved);}
+        if (saved?.userId) {
+          // Open the library at once instead of waiting for the network. From
+          // here BrowseApi alone probes addresses and rotates the token, so no
+          // second refresh can race it; it reports a revoked device via `expired`.
+          setUsername(saved.username);
+          setSession(saved);
+        } else if (saved) {await resume(saved);}
       } catch (problem) {
         if (active) {setError(message(problem));}
       } finally {
@@ -143,6 +149,14 @@ function Main() {
     }
   }
 
+  async function expired() {
+    // Leave the library only once the stored credentials are really gone.
+    const stored = await loadSession().catch(() => undefined);
+    if (stored !== null) {return;}
+    setError('登录已失效，请重新登录');
+    setSession(null);
+  }
+
   async function signOut() {
     if (!session || pending) {return;}
     setPending(true);
@@ -170,7 +184,7 @@ function Main() {
   }
 
   if (session && !booting) {
-    return <BrowseApp session={session} onSession={setSession} onSignOut={signOut} error={error} />;
+    return <BrowseApp session={session} onSession={setSession} onSignOut={signOut} onExpired={expired} error={error} />;
   }
 
   return <View style={[styles.root, {paddingTop: insets.top, paddingBottom: insets.bottom}]}>

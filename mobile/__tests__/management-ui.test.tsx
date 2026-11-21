@@ -18,7 +18,7 @@ function button(label: string) {return renderer.root.findAll(node => node.props.
 async function press(label: string) {await act(async () => {button(label).props.onPress();});}
 afterEach(async () => {if (renderer) {await act(async () => renderer.unmount());}});
 function fakeApi(input: Record<string, unknown> = {}) {
-  return {subscribe: () => () => {}, getRevision: () => 0, listFolders: jest.fn().mockResolvedValue([folder]), writableFolder: jest.fn().mockResolvedValue(folder), ...input} as unknown as BrowseApi;
+  return {subscribe: () => () => {}, getRevision: () => 0, photosRemoved: jest.fn(), refreshBrowsing: jest.fn(), listFolders: jest.fn().mockResolvedValue([folder]), writableFolder: jest.fn().mockResolvedValue(folder), ...input} as unknown as BrowseApi;
 }
 
 test('invalid calendar dates cannot apply; filename and media filters can apply together', async () => {

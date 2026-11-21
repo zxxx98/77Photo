@@ -20,7 +20,7 @@ let renderer: ReactTestRenderer;
 const photo: Photo = {id: 'p', owner_id: 'me', folder_id: 'f', filename: 'pic.jpg', mime_type: 'image/jpeg', captured_at: '2026-09-30T12:00:00Z', size: 100, width: 200, height: 100};
 const person: Person = {id: 'person', owner_id: 'me', name: '', revision: 3, photo_count: 1, cover_face_id: 'face'};
 function fakeApi(input: Record<string, unknown> = {}) {
-  return {subscribe: () => () => {}, getRevision: () => 0, me: jest.fn().mockResolvedValue({id: 'me', role: 'admin'}), faceConfig: jest.fn().mockResolvedValue({enabled: true}),
+  return {subscribe: () => () => {}, getRevision: () => 0, onPhotoChange: () => () => {}, me: jest.fn().mockResolvedValue({id: 'me', role: 'admin'}), faceConfig: jest.fn().mockResolvedValue({enabled: true}),
     people: jest.fn().mockResolvedValue({items: [person], next_cursor: ''}), personFaces: jest.fn().mockResolvedValue({items: [], next_cursor: ''}), renamePerson: jest.fn().mockResolvedValue({ok: true}),
     faceSource: jest.fn().mockResolvedValue({uri: 'https://example.test/face'}), mediaSource: jest.fn().mockResolvedValue({uri: 'https://example.test/thumb'}),
     photo: jest.fn().mockResolvedValue(photo), mapConfig: jest.fn().mockResolvedValue({enabled: true, min_zoom: 1, max_zoom: 18}), mapPoints: jest.fn().mockResolvedValue({items: [], total_photos: 0}),

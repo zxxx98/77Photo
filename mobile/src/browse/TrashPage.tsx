@@ -53,6 +53,10 @@ export default function TrashPage({api, close}: {api: BrowseApi; close: () => vo
     } finally {if (ticket === generation.current) {loadingRef.current = false; setLoading(false);}}
   }, [api]);
   useEffect(() => {load(); const ticket = generation.current; return () => {generation.current = ticket + 1; loadingRef.current = false;};}, [load, revision]);
+  // Restored photos return to the library at arbitrary dates, so the gallery
+  // reloads once on leaving. Deleting from trash never changes the gallery.
+  const restored = useRef(false);
+  useEffect(() => () => {if (restored.current) {api.refreshBrowsing(true);}}, [api]);
   const chosen = items.filter(item => selected.has(item.id));
   const owners = new Set(chosen.map(item => item.owner_id));
   function toggle(id: string) {
@@ -85,6 +89,7 @@ export default function TrashPage({api, close}: {api: BrowseApi; close: () => vo
     finally {
       const completed = new Set(result.completed_ids);
       setItems(old => old.filter(item => !completed.has(item.id)));
+      if (mode === 'restore' && result.completed_ids.length) {restored.current = true;}
       setFailures(result.failed); setSelected(new Set(result.failed.map(item => item.id)));
       setBusy(false); lock.current = false;
     }
@@ -92,7 +97,7 @@ export default function TrashPage({api, close}: {api: BrowseApi; close: () => vo
   async function retry(id: string) {
     if (lock.current) {return;}
     lock.current = true; setBusy(true); setError('');
-    try {await api.retryTrash(id); await load();}
+    try {await api.retryTrash(id); restored.current = true; await load();}
     catch (e) {setError(operationError(e));}
     finally {setBusy(false); lock.current = false;}
   }

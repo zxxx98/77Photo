@@ -1,7 +1,7 @@
 import React from 'react';
 import {act, create, type ReactTestRenderer} from 'react-test-renderer';
 import ReactNativeBlobUtil from 'react-native-blob-util';
-import {ScrollView} from 'react-native';
+import {ScrollView, StyleSheet} from 'react-native';
 import type {BrowseApi, Folder} from '../src/browse/api';
 import BackupSettings from '../src/backup/BackupSettings';
 import UploadPage from '../src/upload/UploadPage';
@@ -34,6 +34,20 @@ test('cancel aborts active transfer, ignores late progress and success, then per
   const saved = (saveQueue as jest.Mock).mock.calls.at(-1)[1]; expect(saved[0]).toMatchObject({status: 'cancelled', progress: 0});
   expect(button('重试上传 a.jpg').props.disabled).toBe(false); expect(deleteStagedFiles).not.toHaveBeenCalled();
   await press('重试上传 a.jpg'); expect(uploadOne).toHaveBeenCalledTimes(2); expect((saveQueue as jest.Mock).mock.calls.at(-1)[1][0].status).toBe('success');
+});
+
+test('progress ticks update the row without rewriting the stored queue', async () => {
+  let finish!: (value: 'success') => void; let progress!: (value: number) => void;
+  (loadQueue as jest.Mock).mockResolvedValue([item('a'), item('b')]);
+  (uploadOne as jest.Mock).mockImplementationOnce((_api, _item, update) => {progress = update; return new Promise(resolve => {finish = resolve;});}).mockReturnValue(new Promise(() => {}));
+  await render();
+  const writes = (saveQueue as jest.Mock).mock.calls.length;
+  await act(async () => {progress(10); progress(40); progress(77);});
+  expect((saveQueue as jest.Mock).mock.calls.length).toBe(writes);
+  expect(renderer.root.findAll(node => StyleSheet.flatten(node.props.style)?.width === '77%')).not.toHaveLength(0);
+  // The outcome is still stored, with the final progress.
+  await act(async () => {finish('success');});
+  expect((saveQueue as jest.Mock).mock.calls.find(call => call[1][0].status === 'success')[1][0]).toMatchObject({status: 'success', progress: 100});
 });
 
 test('cancel before staging check completes prevents transfer; remove cleans only after settlement', async () => {
